@@ -1,0 +1,58 @@
+[package]
+name = "mesh-controller"
+description = "Mesh Controller for Decentralized Control Plane"
+version = "0.1.1"
+edition = "2024"
+publish = false
+default-run = "mesh-controller"
+
+[lints]
+workspace = true
+
+[lib]
+name = "mesh"
+
+[[bin]]
+name = "mesh-controller"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+axum.workspace = true
+axum-prometheus.workspace = true
+ciborium.workspace = true
+clap = { workspace = true, features = ["derive"] }
+directories.workspace = true
+figment.workspace = true
+futures-util.workspace = true
+hex.workspace = true
+loole.workspace = true
+p2panda-core.workspace = true
+p2panda-net.workspace = true
+p2panda-sync.workspace = true
+p2panda-discovery.workspace = true
+rand.workspace = true
+serde.workspace = true
+tokio.workspace = true
+tokio-stream.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+pin-project.workspace = true
+bytes.workspace = true
+futures.workspace = true
+pin-project-lite.workspace = true
+thiserror.workspace = true
+schemars.workspace = true
+reqwest.workspace = true
+
+[dev-dependencies]
+figment = { workspace = true, features = ["test"] }
+once_cell.workspace = true
+dashmap.workspace = true
+serde_json.workspace = true
+url.workspace = true
+
+[build-dependencies]
+built.workspace = true

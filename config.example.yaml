@@ -1,0 +1,41 @@
+# configuration file
+#
+# Port for mesh communication. Defaults to 9102.
+#
+# When port is taken the node will automatically pick a random, free port.
+#
+# bind_port: 9102
+
+# 
+# http_bind_port: 3000
+#
+# Port for HTTP server exposing the /health endpoint. Defaults to 3000.
+
+# Nodes will only communicate with each other if they know the same network id.
+#
+# network_id: "default"
+
+# Path to file containing hexadecimal-encoded Ed25519 private key. The key is
+# used to identify the node towards other nodes during network discovery and
+# replication.
+#
+# private_key_path: "private-key.txt"
+
+# List of known node addresses we want to connect to directly. Addresses have
+# to be FQDN's (absolute domain names) or IP addresses with a port number.
+#
+# NOTE: Make sure that nodes mentioned in this list are directly reachable
+#
+# nodes:
+#   - public_key: "<public-key>"
+#     endpoints:
+#       - "zone1.cluster.local"
+
+# Set log verbosity.
+#
+# Possible log levels are: ERROR, WARN, INFO, DEBUG, TRACE.
+#
+# If you want to adjust the scope for deeper inspection use a filter value, for example
+# "=TRACE" for logging _everything_ or "mesh=INFO" etc.
+
+# log_level: =INFO

@@ -1,0 +1,10 @@
+target
+target-docker
+./blobs
+config*.yaml
+!config.example.yaml
+!configmap.yaml
+private-key*
+.DS_Store
+tmp
+/env/dev/nats
