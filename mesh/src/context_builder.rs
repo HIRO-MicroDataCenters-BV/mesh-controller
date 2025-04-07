@@ -14,7 +14,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::error;
 
 use crate::config::configuration::PRIVATE_KEY_ENV;
-use crate::config::configuration::{load_config, Config};
+use crate::config::configuration::{Config, load_config};
 use crate::tracing::setup_tracing;
 use figment::providers::Env;
 

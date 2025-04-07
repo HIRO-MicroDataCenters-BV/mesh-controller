@@ -1,5 +1,5 @@
 use crate::{
-    api::{status::HealthStatus, MeshApi},
+    api::{MeshApi, status::HealthStatus},
     config::configuration::Config,
 };
 use anyhow::Result;

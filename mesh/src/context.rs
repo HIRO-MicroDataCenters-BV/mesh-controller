@@ -1,4 +1,4 @@
-use anyhow::{bail, Context as AnyhowContext, Result};
+use anyhow::{Context as AnyhowContext, Result, bail};
 use p2panda_core::PublicKey;
 use tokio::runtime::Runtime;
 use tokio::signal;
