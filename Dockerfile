@@ -2,7 +2,7 @@ FROM rust:1-alpine AS builder
 WORKDIR /usr/src/mesh-controller
 COPY . .
 RUN apk add musl-dev libressl libressl-dev
-RUN cargo install --path ./mesh-controller
+RUN cargo install --path ./mesh
 
 FROM rust:1-alpine
 RUN apk add musl-dev libressl libressl-dev
