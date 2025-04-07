@@ -102,7 +102,7 @@ jobs:
           git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
 
       - name: Create a github release
-        if: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/') }}
+        if: ${{ startsWith(github.ref, 'refs/tags/') }}
         run: gh release create "${{ env.VERSION_APP }}"
         env:
           GH_TOKEN: ${{ github.token }}

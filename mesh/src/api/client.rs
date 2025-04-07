@@ -1,6 +1,6 @@
 use crate::{
-    api::status::HealthStatus,
     api::MeshApi,
+    api::status::HealthStatus,
     api::{HTTP_HEALTH_ROUTE, HTTP_METRICS_ROUTE},
 };
 use anyhow::{Context, Result};

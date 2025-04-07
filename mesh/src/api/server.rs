@@ -4,17 +4,17 @@ use std::{
 };
 
 use anyhow::{Context, Result};
+use axum::Router;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::get;
-use axum::Router;
-use axum::{extract::State, Json};
+use axum::{Json, extract::State};
 use tokio::net::TcpListener;
 use tracing::debug;
 
 use crate::{
     api::status::HealthStatus,
-    api::{MeshApi, HTTP_HEALTH_ROUTE, HTTP_METRICS_ROUTE},
+    api::{HTTP_HEALTH_ROUTE, HTTP_METRICS_ROUTE, MeshApi},
 };
 
 pub struct MeshHTTPServer {

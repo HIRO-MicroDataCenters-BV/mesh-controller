@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::{api::status::HealthStatus, api::MeshApi};
+use crate::{api::MeshApi, api::status::HealthStatus};
 use anyhow::Result;
 use tokio::runtime::Runtime;
 

@@ -1,10 +1,10 @@
 use std::path::PathBuf;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use clap::Parser;
 use directories::ProjectDirs;
-use figment::providers::{Env, Format, Serialized, Yaml};
 use figment::Figment;
+use figment::providers::{Env, Format, Serialized, Yaml};
 use p2panda_core::PublicKey;
 use serde::{Deserialize, Serialize};
 
@@ -184,8 +184,8 @@ impl Default for DiscoveryOptions {
 mod tests {
     use std::path::PathBuf;
 
-    use figment::providers::{Format, Serialized, Yaml};
     use figment::Figment;
+    use figment::providers::{Format, Serialized, Yaml};
 
     use crate::config::configuration::{
         Config, DiscoveryOptions, KnownNode, NodeConfig, ProtocolConfig,
