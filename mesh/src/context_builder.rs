@@ -1,10 +1,13 @@
 use std::sync::Arc;
 
+use crate::client::types::KubeClient;
 use crate::config::private_key::load_private_key_from_file;
 use crate::context::Context;
 use crate::http::api::MeshApiImpl;
 
 use crate::api::server::MeshHTTPServer;
+use crate::kube::cache::KubeCacheImpl;
+use crate::node::mesh::MeshNode;
 use anyhow::{Context as AnyhowContext, Result};
 use p2panda_core::{PrivateKey, PublicKey};
 
@@ -57,12 +60,24 @@ impl ContextBuilder {
         })
     }
 
-    pub fn try_build_and_start(&self) -> Result<Context> {
+    pub fn try_build_and_start<C>(&self) -> Result<Context<C>>
+    where
+        C: KubeClient,
+    {
+        let client = C::try_init()?;
+        let cache = KubeCacheImpl::try_init(client)?;
+
         let mesh_runtime = Builder::new_multi_thread()
             .enable_all()
             .thread_name("mesh")
             .build()
             .expect("Mesh Controller tokio runtime");
+
+        let mesh_node = mesh_runtime.block_on(async {
+            ContextBuilder::init(self.config.clone(), self._private_key.clone())
+                .await
+                .context("failed to initialize mesh node")
+        })?;
 
         let http_runtime = Builder::new_multi_thread()
             .enable_io()
@@ -74,12 +89,18 @@ impl ContextBuilder {
 
         Ok(Context::new(
             self.config.clone(),
+            cache,
+            mesh_node,
             self.public_key,
             http_handle,
             http_runtime,
             cancellation_token,
             mesh_runtime,
         ))
+    }
+
+    async fn init(config: Config, private_key: PrivateKey) -> Result<MeshNode> {
+        Ok(MeshNode {})
     }
 
     /// Starts the HTTP server with health endpoint.
