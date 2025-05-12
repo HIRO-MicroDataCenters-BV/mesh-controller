@@ -46,6 +46,9 @@ pin-project-lite.workspace = true
 thiserror.workspace = true
 schemars.workspace = true
 reqwest.workspace = true
+# stackable-operator.workspace = true
+kube.workspace = true
+k8s-openapi.workspace=true
 
 [dev-dependencies]
 figment = { workspace = true, features = ["test"] }
