@@ -3,7 +3,7 @@ use crate::{
     config::configuration::Config,
 };
 use anyhow::Result;
-use axum::async_trait;
+use async_trait::async_trait;
 use axum_prometheus::{
     metrics::set_global_recorder,
     metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle},
