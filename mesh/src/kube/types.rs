@@ -6,8 +6,14 @@ pub enum CacheError {
     Unknown,
 }
 
-// pub trait KubeCache {
-//     type R: Resource<DynamicType = ApiResource> + Clone + Debug + Send + DeserializeOwned + 'static;
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default, PartialOrd, Ord)]
+pub struct NamespacedName {
+    pub namespace: String,
+    pub name: String,
+}
 
-//     fn get(gvk : &GroupVersionKind) -> Result<Option<Self::R>, KubeError>;
-// }
+impl NamespacedName {
+    pub fn new(namespace: String, name: String) -> Self {
+        NamespacedName { namespace, name }
+    }
+}
