@@ -10,13 +10,10 @@ use crate::config::configuration::Config;
 use crate::kube::cache::KubeCacheImpl;
 use crate::node::mesh::MeshNode;
 
-pub struct Context<C>
-where
-    C: KubeClient,
-{
+pub struct Context {
     _config: Config,
     _public_key: PublicKey,
-    kube_cache: KubeCacheImpl<C>,
+    kube_cache: KubeCacheImpl,
     mesh_node: MeshNode,
     http_handle: JoinHandle<Result<()>>,
     http_runtime: Runtime,
@@ -24,13 +21,10 @@ where
     mesh_runtime: Runtime,
 }
 
-impl<C> Context<C>
-where
-    C: KubeClient,
-{
+impl Context {
     pub fn new(
         config: Config,
-        kube_cache: KubeCacheImpl<C>,
+        kube_cache: KubeCacheImpl,
         mesh_node: MeshNode,
         public_key: PublicKey,
         http_handle: JoinHandle<Result<()>>,

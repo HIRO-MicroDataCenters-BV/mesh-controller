@@ -9,6 +9,7 @@ use crate::api::server::MeshHTTPServer;
 use crate::kube::cache::KubeCacheImpl;
 use crate::node::mesh::MeshNode;
 use anyhow::{Context as AnyhowContext, Result};
+use kube::{Client, client::ConfigExt};
 use p2panda_core::{PrivateKey, PublicKey};
 
 use tokio::runtime::{Builder, Runtime};
@@ -60,23 +61,21 @@ impl ContextBuilder {
         })
     }
 
-    pub fn try_build_and_start<C>(&self) -> Result<Context<C>>
-    where
-        C: KubeClient,
-    {
-        let client = C::try_init()?;
-        let cache = KubeCacheImpl::try_init(client)?;
-
+    pub fn try_build_and_start(&self) -> Result<Context> {
         let mesh_runtime = Builder::new_multi_thread()
             .enable_all()
             .thread_name("mesh")
             .build()
             .expect("Mesh Controller tokio runtime");
 
-        let mesh_node = mesh_runtime.block_on(async {
-            ContextBuilder::init(self.config.clone(), self._private_key.clone())
+        let (mesh_node, cache) = mesh_runtime.block_on(async {
+            let client = kube::Client::try_default().await?;
+            let cache = KubeCacheImpl::try_init(client)?;
+
+            let node = ContextBuilder::init(self.config.clone(), self._private_key.clone())
                 .await
-                .context("failed to initialize mesh node")
+                .context("failed to initialize mesh node")?;
+            Ok::<_, anyhow::Error>((node, cache))
         })?;
 
         let http_runtime = Builder::new_multi_thread()
@@ -99,7 +98,7 @@ impl ContextBuilder {
         ))
     }
 
-    async fn init(config: Config, private_key: PrivateKey) -> Result<MeshNode> {
+    async fn init(_config: Config, _private_key: PrivateKey) -> Result<MeshNode> {
         Ok(MeshNode {})
     }
 

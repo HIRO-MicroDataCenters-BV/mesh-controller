@@ -1,10 +1,10 @@
 use anyhow::Result;
-use mesh::{built_info, client::kube::KubeClientImpl, context_builder::ContextBuilder};
+use mesh::{built_info, context_builder::ContextBuilder};
 use tracing::info;
 
 fn main() -> Result<()> {
     let context_builder = ContextBuilder::from_cli()?;
-    let context = context_builder.try_build_and_start::<KubeClientImpl>()?;
+    let context = context_builder.try_build_and_start()?;
 
     context.configure()?;
 
