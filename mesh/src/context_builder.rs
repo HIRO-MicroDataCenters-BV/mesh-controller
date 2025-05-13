@@ -1,15 +1,14 @@
 use std::sync::Arc;
 
-use crate::client::types::KubeClient;
 use crate::config::private_key::load_private_key_from_file;
 use crate::context::Context;
 use crate::http::api::MeshApiImpl;
 
 use crate::api::server::MeshHTTPServer;
-use crate::kube::cache::KubeCacheImpl;
+use crate::kube::cache::KubeCache;
 use crate::node::mesh::MeshNode;
 use anyhow::{Context as AnyhowContext, Result};
-use kube::{Client, client::ConfigExt};
+use kube::Client;
 use p2panda_core::{PrivateKey, PublicKey};
 
 use tokio::runtime::{Builder, Runtime};
@@ -69,8 +68,8 @@ impl ContextBuilder {
             .expect("Mesh Controller tokio runtime");
 
         let (mesh_node, cache) = mesh_runtime.block_on(async {
-            let client = kube::Client::try_default().await?;
-            let cache = KubeCacheImpl::try_init(client)?;
+            let client = ContextBuilder::build_kube_client().await?;
+            let cache = KubeCache::try_init(client)?;
 
             let node = ContextBuilder::init(self.config.clone(), self._private_key.clone())
                 .await
@@ -121,5 +120,20 @@ impl ContextBuilder {
             cancellation_token.cancel();
             result
         }))
+    }
+
+    async fn build_kube_client() -> Result<Client> {
+        #[cfg(not(test))]
+        {
+            let config = kube::config::Config::incluster().context("failed to load kube config")?;
+            let client = kube::Client::try_from(config).context("failed to create kube client")?;
+            Ok(client)
+        }
+        #[cfg(test)]
+        {
+            let svc = crate::client::kube::FakeKubeApiService::new();
+            let client = kube::Client::new(svc, "default");
+            Ok(client)
+        }
     }
 }

@@ -5,15 +5,14 @@ use tokio::signal;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-use crate::client::types::KubeClient;
 use crate::config::configuration::Config;
-use crate::kube::cache::KubeCacheImpl;
+use crate::kube::cache::KubeCache;
 use crate::node::mesh::MeshNode;
 
 pub struct Context {
     _config: Config,
     _public_key: PublicKey,
-    kube_cache: KubeCacheImpl,
+    kube_cache: KubeCache,
     mesh_node: MeshNode,
     http_handle: JoinHandle<Result<()>>,
     http_runtime: Runtime,
@@ -24,7 +23,7 @@ pub struct Context {
 impl Context {
     pub fn new(
         config: Config,
-        kube_cache: KubeCacheImpl,
+        kube_cache: KubeCache,
         mesh_node: MeshNode,
         public_key: PublicKey,
         http_handle: JoinHandle<Result<()>>,
