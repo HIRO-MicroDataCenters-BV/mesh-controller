@@ -20,6 +20,7 @@ path = "src/main.rs"
 anyhow.workspace = true
 async-trait.workspace = true
 axum.workspace = true
+dashmap.workspace = true
 axum-prometheus.workspace = true
 ciborium.workspace = true
 clap = { workspace = true, features = ["derive"] }
@@ -46,9 +47,9 @@ pin-project-lite.workspace = true
 thiserror.workspace = true
 schemars.workspace = true
 reqwest.workspace = true
-# stackable-operator.workspace = true
 kube.workspace = true
 k8s-openapi.workspace=true
+
 
 [dev-dependencies]
 figment = { workspace = true, features = ["test"] }
@@ -56,6 +57,9 @@ once_cell.workspace = true
 dashmap.workspace = true
 serde_json.workspace = true
 url.workspace = true
+tower-test.workspace = true
+http.workspace = true
+tower-service.workspace = true
 
 [build-dependencies]
 built.workspace = true
