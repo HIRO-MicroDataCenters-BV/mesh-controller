@@ -1,3 +1,4 @@
+use kube::api::DynamicObject;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -16,4 +17,9 @@ impl NamespacedName {
     pub fn new(namespace: String, name: String) -> Self {
         NamespacedName { namespace, name }
     }
+}
+
+pub enum CacheUpdateProtocol {
+    Update(DynamicObject),
+    Delete(DynamicObject),
 }

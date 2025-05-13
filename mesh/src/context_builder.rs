@@ -69,7 +69,7 @@ impl ContextBuilder {
 
         let (mesh_node, cache) = mesh_runtime.block_on(async {
             let client = ContextBuilder::build_kube_client().await?;
-            let cache = KubeCache::try_init(client)?;
+            let cache = KubeCache::new(client)?;
 
             let node = ContextBuilder::init(self.config.clone(), self._private_key.clone())
                 .await
