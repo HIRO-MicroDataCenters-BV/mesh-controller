@@ -28,7 +28,7 @@ type KindResources = DashMap<NamespacedName, DashMap<UID, ResourceEntry>>;
 pub struct ResourceEntry {
     pub version: Version,
     pub resource: Arc<DynamicObject>,
-    pub tombstone: bool
+    pub tombstone: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -221,10 +221,14 @@ impl KubeCache {
             .or_insert_with(|| ResourceEntry {
                 version,
                 resource: resource.clone(),
-                tombstone: false
+                tombstone: false,
             });
         if version > entry.value().version {
-            *entry.value_mut() = ResourceEntry { version, resource, tombstone: false };
+            *entry.value_mut() = ResourceEntry {
+                version,
+                resource,
+                tombstone: false,
+            };
             if distribute {
                 let _ = tx.send(CacheUpdateProtocol::Update(obj));
             }
@@ -253,10 +257,14 @@ impl KubeCache {
             .or_insert_with(|| ResourceEntry {
                 version,
                 resource: resource.clone(),
-                tombstone: true
+                tombstone: true,
             });
         if version > entry.value().version {
-            *entry.value_mut() = ResourceEntry { version, resource, tombstone: true };
+            *entry.value_mut() = ResourceEntry {
+                version,
+                resource,
+                tombstone: true,
+            };
             let _ = tx.send(CacheUpdateProtocol::Delete(obj));
         }
     }
@@ -278,11 +286,9 @@ impl KubeCache {
                         } else {
                             Some(e.resource.to_owned())
                         }
-                    }).flatten();
-                maybe_object
-                    .map(|object|{
-                        (entry.key().to_owned(), object)
-                    })                
+                    })
+                    .flatten();
+                maybe_object.map(|object| (entry.key().to_owned(), object))
             })
             .collect::<BTreeMap<NamespacedName, Arc<DynamicObject>>>();
         let _ = tx.send(CacheUpdateProtocol::Snapshot {
@@ -300,23 +306,28 @@ impl KubeCache {
 pub mod tests {
 
     use super::*;
-    use crate::{client::kube::FakeKubeApiService, kube::cache::KubeCache};
+    use crate::{client::kube::FakeKubeApiService, kube::cache::KubeCache, tracing::setup_tracing};
+    use anyhow::Result;
+    use tower_http::trace::{DefaultOnRequest, DefaultOnResponse};
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_kube_cache() {
-        //     let service = FakeKubeApiService::new();
-        //     let client = kube::Client::new(service, "default");
+        setup_tracing(Some("=TRACE".to_string()));
+        let service = FakeKubeApiService::new();
+        let client = kube::Client::new(service, "default");
 
-        let client = kube::Client::try_default().await.unwrap();
+        // let client = custom_client().await.unwrap();
+
+        // let client = kube::Client::try_default().await.unwrap();
         let cache = KubeCache::new(client);
         let gvk = GroupVersionKind::gvk("dcp.hiro.io", "v1", "AnyApplication");
         let subscriber = cache.subscribe(&gvk).await.unwrap();
 
         if let CacheUpdateProtocol::Snapshot { resources } = subscriber.recv().unwrap() {
             assert_eq!(resources.len(), 1);
-            let (name, object) = resources.iter().next().unwrap();
-            println!("{:?}", name);
-            // assert_eq!(resources.g, 1);
+            let (name, _) = resources.iter().next().unwrap();
+            assert_eq!(name.name, "nginx-app");
+            assert_eq!(name.namespace, "default");
         }
         // assert_eq!(item, CacheUpdateProtocol::Snapshot{ resources });
 
@@ -334,5 +345,72 @@ pub mod tests {
     //     let subscriber = cache.subscribe(gvk).await.unwrap();
 
     //     cache.shutdown().unwrap();
+    // }
+
+    // async fn custom_client() -> Result<Client> {
+    //     use http::{Request, Response};
+    //     use hyper::body::Incoming;
+    //     use hyper_util::rt::TokioExecutor;
+    //     use std::time::Duration;
+    //     use tower::{BoxError, ServiceBuilder};
+    //     // use tower_http::compression::DecompressionLayer;
+    //     use tower_http::trace::TraceLayer;
+    //     use tracing::{Span, *};
+    //     use bytes::Bytes;
+
+    //     use kube::{
+    //         client::{Body, ConfigExt},
+    //         Api, Client, Config, ResourceExt,
+    //     };
+
+    //     let config = Config::infer().await?;
+    //     let https = config.rustls_https_connector()?;
+    //     let trace_layer = TraceLayer::new_for_http()
+    //         .on_request(DefaultOnRequest::new().level(tracing::Level::INFO))
+    //         .on_response(DefaultOnResponse::new().level(tracing::Level::INFO));
+
+    //     let service = ServiceBuilder::new()
+    //         .layer(config.base_uri_layer())
+    //         .option_layer(config.auth_layer()?)
+    //         .layer(
+    //             TraceLayer::new_for_http()
+    //                 .make_span_with(|request: &Request<Body>| {
+    //                     tracing::debug_span!(
+    //                         "HTTP",
+    //                         http.method = %request.method(),
+    //                         http.url = %request.uri(),
+    //                         http.status_code = tracing::field::Empty,
+    //                         otel.name = %format!("HTTP {}", request.method()),
+    //                         otel.kind = "client",
+    //                         otel.status_code = tracing::field::Empty,
+    //                     )
+    //                 })
+    //                 .on_request(|request: &Request<Body>, _span: &Span| {
+    //                     tracing::debug!("payload: {:?} headers: {:?}", request.body(), request.headers())
+    //                 })
+    //                 .on_response(|response: &Response<Incoming>, latency: Duration, span: &Span| {
+    //                     let status = response.status();
+    //                     // let body = hyper::body::to_bytes(response.body()).await?;
+    //                     span.record("http.status_code", status.as_u16());
+    //                     if status.is_client_error() || status.is_server_error() {
+    //                         span.record("otel.status_code", "ERROR");
+    //                     }
+    //                     // tracing::debug!("body {:?}", body);
+    //                     tracing::debug!("finished in {}ms", latency.as_millis())
+    //                 })
+    //                 .on_body_chunk(|chunk: &Bytes, _latency: Duration, _span: &Span| {
+    //                     debug!("response chunk: {:?}", chunk);
+    //                 })
+    //                 .on_eos(|trailers: Option<&hyper::HeaderMap>, _stream_duration: Duration, _span: &Span| {
+    //                     debug!("end of stream, trailers: {:?}", trailers);
+    //                 }),
+    //         )
+    //         // .layer(ServiceBuilder::new().layer(trace_layer))
+    //         // .layer(trace_layer)
+    //         .map_err(BoxError::from)
+    //         .service(hyper_util::client::legacy::Client::builder(TokioExecutor::new()).build(https));
+
+    //     let client = Client::new(service, config.default_namespace);
+    //     Ok(client)
     // }
 }
