@@ -1,4 +1,7 @@
+use std::collections::BTreeMap;
+
 use kube::api::DynamicObject;
+use std::sync::Arc;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -19,7 +22,11 @@ impl NamespacedName {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
 pub enum CacheUpdateProtocol {
     Update(DynamicObject),
     Delete(DynamicObject),
+    Snapshot {
+        resources: BTreeMap<NamespacedName, Arc<DynamicObject>>,
+    },
 }

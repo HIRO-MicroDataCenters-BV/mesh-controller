@@ -1,4 +1,3 @@
-
 use once_cell::sync::Lazy;
 use p2panda_core::PrivateKey;
 use std::{

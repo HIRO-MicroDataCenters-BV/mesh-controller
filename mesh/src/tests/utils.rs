@@ -1,6 +1,7 @@
 use anyhow::{Result, bail};
 use std::time::{Duration, Instant};
 
+#[allow(dead_code)]
 pub fn wait_for_condition<F>(timeout: Duration, condition: F) -> Result<()>
 where
     F: Fn() -> Result<bool>,

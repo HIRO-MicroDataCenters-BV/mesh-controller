@@ -125,7 +125,9 @@ impl ContextBuilder {
     async fn build_kube_client() -> Result<Client> {
         #[cfg(not(test))]
         {
-            let config = kube::config::Config::incluster().context("failed to load kube config")?;
+            let config = kube::config::Config::infer()
+                .await
+                .context("failed to load kube config")?;
             let client = kube::Client::try_from(config).context("failed to create kube client")?;
             Ok(client)
         }

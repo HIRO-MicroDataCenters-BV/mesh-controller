@@ -12,10 +12,7 @@ use super::fake_mesh::FakeMeshServer;
 pub fn test_state_replication() -> Result<()> {
     setup_tracing(Some("=INFO".into()));
 
-    let TwoNodeMesh {
-        server1,
-        server2,
-    } = create_two_node_mesh()?;
+    let TwoNodeMesh { server1, server2 } = create_two_node_mesh()?;
     info!("environment started");
 
     server1.discard()?;
@@ -43,17 +40,12 @@ pub fn create_two_node_mesh() -> Result<TwoNodeMesh> {
     info!("server1 config {:?} ", config1.node);
     info!("server2 config {:?} ", config2.node);
 
-    let server1 =
-        FakeMeshServer::try_start(config1.clone(), server1_private_key.clone())
-            .context("MeshServer1 start failed")?;
-    let server2 =
-        FakeMeshServer::try_start(config2.clone(), server2_private_key.clone())
-            .context("MeshServer2 start failed")?;
+    let server1 = FakeMeshServer::try_start(config1.clone(), server1_private_key.clone())
+        .context("MeshServer1 start failed")?;
+    let server2 = FakeMeshServer::try_start(config2.clone(), server2_private_key.clone())
+        .context("MeshServer2 start failed")?;
 
-    let mesh = TwoNodeMesh {
-        server1,
-        server2,
-    };
+    let mesh = TwoNodeMesh { server1, server2 };
 
     Ok(mesh)
 }
