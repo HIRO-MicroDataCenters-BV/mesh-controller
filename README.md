@@ -17,7 +17,7 @@
 
 ### Prerequisites
 
-* Rust 1.82.0+
+* Rust 1.86.0+
 
 ### Installation and running
 
