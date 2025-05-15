@@ -1,4 +1,9 @@
-use super::types::{CacheError, CacheUpdateProtocol, NamespacedName};
+use crate::JoinErrToStr;
+
+use super::{
+    subscription::Subscription,
+    types::{CacheError, CacheProtocol, NamespacedName},
+};
 use dashmap::DashMap;
 use futures::StreamExt;
 use kube::{
@@ -6,9 +11,10 @@ use kube::{
     runtime::watcher::{self, Event},
 };
 
-use kube::Client;
-
 use anyhow::{anyhow, bail};
+use futures::future::MapErr;
+use futures::future::Shared;
+use kube::Client;
 use std::{
     collections::BTreeMap,
     sync::{
@@ -18,11 +24,12 @@ use std::{
 };
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
+use tokio_util::task::AbortOnDropHandle;
 use tracing::{error, info};
 
-type UID = String;
-type Version = u64;
-type KindResources = DashMap<NamespacedName, DashMap<UID, ResourceEntry>>;
+pub type UID = String;
+pub type Version = u64;
+pub type KindResources = DashMap<NamespacedName, DashMap<UID, ResourceEntry>>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResourceEntry {
@@ -33,10 +40,12 @@ pub struct ResourceEntry {
 
 #[derive(Debug, Clone)]
 pub struct SubscriptionEntry {
-    pub pool_tx: loole::Sender<CacheUpdateProtocol>,
-    pub subscriber_rx: loole::Receiver<CacheUpdateProtocol>,
+    pub pool_tx: loole::Sender<CacheProtocol>,
+    pub subscriber_rx: loole::Receiver<CacheProtocol>,
     pub cancellation: CancellationToken,
     pub primary_subscriber: u32,
+    #[allow(dead_code)]
+    handle: Shared<MapErr<AbortOnDropHandle<()>, JoinErrToStr>>,
 }
 
 pub struct KubeCache {
@@ -45,7 +54,7 @@ pub struct KubeCache {
     client: Client,
     root: CancellationToken,
     subscriber_id: AtomicU32,
-    subscription_lock: RwLock<()>,
+    mutable_lock: RwLock<()>,
 }
 
 impl KubeCache {
@@ -54,7 +63,7 @@ impl KubeCache {
             root: CancellationToken::new(),
             resources: DashMap::new(),
             subscriptions: DashMap::new(),
-            subscription_lock: RwLock::new(()),
+            mutable_lock: RwLock::new(()),
             subscriber_id: AtomicU32::new(1),
             client,
         }
@@ -89,21 +98,11 @@ impl KubeCache {
     pub async fn subscribe(
         &self,
         gvk: &GroupVersionKind,
-    ) -> anyhow::Result<loole::Receiver<CacheUpdateProtocol>> {
+    ) -> anyhow::Result<loole::Receiver<CacheProtocol>> {
+        let guard = self.mutable_lock.write().await;
         let subscriber_id = self.subscriber_id.fetch_add(1, Ordering::AcqRel);
         let subscription_entry = self.subscriptions.entry(gvk.clone()).or_insert_with(|| {
             let (pool_tx, subscriber_rx) = loole::unbounded();
-            SubscriptionEntry {
-                pool_tx,
-                subscriber_rx,
-                cancellation: self.root.child_token(),
-                primary_subscriber: subscriber_id,
-            }
-        });
-        if subscriber_id != subscription_entry.primary_subscriber {
-            Ok(subscription_entry.subscriber_rx.clone())
-        } else {
-            let subscription = subscription_entry.value();
 
             let resources = self
                 .resources
@@ -111,189 +110,38 @@ impl KubeCache {
                 .or_insert_with(|| Arc::new(DashMap::new()))
                 .value()
                 .clone();
+            let cancelation = self.root.child_token();
+            let subscription = Subscription::new(
+                subscriber_id,
+                self.client.to_owned(),
+                gvk.to_owned(),
+                pool_tx.to_owned(),
+                resources,
+                cancelation.to_owned(),
+            );
+            let handle = subscription.run();
+            SubscriptionEntry {
+                pool_tx,
+                subscriber_rx,
+                cancellation: cancelation.to_owned(),
+                primary_subscriber: subscriber_id,
+                handle,
+            }
+        });
+        drop(guard);
 
-            let token = subscription.cancellation.clone();
-            let tx = subscription.pool_tx.clone();
-            let rx = subscription.subscriber_rx.clone();
-            let client = self.client.clone();
-            let gvk = gvk.clone();
-
-            drop(subscription_entry);
-
-            tokio::spawn(async move {
-                while !token.is_cancelled() {
-                    let stream_result =
-                        KubeCache::run_subscription(&client, &gvk, &tx, &resources, token.clone())
-                            .await;
-
-                    match stream_result {
-                        Ok(_) => {
-                            info!("Event stream ended successfully");
-                            break;
-                        }
-                        Err(e) => {
-                            error!("Error in event stream: {}, restarting", e);
-                        }
-                    }
-                }
-                Ok::<(), anyhow::Error>(())
-            });
-            Ok(rx)
-        }
+        let subscriber_rx = subscription_entry.value().subscriber_rx.clone();
+        Ok(subscriber_rx)
     }
 
-    pub fn unsubscribe(&self, gvk: &GroupVersionKind) -> anyhow::Result<()> {
+    pub async fn unsubscribe(&self, gvk: &GroupVersionKind) -> anyhow::Result<()> {
+        let _guard = self.mutable_lock.write().await;
         if let Some((_, subscription_entry)) = self.subscriptions.remove(gvk) {
             subscription_entry.cancellation.cancel();
             subscription_entry.pool_tx.close();
             self.resources.remove(gvk);
         }
         Ok(())
-    }
-
-    async fn run_subscription(
-        client: &Client,
-        gvk: &GroupVersionKind,
-        tx: &loole::Sender<CacheUpdateProtocol>,
-        resources: &KindResources,
-        cancelation: CancellationToken,
-    ) -> anyhow::Result<()> {
-        let (ar, _caps) = kube::discovery::pinned_kind(&client, &gvk).await?;
-        let api = Api::<DynamicObject>::all_with(client.clone(), &ar);
-        let wc = watcher::Config::default();
-        let event_stream = watcher::watcher(api, wc);
-
-        let mut events = event_stream.boxed();
-        loop {
-            tokio::select! {
-                _ = cancelation.cancelled() => break,
-                event = events.next() => {
-                    match event {
-                        Some(Ok(event)) => {
-                            KubeCache::handle_event(event, &resources, &tx);
-                        }
-                        Some(Err(e)) => {
-                            bail!("Error in event stream {}", e)
-                        }
-                        None => break,
-                    }
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    fn handle_event(
-        event: Event<DynamicObject>,
-        resources: &DashMap<NamespacedName, DashMap<UID, ResourceEntry>>,
-        tx: &loole::Sender<CacheUpdateProtocol>,
-    ) {
-        match event {
-            Event::Init => (),
-            Event::InitApply(obj) => KubeCache::apply_resource(obj, resources, &tx, false),
-            Event::InitDone => KubeCache::send_snapshot(resources, &tx),
-            Event::Apply(obj) => KubeCache::apply_resource(obj, resources, &tx, true),
-            Event::Delete(obj) => KubeCache::delete_resource(obj, resources, &tx),
-        }
-    }
-
-    fn apply_resource(
-        obj: DynamicObject,
-        resources: &DashMap<NamespacedName, DashMap<UID, ResourceEntry>>,
-        tx: &loole::Sender<CacheUpdateProtocol>,
-        distribute: bool,
-    ) {
-        let ns = obj.namespace().unwrap_or_default();
-        let name = obj.name_any();
-        let ns_name = NamespacedName::new(ns, name);
-        let uid = obj.uid().unwrap();
-        let version = obj
-            .resource_version()
-            .map(|v| v.parse::<u64>().unwrap_or(0))
-            .unwrap_or(0);
-        let resource = Arc::new(obj.clone());
-
-        let resource_entries = resources.entry(ns_name).or_insert_with(|| DashMap::new());
-
-        let mut entry = resource_entries
-            .entry(uid)
-            .or_insert_with(|| ResourceEntry {
-                version,
-                resource: resource.clone(),
-                tombstone: false,
-            });
-        if version > entry.value().version {
-            *entry.value_mut() = ResourceEntry {
-                version,
-                resource,
-                tombstone: false,
-            };
-            if distribute {
-                let _ = tx.send(CacheUpdateProtocol::Update(obj));
-            }
-        }
-    }
-
-    fn delete_resource(
-        obj: DynamicObject,
-        resources: &DashMap<NamespacedName, DashMap<UID, ResourceEntry>>,
-        tx: &loole::Sender<CacheUpdateProtocol>,
-    ) {
-        let ns = obj.namespace().unwrap_or_default();
-        let name = obj.name_any();
-        let ns_name = NamespacedName::new(ns, name);
-        let uid = obj.uid().unwrap();
-        let version = obj
-            .resource_version()
-            .map(|v| v.parse::<u64>().unwrap_or(0))
-            .unwrap_or(0);
-        let resource = Arc::new(obj.clone());
-
-        let resource_entries = resources.entry(ns_name).or_insert_with(|| DashMap::new());
-
-        let mut entry = resource_entries
-            .entry(uid)
-            .or_insert_with(|| ResourceEntry {
-                version,
-                resource: resource.clone(),
-                tombstone: true,
-            });
-        if version > entry.value().version {
-            *entry.value_mut() = ResourceEntry {
-                version,
-                resource,
-                tombstone: true,
-            };
-            let _ = tx.send(CacheUpdateProtocol::Delete(obj));
-        }
-    }
-
-    fn send_snapshot(
-        resources: &DashMap<NamespacedName, DashMap<UID, ResourceEntry>>,
-        tx: &loole::Sender<CacheUpdateProtocol>,
-    ) {
-        let snapshot = resources
-            .iter()
-            .flat_map(|entry| {
-                let maybe_object = entry
-                    .value()
-                    .iter()
-                    .max_by_key(|e| e.value().version)
-                    .map(|e| {
-                        if e.tombstone {
-                            None
-                        } else {
-                            Some(e.resource.to_owned())
-                        }
-                    })
-                    .flatten();
-                maybe_object.map(|object| (entry.key().to_owned(), object))
-            })
-            .collect::<BTreeMap<NamespacedName, Arc<DynamicObject>>>();
-        let _ = tx.send(CacheUpdateProtocol::Snapshot {
-            resources: snapshot,
-        });
     }
 
     pub fn shutdown(&self) -> Result<(), CacheError> {
@@ -306,24 +154,43 @@ impl KubeCache {
 pub mod tests {
 
     use super::*;
-    use crate::{client::kube::FakeKubeApiService, kube::cache::KubeCache, tracing::setup_tracing};
+    use crate::{
+        client::kube::FakeKubeApiService,
+        kube::{
+            anyapplication::{
+                AnyApplication, AnyApplicationApplication, AnyApplicationApplicationHelm,
+                AnyApplicationSpec, AnyApplicationStatus,
+            },
+            cache::KubeCache,
+        },
+        tracing::setup_tracing,
+    };
     use anyhow::Result;
-    use tower_http::trace::{DefaultOnRequest, DefaultOnResponse};
+    use kube::api::{ApiResource, ObjectMeta};
+    pub use serde::{Deserialize, Serialize};
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_kube_cache() {
         setup_tracing(Some("=TRACE".to_string()));
+
         let service = FakeKubeApiService::new();
+
+        let gvk = GroupVersionKind::gvk("dcp.hiro.io", "v1", "AnyApplication");
+        let ar = ApiResource::from_gvk(&gvk);
+
+        service.register(&ar);
+        service.store(&gvk, anyapplication());
+
         let client = kube::Client::new(service, "default");
 
         // let client = custom_client().await.unwrap();
 
         // let client = kube::Client::try_default().await.unwrap();
         let cache = KubeCache::new(client);
-        let gvk = GroupVersionKind::gvk("dcp.hiro.io", "v1", "AnyApplication");
+
         let subscriber = cache.subscribe(&gvk).await.unwrap();
 
-        if let CacheUpdateProtocol::Snapshot { resources } = subscriber.recv().unwrap() {
+        if let CacheProtocol::Snapshot { resources } = subscriber.recv().unwrap() {
             assert_eq!(resources.len(), 1);
             let (name, _) = resources.iter().next().unwrap();
             assert_eq!(name.name, "nginx-app");
@@ -331,9 +198,46 @@ pub mod tests {
         }
         // assert_eq!(item, CacheUpdateProtocol::Snapshot{ resources });
 
-        assert!(!cache.unsubscribe(&gvk).is_err());
+        assert!(!cache.unsubscribe(&gvk).await.is_err());
 
         cache.shutdown().unwrap();
+    }
+
+    fn anyapplication() -> DynamicObject {
+        let gvk = GroupVersionKind::gvk("dcp.hiro.io", "v1", "AnyApplication");
+        let ar = ApiResource::from_gvk(&gvk);
+
+        let resource = AnyApplication {
+            metadata: ObjectMeta {
+                name: Some("test".into()),
+                namespace: Some("namespace".into()),
+                ..Default::default()
+            },
+            spec: AnyApplicationSpec {
+                application: AnyApplicationApplication {
+                    helm: Some(AnyApplicationApplicationHelm {
+                        chart: "chart".into(),
+                        version: "1.0.0".into(),
+                        namespace: "namespace".into(),
+                        repository: "repo".into(),
+                        values: None,
+                    }),
+                    resource_selector: None,
+                },
+                placement_strategy: None,
+                recover_strategy: None,
+                zones: 1,
+            },
+            status: Some(AnyApplicationStatus {
+                conditions: None,
+                owner: "owner".into(),
+                placements: None,
+                state: "New".into(),
+            }),
+        };
+        let resource_str = serde_json::to_string(&resource).expect("Resource is not serializable");
+        let object = DynamicObject::new(&resource_str, &ar);
+        object
     }
 
     // #[tokio::test]

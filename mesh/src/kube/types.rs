@@ -23,7 +23,7 @@ impl NamespacedName {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum CacheUpdateProtocol {
+pub enum CacheProtocol {
     Update(DynamicObject),
     Delete(DynamicObject),
     Snapshot {
