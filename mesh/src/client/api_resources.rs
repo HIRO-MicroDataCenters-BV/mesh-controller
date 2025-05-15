@@ -65,7 +65,7 @@ impl ApiResourceHandler {
 }
 
 impl ApiHandler for ApiResourceHandler {
-    type Fut = Pin<Box<dyn Future<Output = Result<ApiResponse, anyhow::Error>> + Send>>;
+    type Fut = Pin<Box<dyn Future<Output = Result<ApiResponse, anyhow::Error>> + Send + Sync>>;
 
     fn get(&mut self, request: ApiRequest) -> Self::Fut {
         let result = self

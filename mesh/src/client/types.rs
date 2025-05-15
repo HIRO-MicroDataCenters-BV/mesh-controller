@@ -3,7 +3,7 @@ use strum_macros::{Display, EnumString};
 
 use super::{request::ApiRequest, response::ApiResponse};
 
-#[derive(Debug, Clone, EnumString, Display)]
+#[derive(Debug, Clone, EnumString, Display, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum ApiServiceType {
     #[strum(serialize = "ApiResources")]
     ApiResources,
@@ -12,7 +12,7 @@ pub enum ApiServiceType {
 }
 
 pub trait ApiHandler {
-    type Fut: Future<Output = Result<ApiResponse, anyhow::Error>> + Send;
+    type Fut: Future<Output = Result<ApiResponse, anyhow::Error>> + Send + Sync;
 
     fn call(&mut self, request: ApiRequest) -> Self::Fut {
         match request.method() {

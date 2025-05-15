@@ -34,7 +34,7 @@ impl ApiRequest {
             .ok_or(anyhow::anyhow!("path and query are not in request"))?;
 
         let (group, version, kind, service) = ApiRequest::parse_uri(path_and_query)?;
-
+        println!("{group}, {version}, {kind:?}, {service}");
         let input = body.collect_bytes().await?;
 
         Ok(ApiRequest {
@@ -51,22 +51,6 @@ impl ApiRequest {
         path_and_query: &PathAndQuery,
     ) -> Result<(String, String, Option<String>, ApiServiceType)> {
         let path = path_and_query.path();
-        let re = Regex::new(r"^/apis/(?P<group>[^/]+)/(?P<version>[^/]+)").unwrap();
-        if let Some(captures) = re.captures(path) {
-            let group = captures
-                .name("group")
-                .map(|m| m.as_str())
-                .unwrap_or("")
-                .into();
-            let version = captures
-                .name("version")
-                .map(|m| m.as_str())
-                .unwrap_or("")
-                .into();
-            let kind = None;
-            let service = ApiServiceType::ApiResources;
-            return Ok((group, version, kind, service));
-        }
         let re = Regex::new(r"^/apis/(?P<group>[^/]+)/(?P<version>[^/]+)/(?P<pluralkind>[^/]+)")
             .unwrap();
         if let Some(captures) = re.captures(path) {
@@ -86,6 +70,23 @@ impl ApiRequest {
                 .unwrap_or("")
                 .into();
             let kind = Some(kind);
+            let service = ApiServiceType::CustomResource;
+            return Ok((group, version, kind, service));
+        }
+
+        let re = Regex::new(r"^/apis/(?P<group>[^/]+)/(?P<version>[^/]+)").unwrap();
+        if let Some(captures) = re.captures(path) {
+            let group = captures
+                .name("group")
+                .map(|m| m.as_str())
+                .unwrap_or("")
+                .into();
+            let version = captures
+                .name("version")
+                .map(|m| m.as_str())
+                .unwrap_or("")
+                .into();
+            let kind = None;
             let service = ApiServiceType::ApiResources;
             return Ok((group, version, kind, service));
         }

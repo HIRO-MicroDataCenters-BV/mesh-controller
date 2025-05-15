@@ -209,8 +209,8 @@ pub mod tests {
 
         let resource = AnyApplication {
             metadata: ObjectMeta {
-                name: Some("test".into()),
-                namespace: Some("namespace".into()),
+                name: Some("nginx-app".into()),
+                namespace: Some("default".into()),
                 ..Default::default()
             },
             spec: AnyApplicationSpec {
