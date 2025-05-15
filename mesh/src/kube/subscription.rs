@@ -18,11 +18,12 @@ use kube::{
     api::{Api, DynamicObject, ResourceExt},
     runtime::watcher::{self, Event},
 };
+use std::time::Duration;
 use std::{collections::BTreeMap, sync::Arc};
 use tokio::task::JoinError;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::AbortOnDropHandle;
-use tracing::info;
+use tracing::{error, info};
 
 pub struct Subscription {
     inner: Arc<SubscriptionInner>,
@@ -53,8 +54,9 @@ impl Subscription {
 
         let handle = tokio::spawn(async move {
             while !inner.cancelation.is_cancelled() {
-                if let Err(_error) = inner.run_inner().await {
-                    info!("Retrying subscription");
+                if let Err(error) = inner.run_inner().await {
+                    tokio::time::sleep(Duration::from_millis(1000)).await;
+                    error!("Retrying subscription: {error}");
                 } else {
                     info!("Stream stopped.");
                     break;
@@ -84,7 +86,6 @@ pub struct SubscriptionInner {
 }
 
 impl SubscriptionInner {
-
     async fn run_inner(&self) -> Result<()> {
         let (ar, _caps) = kube::discovery::pinned_kind(&self.client, &self.gvk).await?;
         let api = Api::<DynamicObject>::all_with(self.client.clone(), &ar);
