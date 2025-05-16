@@ -11,8 +11,8 @@ pub struct ResourceEntry {
 }
 
 pub struct Storage {
-    pub metadata: DashMap<GroupVersionKind, Vec<ApiResource>>,
-    pub resources: DashMap<GroupVersionKind, DashMap<NamespacedName, ResourceEntry>>,
+    metadata: DashMap<GroupVersionKind, Vec<ApiResource>>,
+    resources: DashMap<GroupVersionKind, DashMap<NamespacedName, ResourceEntry>>,
     resource_versions: AtomicU64,
     resource_uids: AtomicU64,
 }
@@ -56,5 +56,55 @@ impl Storage {
         }
         resources.insert(ns_name, ResourceEntry { version, resource });
         Ok(())
+    }
+
+    pub fn get_api_resources(&self, group: &str, version: &str) -> Vec<ApiResource> {
+        self.metadata
+            .iter()
+            .filter(|entry| entry.key().group == group && entry.key().version == version)
+            .flat_map(|v| v.value().to_owned())
+            .collect::<Vec<ApiResource>>()
+    }
+
+    pub fn get_api_resource(
+        &self,
+        group: &str,
+        version: &str,
+        kind_plural: &str,
+    ) -> Option<ApiResource> {
+        self.metadata
+            .iter()
+            .filter(|entry| entry.key().group == group && entry.key().version == version)
+            .flat_map(|v| v.value().to_owned())
+            .find(|ar| ar.plural == kind_plural)
+    }
+
+    pub fn find_objects(
+        &self,
+        group: &str,
+        version: &str,
+        kind_plural: &str,
+    ) -> Option<(ApiResource, Vec<DynamicObject>)> {
+        if let Some(api_resource) = self.get_api_resource(group, version, kind_plural) {
+            let gvk = GroupVersionKind::gvk(
+                &api_resource.group,
+                &api_resource.version,
+                &api_resource.kind,
+            );
+
+            let resources = self
+                .resources
+                .get(&gvk)
+                .map(|v| {
+                    v.value()
+                        .iter()
+                        .map(|v| v.value().resource.clone())
+                        .collect()
+                })
+                .unwrap_or_default();
+            Some((api_resource, resources))
+        } else {
+            None
+        }
     }
 }

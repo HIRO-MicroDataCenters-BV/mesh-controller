@@ -19,7 +19,6 @@ use std::sync::{
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::AbortOnDropHandle;
-use tracing::{error, info};
 
 pub type UID = String;
 pub type Version = u64;
@@ -63,7 +62,7 @@ impl KubeCache {
         }
     }
 
-    pub async fn get_direct(
+    pub async fn direct_get(
         &self,
         gvk: &GroupVersionKind,
         namspaced_name: &NamespacedName,
@@ -76,7 +75,7 @@ impl KubeCache {
         Ok(result)
     }
 
-    pub async fn update_direct(&self, resource: DynamicObject) -> Result<()> {
+    pub async fn direct_update(&self, resource: DynamicObject) -> Result<()> {
         let gvk = resource.get_gvk()?;
         let ns = resource.namespace().unwrap_or_else(|| "default".into());
         let name = resource.name_any();
@@ -199,9 +198,6 @@ pub mod tests {
     }
 
     fn anyapplication() -> DynamicObject {
-        let gvk = GroupVersionKind::gvk("dcp.hiro.io", "v1", "AnyApplication");
-        let ar = ApiResource::from_gvk(&gvk);
-
         let resource = AnyApplication {
             metadata: ObjectMeta {
                 name: Some("nginx-app".into()),

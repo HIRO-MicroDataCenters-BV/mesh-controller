@@ -1,6 +1,7 @@
 use std::{pin::Pin, sync::Arc};
 
 use super::{request::ApiRequest, response::ApiResponse, storage::Storage, types::ApiHandler};
+use anyhow::anyhow;
 use http::{Response, StatusCode};
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::APIResourceList;
 use kube::{
@@ -16,56 +17,47 @@ impl CustomResourceHandler {
     pub fn new(storage: Arc<Storage>) -> CustomResourceHandler {
         CustomResourceHandler { storage }
     }
-    fn object_list(ar: &ApiResource, objects: Vec<DynamicObject>) -> ObjectList<DynamicObject> {
-        let result: ObjectList<DynamicObject> = ObjectList {
-            types: TypeMeta {
-                api_version: ar.api_version.to_owned(),
-                kind: format!("{}List", ar.kind),
-            },
-            metadata: ListMeta {
-                resource_version: Some("1".into()),
-                ..Default::default()
-            },
-            items: objects,
-        };
-        result
-    }
 }
 
 impl ApiHandler for CustomResourceHandler {
     type Fut = Pin<Box<dyn Future<Output = Result<ApiResponse, anyhow::Error>> + Send + Sync>>;
 
     fn get(&mut self, request: ApiRequest) -> Self::Fut {
-        let response = self
+        let maybe_response = self
             .storage
-            .metadata
-            .iter()
-            .find(|entry| {
-                entry.key().group == request.group && entry.key().version == request.version
-                // && &entry.key().kind == request.kind.as_ref().unwrap()
-            })
-            .map(|v| {
-                let gvk = v.key();
-                let resources = self
-                    .storage
-                    .resources
-                    .get(gvk)
-                    .map(|v| {
-                        v.value()
-                            .iter()
-                            .map(|v| v.value().resource.clone())
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                let ar = v.value().first().clone().unwrap();
-                let list = CustomResourceHandler::object_list(&ar, resources);
-                list
-            })
-            .unwrap();
+            .find_objects(
+                &request.group,
+                &request.version,
+                &request.kind_plural.unwrap(),
+            )
+            .map(|(ar, objects)| to_object_list(&ar, objects));
 
         Box::pin(async {
-            let api_response = ApiResponse::try_from(StatusCode::OK, response);
-            api_response
+            maybe_response
+                .map(|response| ApiResponse::try_from(StatusCode::OK, response))
+                .unwrap_or_else(|| Ok(ApiResponse::new(StatusCode::NOT_FOUND, String::new())))
         })
+    }
+}
+
+fn to_object_list(ar: &ApiResource, objects: Vec<DynamicObject>) -> ObjectList<DynamicObject> {
+    let resource_version = objects
+        .iter()
+        .flat_map(|obj| &obj.metadata.resource_version)
+        .map(|v| v.parse::<u64>().unwrap_or(0))
+        .max()
+        .map(|v| v.to_string())
+        .unwrap_or("0".into());
+
+    ObjectList {
+        types: TypeMeta {
+            api_version: ar.api_version.to_owned(),
+            kind: format!("{}List", ar.kind),
+        },
+        metadata: ListMeta {
+            resource_version: Some(resource_version),
+            ..Default::default()
+        },
+        items: objects,
     }
 }

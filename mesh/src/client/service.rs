@@ -3,15 +3,14 @@ use crate::client::request::ApiRequest;
 use crate::client::resource_handler::CustomResourceHandler;
 use crate::client::types::{ApiHandler, ApiServiceType};
 
-use http::{Method, Request, Response};
+use http::Request;
 use kube::api::{ApiResource, DynamicObject, GroupVersionKind};
 use kube::client::Body;
 
 use anyhow::Result;
-use anyhow::{anyhow, bail};
 use std::sync::Arc;
 use std::task::Poll;
-use std::{error::Error, pin::Pin, task::Context};
+use std::{pin::Pin, task::Context};
 use tower_service::Service;
 use tracing::{info, trace};
 
@@ -39,9 +38,7 @@ impl FakeKubeApiService {
     }
 
     pub fn register(&self, ar: &ApiResource) {
-        let gvk = GroupVersionKind::gvk(&ar.group, &ar.version, &ar.kind);
-        let mut entry = self.storage.metadata.entry(gvk).or_insert_with(|| vec![]);
-        entry.value_mut().push(ar.clone())
+        self.storage.register(ar);
     }
 
     pub fn store(&self, resource: DynamicObject) -> Result<()> {

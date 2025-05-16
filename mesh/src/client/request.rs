@@ -20,7 +20,7 @@ pub struct ApiRequest {
 
     pub version: String,
 
-    pub kind: Option<String>,
+    pub kind_plural: Option<String>,
 
     pub service: ApiServiceType,
 }
@@ -43,7 +43,7 @@ impl ApiRequest {
             input,
             group,
             version,
-            kind,
+            kind_plural: kind,
             service,
         })
     }
