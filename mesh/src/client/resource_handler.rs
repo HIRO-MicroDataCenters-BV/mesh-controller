@@ -3,7 +3,10 @@ use std::{pin::Pin, sync::Arc};
 use super::{request::ApiRequest, response::ApiResponse, storage::Storage, types::ApiHandler};
 use http::{Response, StatusCode};
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::APIResourceList;
-use kube::{api::ApiResource, client::Body};
+use kube::{
+    api::{ApiResource, DynamicObject, ListMeta, ObjectList, TypeMeta},
+    client::Body,
+};
 
 pub struct CustomResourceHandler {
     storage: Arc<Storage>,
@@ -13,71 +16,53 @@ impl CustomResourceHandler {
     pub fn new(storage: Arc<Storage>) -> CustomResourceHandler {
         CustomResourceHandler { storage }
     }
-
-    fn api_resource_list_response(
-        &self,
-        group: &str,
-        version: &str,
-        ar: Vec<ApiResource>,
-    ) -> APIResourceList {
-        let resources = ar
-            .iter()
-            .flat_map(|r| CustomResourceHandler::api_resources(r))
-            .collect::<Vec<k8s_openapi::apimachinery::pkg::apis::meta::v1::APIResource>>();
-        let object = APIResourceList {
-            group_version: format!("{}/{}", group, version),
-            resources,
+    fn object_list(ar: &ApiResource, objects: Vec<DynamicObject>) -> ObjectList<DynamicObject> {
+        let result: ObjectList<DynamicObject> = ObjectList {
+            types: TypeMeta {
+                api_version: ar.api_version.to_owned(),
+                kind: format!("{}List", ar.kind),
+            },
+            metadata: ListMeta {
+                resource_version: Some("1".into()),
+                ..Default::default()
+            },
+            items: objects,
         };
-        object
-    }
-
-    fn api_resources(
-        ar: &ApiResource,
-    ) -> Vec<k8s_openapi::apimachinery::pkg::apis::meta::v1::APIResource> {
-        vec![
-            k8s_openapi::apimachinery::pkg::apis::meta::v1::APIResource {
-                name: ar.plural.clone(),
-                singular_name: ar.kind.to_lowercase(),
-                kind: ar.kind.clone(),
-                namespaced: true,
-                verbs: vec![
-                    "delete".into(),
-                    "deletecollection".into(),
-                    "get".into(),
-                    "list".into(),
-                    "patch".into(),
-                    "create".into(),
-                    "update".into(),
-                    "watch".into(),
-                ],
-                ..Default::default()
-            },
-            k8s_openapi::apimachinery::pkg::apis::meta::v1::APIResource {
-                name: format!("{}/status", ar.plural),
-                singular_name: String::new(),
-                kind: ar.kind.clone(),
-                namespaced: true,
-                verbs: vec!["get".into(), "patch".into(), "update".into()],
-                ..Default::default()
-            },
-        ]
+        result
     }
 }
 
 impl ApiHandler for CustomResourceHandler {
-    type Fut = Pin<Box<dyn Future<Output = Result<ApiResponse, anyhow::Error>> + Send>>;
+    type Fut = Pin<Box<dyn Future<Output = Result<ApiResponse, anyhow::Error>> + Send + Sync>>;
 
     fn get(&mut self, request: ApiRequest) -> Self::Fut {
-        let result = self
+        let response = self
             .storage
             .metadata
             .iter()
-            .filter(|entry| {
+            .find(|entry| {
                 entry.key().group == request.group && entry.key().version == request.version
+                // && &entry.key().kind == request.kind.as_ref().unwrap()
             })
-            .flat_map(|v| v.value().clone())
-            .collect::<Vec<ApiResource>>();
-        let response = self.api_resource_list_response("dcp.hiro.io", "v1", result);
+            .map(|v| {
+                let gvk = v.key();
+                let resources = self
+                    .storage
+                    .resources
+                    .get(gvk)
+                    .map(|v| {
+                        v.value()
+                            .iter()
+                            .map(|v| v.value().resource.clone())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let ar = v.value().first().clone().unwrap();
+                let list = CustomResourceHandler::object_list(&ar, resources);
+                list
+            })
+            .unwrap();
+
         Box::pin(async {
             let api_response = ApiResponse::try_from(StatusCode::OK, response);
             api_response
