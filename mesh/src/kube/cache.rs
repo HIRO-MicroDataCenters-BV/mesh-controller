@@ -4,23 +4,17 @@ use super::{
     subscription::Subscription,
     types::{CacheError, CacheProtocol, NamespacedName},
 };
+use crate::kube::dynamic_object_ext::DynamicObjectExt;
 use dashmap::DashMap;
-use futures::StreamExt;
-use kube::{
-    api::{Api, DynamicObject, GroupVersionKind, PostParams, ResourceExt},
-    runtime::watcher::{self, Event},
-};
+use kube::api::{Api, DynamicObject, GroupVersionKind, PostParams, ResourceExt};
 
-use anyhow::{anyhow, bail};
+use anyhow::Result;
 use futures::future::MapErr;
 use futures::future::Shared;
 use kube::Client;
-use std::{
-    collections::BTreeMap,
-    sync::{
-        Arc,
-        atomic::{AtomicU32, Ordering},
-    },
+use std::sync::{
+    Arc,
+    atomic::{AtomicU32, Ordering},
 };
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
@@ -73,23 +67,24 @@ impl KubeCache {
         &self,
         gvk: &GroupVersionKind,
         namspaced_name: &NamespacedName,
-    ) -> anyhow::Result<Option<DynamicObject>> {
+    ) -> Result<DynamicObject> {
         let ns = &namspaced_name.namespace;
         let name = &namspaced_name.name;
         let (ar, _caps) = kube::discovery::pinned_kind(&self.client, &gvk).await?;
         let api = Api::<DynamicObject>::namespaced_with(self.client.clone(), &ns, &ar);
         let result = api.get(name).await?;
-        Ok(Some(result))
+        Ok(result)
     }
 
-    pub async fn update_direct(&self, resource: DynamicObject) -> anyhow::Result<()> {
-        let ns = resource.namespace().unwrap_or_default();
+    pub async fn update_direct(&self, resource: DynamicObject) -> Result<()> {
+        let gvk = resource.get_gvk()?;
+        let ns = resource.namespace().unwrap_or_else(|| "default".into());
         let name = resource.name_any();
-        let gvk = GroupVersionKind::gvk("", "", "");
-        let (ar, _caps) = kube::discovery::pinned_kind(&self.client, &gvk).await?;
-        let api = Api::<DynamicObject>::namespaced_with(self.client.clone(), &ns, &ar);
-        let params = PostParams::default();
 
+        let (ar, _) = kube::discovery::pinned_kind(&self.client, &gvk).await?;
+        let api = Api::<DynamicObject>::namespaced_with(self.client.clone(), &ns, &ar);
+
+        let params = PostParams::default();
         api.replace(&name, &params, &resource).await?;
 
         Ok(())
@@ -179,7 +174,7 @@ pub mod tests {
         let ar = ApiResource::from_gvk(&gvk);
 
         service.register(&ar);
-        service.store(&gvk, anyapplication()).unwrap();
+        service.store(anyapplication()).unwrap();
 
         let client = kube::Client::new(service, "default");
 

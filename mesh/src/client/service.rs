@@ -1,11 +1,8 @@
 use crate::client::api_resources::ApiResourceHandler;
 use crate::client::request::ApiRequest;
 use crate::client::resource_handler::CustomResourceHandler;
-use crate::client::storage::ResourceEntry;
 use crate::client::types::{ApiHandler, ApiServiceType};
-use crate::kube::types::NamespacedName;
 
-use dashmap::DashMap;
 use http::{Method, Request, Response};
 use kube::api::{ApiResource, DynamicObject, GroupVersionKind};
 use kube::client::Body;
@@ -19,10 +16,12 @@ use tower_service::Service;
 use tracing::{info, trace};
 
 use super::response::ApiResponse;
+use super::router::ApiRequestRouter;
 use super::storage::Storage;
 
 pub struct FakeKubeApiService {
     storage: Arc<Storage>,
+    router: ApiRequestRouter,
 }
 
 impl FakeKubeApiService {
@@ -31,10 +30,12 @@ impl FakeKubeApiService {
         // use http::{Request, Response};
         // use kube::client::Body;
         // let (mock_service, handle) = mock::pair::<Request<Body>, Response<Body>>();
-
-        FakeKubeApiService {
-            storage: Arc::new(Storage::new()),
-        }
+        let storage = Arc::new(Storage::new());
+        let router = ApiRequestRouter::new().handler(
+            ApiServiceType::ApiResources,
+            Arc::new(ApiResourceHandler::new(storage.clone())),
+        );
+        FakeKubeApiService { storage, router }
     }
 
     pub fn register(&self, ar: &ApiResource) {
@@ -43,34 +44,8 @@ impl FakeKubeApiService {
         entry.value_mut().push(ar.clone())
     }
 
-    pub fn store(&self, gvk: &GroupVersionKind, resource: DynamicObject) -> Result<()> {
-        if !self.storage.metadata.contains_key(gvk) {
-            bail!("Resource {gvk:?} is not registred.");
-        }
-        let resources = self
-            .storage
-            .resources
-            .entry(gvk.to_owned())
-            .or_insert_with(|| DashMap::new());
-        let name = resource
-            .metadata
-            .name
-            .to_owned()
-            .ok_or(anyhow!("name is expected"))?;
-        let namespace = resource
-            .metadata
-            .namespace
-            .to_owned()
-            .ok_or(anyhow!("namespace is expected"))?;
-        let ns_name = NamespacedName::new(name, namespace);
-        resources.insert(
-            ns_name,
-            ResourceEntry {
-                version: 1,
-                resource,
-            },
-        );
-        Ok(())
+    pub fn store(&self, resource: DynamicObject) -> Result<()> {
+        self.storage.store(resource)
     }
 }
 
@@ -86,7 +61,6 @@ impl Service<Request<Body>> for FakeKubeApiService {
     fn call(&mut self, req: Request<Body>) -> Self::Future {
         let storage = self.storage.clone();
         Box::pin(async move {
-            trace!("request {req:?}");
             let maybe_api_request = ApiRequest::build(req).await;
             match maybe_api_request {
                 Ok(api_request) => match api_request.service {

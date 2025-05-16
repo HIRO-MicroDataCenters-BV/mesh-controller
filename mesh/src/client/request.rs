@@ -8,6 +8,7 @@ use http::request::Parts;
 use http::uri::PathAndQuery;
 use kube::client::Body;
 use regex::Regex;
+use tracing::trace;
 
 #[derive(Debug, Clone)]
 pub struct ApiRequest {
@@ -34,7 +35,7 @@ impl ApiRequest {
             .ok_or(anyhow::anyhow!("path and query are not in request"))?;
 
         let (group, version, kind, service) = ApiRequest::parse_uri(path_and_query)?;
-        println!("{group}, {version}, {kind:?}, {service}");
+        trace!("{group}, {version}, {kind:?}, {service}");
         let input = body.collect_bytes().await?;
 
         Ok(ApiRequest {

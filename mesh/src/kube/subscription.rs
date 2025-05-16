@@ -1,3 +1,4 @@
+use super::dynamic_object_ext::DynamicObjectExt;
 use super::types::NamespacedName;
 use super::{
     cache::{ResourceEntry, UID},
@@ -164,9 +165,7 @@ impl SubscriptionInner {
         resources: &DashMap<NamespacedName, DashMap<UID, ResourceEntry>>,
         tx: &loole::Sender<CacheProtocol>,
     ) {
-        let ns = obj.namespace().unwrap_or_default();
-        let name = obj.name_any();
-        let ns_name = NamespacedName::new(ns, name);
+        let ns_name = obj.get_namespaced_name();
         let uid = obj.uid().unwrap();
         let version = obj
             .resource_version()
