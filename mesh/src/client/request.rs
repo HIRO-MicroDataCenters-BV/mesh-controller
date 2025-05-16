@@ -8,7 +8,19 @@ use http::request::Parts;
 use http::uri::PathAndQuery;
 use kube::client::Body;
 use regex::Regex;
-use tracing::trace;
+
+#[derive(Debug, Clone)]
+pub enum Args {
+    ApiResource {
+        group: String,
+        version: String,
+    },
+    Resource {
+        group: String,
+        version: String,
+        kind_plural: String,
+    },
+}
 
 #[derive(Debug, Clone)]
 pub struct ApiRequest {
@@ -16,13 +28,9 @@ pub struct ApiRequest {
 
     pub input: Bytes,
 
-    pub group: String,
-
-    pub version: String,
-
-    pub kind_plural: Option<String>,
-
     pub service: ApiServiceType,
+
+    pub args: Args,
 }
 
 impl ApiRequest {
@@ -34,26 +42,22 @@ impl ApiRequest {
             .path_and_query()
             .ok_or(anyhow::anyhow!("path and query are not in request"))?;
 
-        let (group, version, kind, service) = ApiRequest::parse_uri(path_and_query)?;
-        trace!("{group}, {version}, {kind:?}, {service}");
+        let (kube, service) = ApiRequest::parse_uri(path_and_query)?;
+
         let input = body.collect_bytes().await?;
 
         Ok(ApiRequest {
             parts,
             input,
-            group,
-            version,
-            kind_plural: kind,
+            args: kube,
             service,
         })
     }
 
-    fn parse_uri(
-        path_and_query: &PathAndQuery,
-    ) -> Result<(String, String, Option<String>, ApiServiceType)> {
+    fn parse_uri(path_and_query: &PathAndQuery) -> Result<(Args, ApiServiceType)> {
         let path = path_and_query.path();
         let re = Regex::new(r"^/apis/(?P<group>[^/]+)/(?P<version>[^/]+)/(?P<pluralkind>[^/]+)")
-            .unwrap();
+            .unwrap(); // TDOO
         if let Some(captures) = re.captures(path) {
             let group = captures
                 .name("group")
@@ -65,14 +69,20 @@ impl ApiRequest {
                 .map(|m| m.as_str())
                 .unwrap_or("")
                 .into();
-            let kind = captures
+            let kind_plural = captures
                 .name("pluralkind")
                 .map(|m| m.as_str())
                 .unwrap_or("")
                 .into();
-            let kind = Some(kind);
-            let service = ApiServiceType::CustomResource;
-            return Ok((group, version, kind, service));
+            let service = ApiServiceType::Resource;
+            return Ok((
+                Args::Resource {
+                    group,
+                    version,
+                    kind_plural,
+                },
+                service,
+            ));
         }
 
         let re = Regex::new(r"^/apis/(?P<group>[^/]+)/(?P<version>[^/]+)").unwrap();
@@ -87,9 +97,8 @@ impl ApiRequest {
                 .map(|m| m.as_str())
                 .unwrap_or("")
                 .into();
-            let kind = None;
             let service = ApiServiceType::ApiResources;
-            return Ok((group, version, kind, service));
+            return Ok((Args::ApiResource { group, version }, service));
         }
 
         bail!("unknown path {path}")

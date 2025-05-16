@@ -1,8 +1,8 @@
 use crate::client::request::ApiRequest;
-use crate::client::types::{ApiHandler, ApiServiceType};
+use crate::client::types::ApiServiceType;
 
 use http::Request;
-use kube::api::{ApiResource, DynamicObject, GroupVersionKind};
+use kube::api::{ApiResource, DynamicObject};
 use kube::client::Body;
 
 use anyhow::Result;
@@ -10,31 +10,36 @@ use std::sync::Arc;
 use std::task::Poll;
 use std::{pin::Pin, task::Context};
 use tower_service::Service;
-use tracing::{info, trace};
 
 use super::handlers::api_resource::ApiResourceHandler;
-use super::handlers::resource::CustomResourceHandler;
+use super::handlers::resource::ResourceHandler;
 use super::response::ApiResponse;
 use super::router::ApiRequestRouter;
 use super::storage::Storage;
 
 pub struct FakeKubeApiService {
     storage: Arc<Storage>,
-    router: ApiRequestRouter,
+    router: Arc<ApiRequestRouter>,
 }
 
 impl FakeKubeApiService {
     pub fn new() -> Self {
-        // use tower_test::mock;
-        // use http::{Request, Response};
-        // use kube::client::Body;
-        // let (mock_service, handle) = mock::pair::<Request<Body>, Response<Body>>();
         let storage = Arc::new(Storage::new());
-        let router = ApiRequestRouter::new().handler(
-            ApiServiceType::ApiResources,
-            Arc::new(ApiResourceHandler::new(storage.clone())),
-        );
-        FakeKubeApiService { storage, router }
+
+        let router = ApiRequestRouter::new()
+            .with_handler(
+                ApiServiceType::ApiResources,
+                Arc::new(ApiResourceHandler::new(storage.clone())),
+            )
+            .with_handler(
+                ApiServiceType::Resource,
+                Arc::new(ResourceHandler::new(storage.clone())),
+            );
+
+        FakeKubeApiService {
+            storage,
+            router: Arc::new(router),
+        }
     }
 
     pub fn register(&self, ar: &ApiResource) {
@@ -56,24 +61,21 @@ impl Service<Request<Body>> for FakeKubeApiService {
     }
 
     fn call(&mut self, req: Request<Body>) -> Self::Future {
-        let storage = self.storage.clone();
+        let router = self.router.clone();
         Box::pin(async move {
             let maybe_api_request = ApiRequest::build(req).await;
             match maybe_api_request {
-                Ok(api_request) => match api_request.service {
-                    ApiServiceType::ApiResources => {
-                        let mut handler = ApiResourceHandler::new(storage);
-                        let response = handler.call(api_request).await;
-                        return response.and_then(|v| v.to_http_response());
-                    }
-                    ApiServiceType::CustomResource => {
-                        let mut handler = CustomResourceHandler::new(storage);
-                        let response = handler.call(api_request).await;
-                        return response.and_then(|v| v.to_http_response());
-                    }
-                },
+                Ok(req) => {
+                    let response = router.handle(req).await;
+                    return response.and_then(|v| v.to_http_response());
+                }
                 Err(error) => ApiResponse::from(error).to_http_response(),
             }
         })
     }
 }
+
+// use tower_test::mock;
+// use http::{Request, Response};
+// use kube::client::Body;
+// let (mock_service, handle) = mock::pair::<Request<Body>, Response<Body>>();

@@ -26,6 +26,8 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{error, info};
 
+const STREAM_RECONNECT_DELAY_MS: u64 = 1000;
+
 pub struct Subscription {
     inner: Arc<SubscriptionInner>,
 }
@@ -56,7 +58,7 @@ impl Subscription {
         let handle = tokio::spawn(async move {
             while !inner.cancelation.is_cancelled() {
                 if let Err(error) = inner.run_inner().await {
-                    tokio::time::sleep(Duration::from_millis(1000)).await;
+                    tokio::time::sleep(Duration::from_millis(STREAM_RECONNECT_DELAY_MS)).await;
                     error!("Retrying subscription: {error}");
                 } else {
                     info!("Stream stopped.");
@@ -65,11 +67,9 @@ impl Subscription {
             }
         });
 
-        let drop_handle = AbortOnDropHandle::new(handle)
+        AbortOnDropHandle::new(handle)
             .map_err(Box::new(|e: JoinError| e.to_string()) as JoinErrToStr)
-            .shared();
-
-        drop_handle
+            .shared()
     }
 
     pub fn stop(self) {
@@ -116,10 +116,10 @@ impl SubscriptionInner {
     ) {
         match event {
             Event::Init => (),
-            Event::InitApply(obj) => SubscriptionInner::apply_resource(obj, resources, &tx, false),
-            Event::InitDone => SubscriptionInner::send_snapshot(resources, &tx),
-            Event::Apply(obj) => SubscriptionInner::apply_resource(obj, resources, &tx, true),
-            Event::Delete(obj) => SubscriptionInner::delete_resource(obj, resources, &tx),
+            Event::InitApply(obj) => SubscriptionInner::apply_resource(obj, resources, tx, false),
+            Event::InitDone => SubscriptionInner::send_snapshot(resources, tx),
+            Event::Apply(obj) => SubscriptionInner::apply_resource(obj, resources, tx, true),
+            Event::Delete(obj) => SubscriptionInner::delete_resource(obj, resources, tx),
         }
     }
 
@@ -139,7 +139,7 @@ impl SubscriptionInner {
             .unwrap_or(0);
         let resource = Arc::new(obj.clone());
 
-        let resource_entries = resources.entry(ns_name).or_insert_with(|| DashMap::new());
+        let resource_entries = resources.entry(ns_name).or_default();
 
         let mut entry = resource_entries
             .entry(uid)
@@ -173,7 +173,7 @@ impl SubscriptionInner {
             .unwrap_or(0);
         let resource = Arc::new(obj.clone());
 
-        let resource_entries = resources.entry(ns_name).or_insert_with(|| DashMap::new());
+        let resource_entries = resources.entry(ns_name).or_default();
 
         let mut entry = resource_entries
             .entry(uid)
@@ -203,20 +203,17 @@ impl SubscriptionInner {
                     .value()
                     .iter()
                     .max_by_key(|e| e.value().version)
-                    .map(|e| {
+                    .and_then(|e| {
                         if e.tombstone {
                             None
                         } else {
                             Some(e.resource.to_owned())
                         }
-                    })
-                    .flatten();
+                    });
                 maybe_object.map(|object| (entry.key().to_owned(), object))
             })
             .collect::<BTreeMap<NamespacedName, Arc<DynamicObject>>>();
 
-        let _ = tx.send(CacheProtocol::Snapshot {
-            resources: snapshot,
-        });
+        let _ = tx.send(CacheProtocol::Snapshot { snapshot });
     }
 }

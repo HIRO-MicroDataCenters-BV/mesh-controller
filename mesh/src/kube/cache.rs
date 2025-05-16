@@ -6,7 +6,7 @@ use super::{
 };
 use crate::kube::dynamic_object_ext::DynamicObjectExt;
 use dashmap::DashMap;
-use kube::api::{Api, DynamicObject, GroupVersionKind, PostParams, ResourceExt};
+use kube::api::{Api, DynamicObject, GroupVersionKind, PostParams};
 
 use anyhow::Result;
 use futures::future::MapErr;
@@ -69,22 +69,22 @@ impl KubeCache {
     ) -> Result<DynamicObject> {
         let ns = &namspaced_name.namespace;
         let name = &namspaced_name.name;
-        let (ar, _caps) = kube::discovery::pinned_kind(&self.client, &gvk).await?;
-        let api = Api::<DynamicObject>::namespaced_with(self.client.clone(), &ns, &ar);
+        let (ar, _caps) = kube::discovery::pinned_kind(&self.client, gvk).await?;
+        let api = Api::<DynamicObject>::namespaced_with(self.client.clone(), ns, &ar);
         let result = api.get(name).await?;
         Ok(result)
     }
 
     pub async fn direct_update(&self, resource: DynamicObject) -> Result<()> {
         let gvk = resource.get_gvk()?;
-        let ns = resource.namespace().unwrap_or_else(|| "default".into());
-        let name = resource.name_any();
+        let ns_name = resource.get_namespaced_name();
 
         let (ar, _) = kube::discovery::pinned_kind(&self.client, &gvk).await?;
-        let api = Api::<DynamicObject>::namespaced_with(self.client.clone(), &ns, &ar);
+        let api =
+            Api::<DynamicObject>::namespaced_with(self.client.clone(), &ns_name.namespace, &ar);
 
         let params = PostParams::default();
-        api.replace(&name, &params, &resource).await?;
+        api.replace(&ns_name.name, &params, &resource).await?;
 
         Ok(())
     }
@@ -159,12 +159,11 @@ pub mod tests {
         },
         tracing::setup_tracing,
     };
-    use anyhow::Result;
     use kube::api::{ApiResource, ObjectMeta};
     pub use serde::{Deserialize, Serialize};
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn test_kube_cache() {
+    async fn test_snapshot() {
         setup_tracing(Some("=TRACE".to_string()));
 
         let service = FakeKubeApiService::new();
@@ -177,20 +176,16 @@ pub mod tests {
 
         let client = kube::Client::new(service, "default");
 
-        // let client = custom_client().await.unwrap();
-
-        // let client = kube::Client::try_default().await.unwrap();
         let cache = KubeCache::new(client);
 
         let subscriber = cache.subscribe(&gvk).await.unwrap();
 
-        if let CacheProtocol::Snapshot { resources } = subscriber.recv().unwrap() {
-            assert_eq!(resources.len(), 1);
-            let (name, _) = resources.iter().next().unwrap();
+        if let CacheProtocol::Snapshot { snapshot } = subscriber.recv().unwrap() {
+            assert_eq!(snapshot.len(), 1);
+            let (name, _) = snapshot.iter().next().unwrap();
             assert_eq!(name.name, "nginx-app");
             assert_eq!(name.namespace, "default");
         }
-        // assert_eq!(item, CacheUpdateProtocol::Snapshot{ resources });
 
         assert!(!cache.unsubscribe(&gvk).await.is_err());
 
@@ -229,95 +224,5 @@ pub mod tests {
         let resource_str = serde_json::to_string(&resource).expect("Resource is not serializable");
         let object: DynamicObject = serde_json::from_str(&resource_str).unwrap();
         object
-    }
-
-    // #[tokio::test]
-    // async fn test_kube_cache() {
-    //     let service = FakeKubeApiService::new();
-    //     let client = kube::Client::new(service, "default");
-    //     let cache = KubeCache::new(client);
-    //     let gvk = GroupVersionKind::gvk("", "", "");
-    //     let subscriber = cache.subscribe(gvk).await.unwrap();
-
-    //     cache.shutdown().unwrap();
-    // }
-
-    async fn custom_client() -> Result<Client> {
-        use http::{Request, Response};
-        use hyper::body::Incoming;
-        use hyper_util::rt::TokioExecutor;
-        use std::time::Duration;
-        use tower::{BoxError, ServiceBuilder};
-        // use tower_http::compression::DecompressionLayer;
-        use bytes::Bytes;
-        use tower_http::trace::TraceLayer;
-        use tracing::{Span, *};
-
-        use kube::{
-            Api, Client, Config, ResourceExt,
-            client::{Body, ConfigExt},
-        };
-
-        let config = Config::infer().await?;
-        let https = config.rustls_https_connector()?;
-        // let trace_layer = TraceLayer::new_for_http()
-        //     .on_request(DefaultOnRequest::new().level(tracing::Level::INFO))
-        //     .on_response(DefaultOnResponse::new().level(tracing::Level::INFO));
-
-        let service = ServiceBuilder::new()
-            .layer(config.base_uri_layer())
-            .option_layer(config.auth_layer()?)
-            .layer(
-                TraceLayer::new_for_http()
-                    .make_span_with(|request: &Request<Body>| {
-                        tracing::debug_span!(
-                            "HTTP",
-                            http.method = %request.method(),
-                            http.url = %request.uri(),
-                            http.status_code = tracing::field::Empty,
-                            otel.name = %format!("HTTP {}", request.method()),
-                            otel.kind = "client",
-                            otel.status_code = tracing::field::Empty,
-                        )
-                    })
-                    .on_request(|request: &Request<Body>, _span: &Span| {
-                        tracing::debug!(
-                            "payload: {:?} headers: {:?}",
-                            request.body(),
-                            request.headers()
-                        )
-                    })
-                    .on_response(
-                        |response: &Response<Incoming>, latency: Duration, span: &Span| {
-                            let status = response.status();
-                            // let body = hyper::body::to_bytes(response.body()).await?;
-                            span.record("http.status_code", status.as_u16());
-                            if status.is_client_error() || status.is_server_error() {
-                                span.record("otel.status_code", "ERROR");
-                            }
-                            // tracing::debug!("body {:?}", body);
-                            tracing::debug!("finished in {}ms", latency.as_millis())
-                        },
-                    )
-                    .on_body_chunk(|chunk: &Bytes, _latency: Duration, _span: &Span| {
-                        debug!("response chunk: {:?}", chunk);
-                    })
-                    .on_eos(
-                        |trailers: Option<&hyper::HeaderMap>,
-                         _stream_duration: Duration,
-                         _span: &Span| {
-                            debug!("end of stream, trailers: {:?}", trailers);
-                        },
-                    ),
-            )
-            // .layer(ServiceBuilder::new().layer(trace_layer))
-            // .layer(trace_layer)
-            .map_err(BoxError::from)
-            .service(
-                hyper_util::client::legacy::Client::builder(TokioExecutor::new()).build(https),
-            );
-
-        let client = Client::new(service, config.default_namespace);
-        Ok(client)
     }
 }

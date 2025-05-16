@@ -1,59 +1,44 @@
-use std::fmt::Debug;
+use std::{fmt::Debug, pin::Pin};
 use strum_macros::{Display, EnumString};
 
 use super::{request::ApiRequest, response::ApiResponse};
+
+pub type ApiHandlerResponse =
+    Pin<Box<dyn Future<Output = Result<ApiResponse, anyhow::Error>> + Send + Sync>>;
 
 #[derive(Debug, Clone, EnumString, Display, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum ApiServiceType {
     #[strum(serialize = "ApiResources")]
     ApiResources,
     #[strum(serialize = "CustomResource")]
-    CustomResource,
+    Resource,
 }
 
 pub trait ApiHandler {
-    type Fut: Future<Output = Result<ApiResponse, anyhow::Error>> + Send + Sync;
-
-    fn call(&mut self, request: ApiRequest) -> Self::Fut {
+    fn call(&self, request: ApiRequest) -> ApiHandlerResponse {
         match request.method() {
             &http::Method::GET => self.get(request),
             &http::Method::POST => self.post(request),
             &http::Method::PUT => self.put(request),
             &http::Method::DELETE => self.delete(request),
-            &http::Method::HEAD => self.head(request),
-            &http::Method::OPTIONS => self.options(request),
-            &http::Method::CONNECT => self.connect(request),
             &http::Method::PATCH => self.patch(request),
-            &http::Method::TRACE => self.trace(request),
             _ => unimplemented!("{}", request.method()),
         }
     }
 
-    fn get(&mut self, _request: ApiRequest) -> Self::Fut {
+    fn get(&self, _request: ApiRequest) -> ApiHandlerResponse {
         unimplemented!()
     }
-    fn post(&mut self, _request: ApiRequest) -> Self::Fut {
+    fn post(&self, _request: ApiRequest) -> ApiHandlerResponse {
         unimplemented!()
     }
-    fn put(&mut self, _request: ApiRequest) -> Self::Fut {
+    fn put(&self, _request: ApiRequest) -> ApiHandlerResponse {
         unimplemented!()
     }
-    fn delete(&mut self, _request: ApiRequest) -> Self::Fut {
+    fn delete(&self, _request: ApiRequest) -> ApiHandlerResponse {
         unimplemented!()
     }
-    fn head(&mut self, _request: ApiRequest) -> Self::Fut {
-        unimplemented!()
-    }
-    fn options(&mut self, _request: ApiRequest) -> Self::Fut {
-        unimplemented!()
-    }
-    fn connect(&mut self, _request: ApiRequest) -> Self::Fut {
-        unimplemented!()
-    }
-    fn patch(&mut self, _request: ApiRequest) -> Self::Fut {
-        unimplemented!()
-    }
-    fn trace(&mut self, _request: ApiRequest) -> Self::Fut {
+    fn patch(&self, _request: ApiRequest) -> ApiHandlerResponse {
         unimplemented!()
     }
 }

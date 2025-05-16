@@ -1,19 +1,20 @@
 use anyhow::Result;
 use http::Response;
+use http::StatusCode;
 use kube::client::Body;
 use serde::Serialize;
 
 pub struct ApiResponse {
-    pub code: http::StatusCode,
+    pub code: StatusCode,
     pub body: String,
 }
 
 impl ApiResponse {
-    pub fn new(code: http::StatusCode, body: String) -> ApiResponse {
+    pub fn new(code: StatusCode, body: String) -> ApiResponse {
         ApiResponse { code, body }
     }
 
-    pub fn try_from<T>(code: http::StatusCode, body: T) -> Result<ApiResponse>
+    pub fn try_from<T>(code: StatusCode, body: T) -> Result<ApiResponse>
     where
         T: Serialize,
     {
@@ -32,7 +33,7 @@ impl ApiResponse {
 impl From<anyhow::Error> for ApiResponse {
     fn from(value: anyhow::Error) -> Self {
         ApiResponse {
-            code: http::StatusCode::INTERNAL_SERVER_ERROR,
+            code: StatusCode::INTERNAL_SERVER_ERROR,
             body: value.to_string(),
         }
     }

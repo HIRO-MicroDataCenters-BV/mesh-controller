@@ -27,6 +27,6 @@ pub enum CacheProtocol {
     Update(DynamicObject),
     Delete(DynamicObject),
     Snapshot {
-        resources: BTreeMap<NamespacedName, Arc<DynamicObject>>,
+        snapshot: BTreeMap<NamespacedName, Arc<DynamicObject>>,
     },
 }

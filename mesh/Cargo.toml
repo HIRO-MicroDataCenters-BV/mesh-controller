@@ -61,6 +61,10 @@ url.workspace = true
 tower-test.workspace = true
 http.workspace = true
 tower-service.workspace = true
+strum_macros.workspace = true
+strum.workspace = true
+regex.workspace = true
+
 
 [build-dependencies]
 built.workspace = true
