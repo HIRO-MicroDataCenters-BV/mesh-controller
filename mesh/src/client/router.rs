@@ -1,37 +1,39 @@
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 use super::{
-    request::ApiRequest,
+    handlers::{api_resource::ApiResourceHandler, resource::ResourceHandler},
+    request::{ApiRequest, Args},
     response::ApiResponse,
+    storage::Storage,
     types::{ApiHandler, ApiServiceType},
 };
 use anyhow::Result;
 
 pub struct ApiRequestRouter {
-    handlers: HashMap<ApiServiceType, Arc<dyn ApiHandler + Send + Sync + 'static>>,
+    api_resources: ApiResourceHandler,
+    resources: ResourceHandler,
 }
 
 impl ApiRequestRouter {
-    pub fn new() -> ApiRequestRouter {
+    pub fn new(storage: Arc<Storage>) -> ApiRequestRouter {
+        let api_resources = ApiResourceHandler::new(storage.clone());
+        let resources = ResourceHandler::new(storage.clone());
         ApiRequestRouter {
-            handlers: HashMap::new(),
+            api_resources,
+            resources,
         }
     }
 
-    pub fn with_handler(
-        mut self,
-        handler_type: ApiServiceType,
-        handler: Arc<dyn ApiHandler + Send + Sync + 'static>,
-    ) -> Self {
-        self.handlers.insert(handler_type, handler);
-        self
-    }
-
     pub async fn handle(&self, req: ApiRequest) -> Result<ApiResponse> {
-        if let Some(handler) = self.handlers.get(&req.service) {
-            handler.call(req).await
-        } else {
-            unimplemented!("unknown request type {}", req.service)
+        let method = req.method().clone();
+        match (req.service, req.args) {
+            (ApiServiceType::ApiResources, Args::ApiResource(arg)) => {
+                self.api_resources.call(&method, arg).await
+            }
+            (ApiServiceType::Resource, Args::Resource(arg)) => {
+                self.resources.call(&method, arg).await
+            }
+            (svc, arg) => unimplemented!("unknown request type {} and arg {}", svc, arg),
         }
     }
 }

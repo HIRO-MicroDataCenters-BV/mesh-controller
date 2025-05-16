@@ -1,7 +1,8 @@
+use http::Method;
 use std::{fmt::Debug, pin::Pin};
 use strum_macros::{Display, EnumString};
 
-use super::{request::ApiRequest, response::ApiResponse};
+use super::response::ApiResponse;
 
 pub type ApiHandlerResponse =
     Pin<Box<dyn Future<Output = Result<ApiResponse, anyhow::Error>> + Send + Sync>>;
@@ -14,31 +15,34 @@ pub enum ApiServiceType {
     Resource,
 }
 
+
 pub trait ApiHandler {
-    fn call(&self, request: ApiRequest) -> ApiHandlerResponse {
-        match request.method() {
+    type Req;
+
+    fn call(&self, method: &Method, request: Self::Req) -> ApiHandlerResponse {
+        match method {
             &http::Method::GET => self.get(request),
             &http::Method::POST => self.post(request),
             &http::Method::PUT => self.put(request),
             &http::Method::DELETE => self.delete(request),
             &http::Method::PATCH => self.patch(request),
-            _ => unimplemented!("{}", request.method()),
+            _ => unimplemented!("{}", method),
         }
     }
 
-    fn get(&self, _request: ApiRequest) -> ApiHandlerResponse {
+    fn get(&self, _request: Self::Req) -> ApiHandlerResponse {
         unimplemented!()
     }
-    fn post(&self, _request: ApiRequest) -> ApiHandlerResponse {
+    fn post(&self, _request: Self::Req) -> ApiHandlerResponse {
         unimplemented!()
     }
-    fn put(&self, _request: ApiRequest) -> ApiHandlerResponse {
+    fn put(&self, _request: Self::Req) -> ApiHandlerResponse {
         unimplemented!()
     }
-    fn delete(&self, _request: ApiRequest) -> ApiHandlerResponse {
+    fn delete(&self, _request: Self::Req) -> ApiHandlerResponse {
         unimplemented!()
     }
-    fn patch(&self, _request: ApiRequest) -> ApiHandlerResponse {
+    fn patch(&self, _request: Self::Req) -> ApiHandlerResponse {
         unimplemented!()
     }
 }

@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
+use bytes::Bytes;
 use http::StatusCode;
 use kube::api::{ApiResource, DynamicObject, ListMeta, ObjectList, TypeMeta};
 
 use crate::client::{
-    request::{ApiRequest, Args},
     response::ApiResponse,
     storage::Storage,
     types::{ApiHandler, ApiHandlerResponse},
@@ -20,27 +20,35 @@ impl ResourceHandler {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct ResourceArgs {
+    pub group: String,
+    pub version: String,
+    pub kind_plural: String,
+    pub input: Bytes,
+}
+
 impl ApiHandler for ResourceHandler {
-    fn get(&self, request: ApiRequest) -> ApiHandlerResponse {
-        if let Args::Resource {
+    type Req = ResourceArgs;
+
+    fn get(&self, request: ResourceArgs) -> ApiHandlerResponse {
+        let ResourceArgs {
             group,
             version,
             kind_plural,
-        } = request.args
-        {
-            let maybe_response = self
-                .storage
-                .find_objects(&group, &version, &kind_plural)
-                .map(|(ar, objects)| to_object_list(&ar, objects));
+            ..
+        } = request;
 
-            Box::pin(async {
-                maybe_response
-                    .map(|response| ApiResponse::try_from(StatusCode::OK, response))
-                    .unwrap_or_else(|| Ok(ApiResponse::new(StatusCode::NOT_FOUND, String::new())))
-            })
-        } else {
-            unimplemented!()
-        }
+        let maybe_response = self
+            .storage
+            .find_objects(&group, &version, &kind_plural)
+            .map(|(ar, objects)| to_object_list(&ar, objects));
+
+        Box::pin(async {
+            maybe_response
+                .map(|response| ApiResponse::try_from(StatusCode::OK, response))
+                .unwrap_or_else(|| Ok(ApiResponse::new(StatusCode::NOT_FOUND, String::new())))
+        })
     }
 }
 

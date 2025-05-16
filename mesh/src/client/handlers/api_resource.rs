@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
+use bytes::Bytes;
 use http::StatusCode;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::{APIResource, APIResourceList};
 use kube::api::ApiResource;
 
 use crate::client::{
-    request::{ApiRequest, Args},
     response::ApiResponse,
     storage::Storage,
     types::{ApiHandler, ApiHandlerResponse},
@@ -21,20 +21,26 @@ impl ApiResourceHandler {
     }
 }
 
-impl ApiHandler for ApiResourceHandler {
-    fn get(&self, request: ApiRequest) -> ApiHandlerResponse {
-        if let Args::ApiResource { group, version } = request.args {
-            let resources = self.storage.get_api_resources(&group, &version);
+#[derive(Clone, Debug)]
+pub struct ApiResourceArgs {
+    pub group: String,
+    pub version: String,
+    pub input: Bytes,
+}
 
-            Box::pin(async move {
-                ApiResponse::try_from(
-                    StatusCode::OK,
-                    api_resource_list_to_response(&group, &version, &resources),
-                )
-            })
-        } else {
-            panic!("unexpected args type")
-        }
+impl ApiHandler for ApiResourceHandler {
+    type Req = ApiResourceArgs;
+
+    fn get(&self, request: ApiResourceArgs) -> ApiHandlerResponse {
+        let ApiResourceArgs { group, version, .. } = request;
+        let resources = self.storage.get_api_resources(&group, &version);
+
+        Box::pin(async move {
+            ApiResponse::try_from(
+                StatusCode::OK,
+                api_resource_list_to_response(&group, &version, &resources),
+            )
+        })
     }
 }
 

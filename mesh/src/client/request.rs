@@ -1,32 +1,25 @@
+use super::handlers::api_resource::ApiResourceArgs;
+use super::handlers::resource::ResourceArgs;
 use super::types::ApiServiceType;
 use anyhow::Result;
 use anyhow::bail;
-use bytes::Bytes;
 use http::Method;
 use http::Request;
 use http::request::Parts;
 use http::uri::PathAndQuery;
 use kube::client::Body;
 use regex::Regex;
+use strum::Display;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Display)]
 pub enum Args {
-    ApiResource {
-        group: String,
-        version: String,
-    },
-    Resource {
-        group: String,
-        version: String,
-        kind_plural: String,
-    },
+    ApiResource(ApiResourceArgs),
+    Resource(ResourceArgs),
 }
 
 #[derive(Debug, Clone)]
 pub struct ApiRequest {
     pub parts: Parts,
-
-    pub input: Bytes,
 
     pub service: ApiServiceType,
 
@@ -34,7 +27,7 @@ pub struct ApiRequest {
 }
 
 impl ApiRequest {
-    pub async fn build(req: Request<Body>) -> Result<ApiRequest> {
+    pub async fn try_from(req: Request<Body>) -> Result<ApiRequest> {
         let (parts, body) = req.into_parts();
 
         let path_and_query = parts
@@ -42,19 +35,21 @@ impl ApiRequest {
             .path_and_query()
             .ok_or(anyhow::anyhow!("path and query are not in request"))?;
 
-        let (kube, service) = ApiRequest::parse_uri(path_and_query)?;
-
-        let input = body.collect_bytes().await?;
+        let (args, service) = ApiRequest::parse_uri(path_and_query, body).await?;
 
         Ok(ApiRequest {
             parts,
-            input,
-            args: kube,
+            args,
             service,
         })
     }
 
-    fn parse_uri(path_and_query: &PathAndQuery) -> Result<(Args, ApiServiceType)> {
+    async fn parse_uri(
+        path_and_query: &PathAndQuery,
+        body: Body,
+    ) -> Result<(Args, ApiServiceType)> {
+        let input = body.collect_bytes().await?;
+
         let path = path_and_query.path();
         let re = Regex::new(r"^/apis/(?P<group>[^/]+)/(?P<version>[^/]+)/(?P<pluralkind>[^/]+)")
             .unwrap(); // TDOO
@@ -76,11 +71,12 @@ impl ApiRequest {
                 .into();
             let service = ApiServiceType::Resource;
             return Ok((
-                Args::Resource {
+                Args::Resource(ResourceArgs {
                     group,
                     version,
                     kind_plural,
-                },
+                    input,
+                }),
                 service,
             ));
         }
@@ -98,7 +94,14 @@ impl ApiRequest {
                 .unwrap_or("")
                 .into();
             let service = ApiServiceType::ApiResources;
-            return Ok((Args::ApiResource { group, version }, service));
+            return Ok((
+                Args::ApiResource(ApiResourceArgs {
+                    group,
+                    version,
+                    input,
+                }),
+                service,
+            ));
         }
 
         bail!("unknown path {path}")
