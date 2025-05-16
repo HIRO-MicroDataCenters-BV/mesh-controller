@@ -1,6 +1,4 @@
-use crate::client::api_resources::ApiResourceHandler;
 use crate::client::request::ApiRequest;
-use crate::client::resource_handler::CustomResourceHandler;
 use crate::client::types::{ApiHandler, ApiServiceType};
 
 use http::Request;
@@ -14,6 +12,8 @@ use std::{pin::Pin, task::Context};
 use tower_service::Service;
 use tracing::{info, trace};
 
+use super::handlers::api_resource::ApiResourceHandler;
+use super::handlers::resource::CustomResourceHandler;
 use super::response::ApiResponse;
 use super::router::ApiRequestRouter;
 use super::storage::Storage;

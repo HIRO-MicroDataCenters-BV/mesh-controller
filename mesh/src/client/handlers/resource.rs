@@ -1,12 +1,10 @@
 use std::{pin::Pin, sync::Arc};
 
-use super::{request::ApiRequest, response::ApiResponse, storage::Storage, types::ApiHandler};
-use anyhow::anyhow;
-use http::{Response, StatusCode};
-use k8s_openapi::apimachinery::pkg::apis::meta::v1::APIResourceList;
-use kube::{
-    api::{ApiResource, DynamicObject, ListMeta, ObjectList, TypeMeta},
-    client::Body,
+use http::StatusCode;
+use kube::api::{ApiResource, DynamicObject, ListMeta, ObjectList, TypeMeta};
+
+use crate::client::{
+    request::ApiRequest, response::ApiResponse, storage::Storage, types::ApiHandler,
 };
 
 pub struct CustomResourceHandler {

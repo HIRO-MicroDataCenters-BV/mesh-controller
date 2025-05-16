@@ -1,9 +1,12 @@
 use std::{pin::Pin, sync::Arc};
 
-use super::{request::ApiRequest, response::ApiResponse, storage::Storage, types::ApiHandler};
 use http::StatusCode;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::{APIResource, APIResourceList};
 use kube::api::ApiResource;
+
+use crate::client::{
+    request::ApiRequest, response::ApiResponse, storage::Storage, types::ApiHandler,
+};
 
 pub struct ApiResourceHandler {
     storage: Arc<Storage>,

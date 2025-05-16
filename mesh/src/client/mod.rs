@@ -1,7 +1,5 @@
-pub mod api_resources;
 pub mod handlers;
 pub mod request;
-pub mod resource_handler;
 pub mod response;
 pub mod router;
 pub mod service;
