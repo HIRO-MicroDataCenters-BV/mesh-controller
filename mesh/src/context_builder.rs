@@ -5,7 +5,10 @@ use crate::context::Context;
 use crate::http::api::MeshApiImpl;
 
 use crate::api::server::MeshHTTPServer;
+use crate::kube::cache::KubeCache;
+use crate::node::mesh::MeshNode;
 use anyhow::{Context as AnyhowContext, Result};
+use kube::Client;
 use p2panda_core::{PrivateKey, PublicKey};
 
 use tokio::runtime::{Builder, Runtime};
@@ -64,6 +67,16 @@ impl ContextBuilder {
             .build()
             .expect("Mesh Controller tokio runtime");
 
+        let (mesh_node, cache) = mesh_runtime.block_on(async {
+            let client = ContextBuilder::build_kube_client().await?;
+            let cache = KubeCache::new(client);
+
+            let node = ContextBuilder::init(self.config.clone(), self._private_key.clone())
+                .await
+                .context("failed to initialize mesh node")?;
+            Ok::<_, anyhow::Error>((node, cache))
+        })?;
+
         let http_runtime = Builder::new_multi_thread()
             .enable_io()
             .thread_name("http-server")
@@ -74,12 +87,18 @@ impl ContextBuilder {
 
         Ok(Context::new(
             self.config.clone(),
+            cache,
+            mesh_node,
             self.public_key,
             http_handle,
             http_runtime,
             cancellation_token,
             mesh_runtime,
         ))
+    }
+
+    async fn init(_config: Config, _private_key: PrivateKey) -> Result<MeshNode> {
+        Ok(MeshNode {})
     }
 
     /// Starts the HTTP server with health endpoint.
@@ -101,5 +120,22 @@ impl ContextBuilder {
             cancellation_token.cancel();
             result
         }))
+    }
+
+    async fn build_kube_client() -> Result<Client> {
+        #[cfg(not(test))]
+        {
+            let config = kube::config::Config::infer()
+                .await
+                .context("failed to load kube config")?;
+            let client = kube::Client::try_from(config).context("failed to create kube client")?;
+            Ok(client)
+        }
+        #[cfg(test)]
+        {
+            let svc = crate::client::service::FakeKubeApiService::new();
+            let client = kube::Client::new(svc, "default");
+            Ok(client)
+        }
     }
 }

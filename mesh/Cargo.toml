@@ -20,6 +20,7 @@ path = "src/main.rs"
 anyhow.workspace = true
 async-trait.workspace = true
 axum.workspace = true
+dashmap.workspace = true
 axum-prometheus.workspace = true
 ciborium.workspace = true
 clap = { workspace = true, features = ["derive"] }
@@ -34,6 +35,7 @@ p2panda-sync.workspace = true
 p2panda-discovery.workspace = true
 rand.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
 tokio-util.workspace = true
@@ -46,6 +48,9 @@ pin-project-lite.workspace = true
 thiserror.workspace = true
 schemars.workspace = true
 reqwest.workspace = true
+kube.workspace = true
+k8s-openapi.workspace=true
+either.workspace = true
 
 [dev-dependencies]
 figment = { workspace = true, features = ["test"] }
@@ -53,6 +58,16 @@ once_cell.workspace = true
 dashmap.workspace = true
 serde_json.workspace = true
 url.workspace = true
+tower-test.workspace = true
+http.workspace = true
+tower-service.workspace = true
+strum_macros.workspace = true
+strum.workspace = true
+regex.workspace = true
+hyper-util.workspace = true
+http-body.workspace = true
+http-body-util.workspace = true
+
 
 [build-dependencies]
 built.workspace = true

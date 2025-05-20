@@ -6,10 +6,14 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::config::configuration::Config;
+use crate::kube::cache::KubeCache;
+use crate::node::mesh::MeshNode;
 
 pub struct Context {
     _config: Config,
     _public_key: PublicKey,
+    kube_cache: KubeCache,
+    mesh_node: MeshNode,
     http_handle: JoinHandle<Result<()>>,
     http_runtime: Runtime,
     cancellation_token: CancellationToken,
@@ -17,17 +21,22 @@ pub struct Context {
 }
 
 impl Context {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         config: Config,
+        kube_cache: KubeCache,
+        mesh_node: MeshNode,
         public_key: PublicKey,
         http_handle: JoinHandle<Result<()>>,
         http_runtime: Runtime,
         cancellation_token: CancellationToken,
         mesh_runtime: Runtime,
     ) -> Self {
-        Context {
+        Self {
             _config: config,
             _public_key: public_key,
+            kube_cache,
+            mesh_node,
             http_handle,
             http_runtime,
             cancellation_token,
@@ -60,6 +69,8 @@ impl Context {
     }
 
     pub fn shutdown(self) -> Result<()> {
+        let _ = self.kube_cache.shutdown();
+        self.mesh_node.shutdown();
         self.http_handle.abort();
         self.http_runtime.shutdown_background();
         self.mesh_runtime.shutdown_background();
