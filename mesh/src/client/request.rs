@@ -1,3 +1,7 @@
+use std::collections::BTreeMap;
+
+use crate::kube::types::NamespacedName;
+
 use super::handlers::api_resource::ApiResourceArgs;
 use super::handlers::resource::ResourceArgs;
 use super::types::ApiServiceType;
@@ -10,6 +14,8 @@ use http::uri::PathAndQuery;
 use kube::client::Body;
 use regex::Regex;
 use strum::Display;
+use tracing::info;
+use url::form_urlencoded;
 
 #[derive(Debug, Clone, Display)]
 pub enum Args {
@@ -24,6 +30,8 @@ pub struct ApiRequest {
     pub service: ApiServiceType,
 
     pub args: Args,
+
+    pub is_watch: bool,
 }
 
 impl ApiRequest {
@@ -35,25 +43,84 @@ impl ApiRequest {
             .path_and_query()
             .ok_or(anyhow::anyhow!("path and query are not in request"))?;
 
-        let (args, service) = ApiRequest::parse_uri(path_and_query, body).await?;
+        let (args, service, is_watch) = ApiRequest::parse_uri(path_and_query, body).await?;
 
         Ok(ApiRequest {
             parts,
             args,
             service,
+            is_watch,
         })
     }
 
     async fn parse_uri(
         path_and_query: &PathAndQuery,
         body: Body,
-    ) -> Result<(Args, ApiServiceType)> {
+    ) -> Result<(Args, ApiServiceType, bool)> {
         let input = body.collect_bytes().await?;
 
+        let query = path_and_query.query().unwrap_or("");
+        let params = form_urlencoded::parse(query.as_bytes())
+            .into_owned()
+            .collect::<BTreeMap<String, String>>();
+
+        let is_watch = params
+            .get("watch")
+            .map(|v| v.parse::<bool>().unwrap_or(false))
+            .unwrap_or(false);
+
         let path = path_and_query.path();
+        let re = Regex::new(r"^/apis/(?P<group>[^/]+)/(?P<version>[^/]+)/namespaces/(?P<namespace>[^/]+)/(?P<pluralkind>[^/]+)/(?P<name>[^/]+)")
+            .unwrap(); // TODO
+        if let Some(captures) = re.captures(path) {
+            let group = captures
+                .name("group")
+                .map(|m| m.as_str())
+                .unwrap_or("")
+                .into();
+            let version = captures
+                .name("version")
+                .map(|m| m.as_str())
+                .unwrap_or("")
+                .into();
+            let kind_plural = captures
+                .name("pluralkind")
+                .map(|m| m.as_str())
+                .unwrap_or("")
+                .into();
+            let namespace = captures
+                .name("namespace")
+                .map(|m| m.as_str())
+                .unwrap_or("")
+                .into();
+            let name = captures
+                .name("name")
+                .map(|m| m.as_str())
+                .unwrap_or("")
+                .into();
+
+            let resource_name = Some(NamespacedName::new(namespace, name));
+            let service = ApiServiceType::Resource;
+
+            return Ok((
+                Args::Resource(ResourceArgs {
+                    group,
+                    version,
+                    kind_plural,
+                    input,
+                    resource_name,
+                    params,
+                }),
+                service,
+                is_watch,
+            ));
+        }
+        let path = path_and_query.path();
+        info!("path {path}");
         let re = Regex::new(r"^/apis/(?P<group>[^/]+)/(?P<version>[^/]+)/(?P<pluralkind>[^/]+)")
             .unwrap(); // TDOO
         if let Some(captures) = re.captures(path) {
+            info!("parsed {path}");
             let group = captures
                 .name("group")
                 .map(|m| m.as_str())
@@ -76,12 +143,15 @@ impl ApiRequest {
                     version,
                     kind_plural,
                     input,
+                    resource_name: None,
+                    params,
                 }),
                 service,
+                is_watch,
             ));
         }
 
-        let re = Regex::new(r"^/apis/(?P<group>[^/]+)/(?P<version>[^/]+)").unwrap();
+        let re = Regex::new(r"^/apis/(?P<group>[^/]+)/(?P<version>[^/|?]+)").unwrap();
         if let Some(captures) = re.captures(path) {
             let group = captures
                 .name("group")
@@ -101,6 +171,7 @@ impl ApiRequest {
                     input,
                 }),
                 service,
+                is_watch,
             ));
         }
 

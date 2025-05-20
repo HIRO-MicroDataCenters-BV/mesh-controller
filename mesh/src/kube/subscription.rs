@@ -8,6 +8,7 @@ use crate::JoinErrToStr;
 use crate::kube::cache::KindResources;
 use anyhow::Result;
 use anyhow::bail;
+use anyhow::{Context, anyhow};
 use dashmap::DashMap;
 use futures::FutureExt;
 use futures::StreamExt;
@@ -24,7 +25,7 @@ use std::{collections::BTreeMap, sync::Arc};
 use tokio::task::JoinError;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::AbortOnDropHandle;
-use tracing::{error, info};
+use tracing::{error, info, trace};
 
 const STREAM_RECONNECT_DELAY_MS: u64 = 1000;
 
@@ -98,8 +99,12 @@ impl SubscriptionInner {
             tokio::select! {
                 _ = self.cancelation.cancelled() => break,
                 event = events.next() => {
+                    trace!("event received {:?}", event);
                     match event {
-                        Some(Ok(event)) => SubscriptionInner::handle_event(event, &self.resources, &self.tx),
+                        Some(Ok(event)) => {
+                            SubscriptionInner::handle_event(event, &self.resources, &self.tx)
+                                .context("Subscription::handle_event failure")?;
+                        },
                         Some(Err(e)) => bail!("Error in event stream {}", e),
                         None => break,
                     }
@@ -113,9 +118,9 @@ impl SubscriptionInner {
         event: Event<DynamicObject>,
         resources: &DashMap<NamespacedName, DashMap<UID, ResourceEntry>>,
         tx: &loole::Sender<CacheProtocol>,
-    ) {
+    ) -> Result<()> {
         match event {
-            Event::Init => (),
+            Event::Init => Ok(()),
             Event::InitApply(obj) => SubscriptionInner::apply_resource(obj, resources, tx, false),
             Event::InitDone => SubscriptionInner::send_snapshot(resources, tx),
             Event::Apply(obj) => SubscriptionInner::apply_resource(obj, resources, tx, true),
@@ -127,50 +132,63 @@ impl SubscriptionInner {
         obj: DynamicObject,
         resources: &DashMap<NamespacedName, DashMap<UID, ResourceEntry>>,
         tx: &loole::Sender<CacheProtocol>,
-        distribute: bool,
-    ) {
-        let ns = obj.namespace().unwrap_or_default();
-        let name = obj.name_any();
-        let ns_name = NamespacedName::new(ns, name);
-        let uid = obj.uid().unwrap();
+        must_distribute: bool,
+    ) -> Result<()> {
+        let ns_name = obj.get_namespaced_name();
+        let uid = obj
+            .uid()
+            .ok_or(anyhow!("UID is not set for dynamic object"))?;
         let version = obj
             .resource_version()
-            .map(|v| v.parse::<u64>().unwrap_or(0))
-            .unwrap_or(0);
+            .ok_or(anyhow!("resourceVersion is not set for dynamic object"))?
+            .parse::<u64>()
+            .context("unparsable resourceVersion in dynamic object")?;
         let resource = Arc::new(obj.clone());
 
         let resource_entries = resources.entry(ns_name).or_default();
 
-        let mut entry = resource_entries
-            .entry(uid)
-            .or_insert_with(|| ResourceEntry {
+        let updated = if let Some(mut existing) = resource_entries.get_mut(&uid) {
+            if version > existing.value().version {
+                *existing.value_mut() = ResourceEntry {
+                    version,
+                    resource,
+                    tombstone: false,
+                };
+                true
+            } else {
+                false
+            }
+        } else {
+            let entry = ResourceEntry {
                 version,
                 resource: resource.clone(),
                 tombstone: false,
-            });
-        if version > entry.value().version {
-            *entry.value_mut() = ResourceEntry {
-                version,
-                resource,
-                tombstone: false,
             };
-            if distribute {
-                let _ = tx.send(CacheProtocol::Update(obj));
-            }
+            resource_entries.insert(uid, entry);
+            true
+        };
+
+        if updated && must_distribute {
+            tx.send(CacheProtocol::Update(obj))
+                .unwrap_or_else(|e| error!("Failed to send update event: {}", e));
         }
+        Ok(())
     }
 
     fn delete_resource(
         obj: DynamicObject,
         resources: &DashMap<NamespacedName, DashMap<UID, ResourceEntry>>,
         tx: &loole::Sender<CacheProtocol>,
-    ) {
+    ) -> Result<()> {
         let ns_name = obj.get_namespaced_name();
-        let uid = obj.uid().unwrap();
+        let uid = obj
+            .uid()
+            .ok_or(anyhow!("UID is not set for dynamic object"))?;
         let version = obj
             .resource_version()
-            .map(|v| v.parse::<u64>().unwrap_or(0))
-            .unwrap_or(0);
+            .ok_or(anyhow!("resourceVersion is not set for dynamic object"))?
+            .parse::<u64>()
+            .context("unparsable resourceVersion in dynamic object")?;
         let resource = Arc::new(obj.clone());
 
         let resource_entries = resources.entry(ns_name).or_default();
@@ -188,14 +206,16 @@ impl SubscriptionInner {
                 resource,
                 tombstone: true,
             };
-            let _ = tx.send(CacheProtocol::Delete(obj));
+            tx.send(CacheProtocol::Delete(obj))
+                .unwrap_or_else(|e| error!("Failed to send delete event: {}", e));
         }
+        Ok(())
     }
 
     fn send_snapshot(
         resources: &DashMap<NamespacedName, DashMap<UID, ResourceEntry>>,
         tx: &loole::Sender<CacheProtocol>,
-    ) {
+    ) -> Result<()> {
         let snapshot = resources
             .iter()
             .flat_map(|entry| {
@@ -214,6 +234,9 @@ impl SubscriptionInner {
             })
             .collect::<BTreeMap<NamespacedName, Arc<DynamicObject>>>();
 
-        let _ = tx.send(CacheProtocol::Snapshot { snapshot });
+        tx.send(CacheProtocol::Snapshot { snapshot })
+            .unwrap_or_else(|e| error!("Failed to send snapshot event: {}", e));
+
+        Ok(())
     }
 }

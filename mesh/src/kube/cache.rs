@@ -2,16 +2,18 @@ use crate::JoinErrToStr;
 
 use super::{
     subscription::Subscription,
-    types::{CacheError, CacheProtocol, NamespacedName},
+    types::{CacheProtocol, NamespacedName},
 };
 use crate::kube::dynamic_object_ext::DynamicObjectExt;
-use dashmap::DashMap;
-use kube::api::{Api, DynamicObject, GroupVersionKind, PostParams};
-
 use anyhow::Result;
+use dashmap::DashMap;
+use either::Either;
 use futures::future::MapErr;
 use futures::future::Shared;
 use kube::Client;
+use kube::Error;
+use kube::api::{Api, DeleteParams, DynamicObject, GroupVersionKind, Patch, PatchParams};
+use kube::client::Status;
 use std::sync::{
     Arc,
     atomic::{AtomicU32, Ordering},
@@ -66,25 +68,44 @@ impl KubeCache {
         &self,
         gvk: &GroupVersionKind,
         namspaced_name: &NamespacedName,
-    ) -> Result<DynamicObject> {
+    ) -> Result<Option<DynamicObject>> {
         let ns = &namspaced_name.namespace;
         let name = &namspaced_name.name;
         let (ar, _caps) = kube::discovery::pinned_kind(&self.client, gvk).await?;
         let api = Api::<DynamicObject>::namespaced_with(self.client.clone(), ns, &ar);
-        let result = api.get(name).await?;
-        Ok(result)
+        let results = api.get(name).await;
+        if object_not_found(&results) {
+            Ok(None)
+        } else {
+            Ok(Some(results?))
+        }
     }
 
-    pub async fn direct_update(&self, resource: DynamicObject) -> Result<()> {
+    pub async fn direct_delete(
+        &self,
+        gvk: &GroupVersionKind,
+        namspaced_name: &NamespacedName,
+    ) -> Result<Either<DynamicObject, Status>> {
+        let ns = &namspaced_name.namespace;
+        let name = &namspaced_name.name;
+        let (ar, _caps) = kube::discovery::pinned_kind(&self.client, gvk).await?;
+        let api = Api::<DynamicObject>::namespaced_with(self.client.clone(), ns, &ar);
+        let params = DeleteParams::default();
+        let status = api.delete(name, &params).await?;
+        Ok(status)
+    }
+
+    pub async fn direct_patch_apply(&self, resource: DynamicObject) -> Result<()> {
         let gvk = resource.get_gvk()?;
         let ns_name = resource.get_namespaced_name();
 
         let (ar, _) = kube::discovery::pinned_kind(&self.client, &gvk).await?;
         let api =
             Api::<DynamicObject>::namespaced_with(self.client.clone(), &ns_name.namespace, &ar);
+        let patch_params = PatchParams::apply(&ns_name.name).force();
 
-        let params = PostParams::default();
-        api.replace(&ns_name.name, &params, &resource).await?;
+        api.patch(&ns_name.name, &patch_params, &Patch::Apply(resource))
+            .await?;
 
         Ok(())
     }
@@ -92,7 +113,7 @@ impl KubeCache {
     pub async fn subscribe(
         &self,
         gvk: &GroupVersionKind,
-    ) -> anyhow::Result<loole::Receiver<CacheProtocol>> {
+    ) -> Result<loole::Receiver<CacheProtocol>> {
         let guard = self.mutable_lock.write().await;
         let subscriber_id = self.subscriber_id.fetch_add(1, Ordering::AcqRel);
         let subscription_entry = self.subscriptions.entry(gvk.clone()).or_insert_with(|| {
@@ -138,9 +159,16 @@ impl KubeCache {
         Ok(())
     }
 
-    pub fn shutdown(&self) -> Result<(), CacheError> {
+    pub fn shutdown(&self) -> Result<()> {
         self.root.cancel();
         Ok(())
+    }
+}
+
+fn object_not_found(results: &Result<DynamicObject, Error>) -> bool {
+    match results {
+        Err(Error::Api(response)) => response.reason == "NotFound",
+        _ => false,
     }
 }
 
@@ -159,11 +187,14 @@ pub mod tests {
         },
         tracing::setup_tracing,
     };
+    use anyhow::anyhow;
     use kube::api::{ApiResource, ObjectMeta};
     pub use serde::{Deserialize, Serialize};
+    use std::collections::BTreeMap;
+    use tracing::info;
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn test_snapshot() {
+    async fn test_receive_snapshot() {
         setup_tracing(Some("=TRACE".to_string()));
 
         let service = FakeKubeApiService::new();
@@ -172,24 +203,217 @@ pub mod tests {
         let ar = ApiResource::from_gvk(&gvk);
 
         service.register(&ar);
-        service.store(anyapplication()).unwrap();
+        service
+            .store(anyapplication())
+            .await
+            .expect("saving kubernetes resource");
 
         let client = kube::Client::new(service, "default");
-
         let cache = KubeCache::new(client);
 
-        let subscriber = cache.subscribe(&gvk).await.unwrap();
+        let subscriber = cache.subscribe(&gvk).await.expect("cache subscription");
 
-        if let CacheProtocol::Snapshot { snapshot } = subscriber.recv().unwrap() {
+        if let CacheProtocol::Snapshot { snapshot } =
+            subscriber.recv().expect("receive snapshot event")
+        {
             assert_eq!(snapshot.len(), 1);
             let (name, _) = snapshot.iter().next().unwrap();
             assert_eq!(name.name, "nginx-app");
             assert_eq!(name.namespace, "default");
         }
 
+        subscriber.close();
         assert!(!cache.unsubscribe(&gvk).await.is_err());
 
+        cache.shutdown().expect("cache shutdown");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_create() {
+        setup_tracing(Some("=TRACE".to_string()));
+
+        let service = FakeKubeApiService::new();
+
+        let gvk = GroupVersionKind::gvk("dcp.hiro.io", "v1", "AnyApplication");
+        let ar = ApiResource::from_gvk(&gvk);
+        service.register(&ar);
+
+        let client = kube::Client::new(service, "default");
+        let cache = KubeCache::new(client);
+
+        let resource = anyapplication();
+
+        cache
+            .direct_patch_apply(resource.clone())
+            .await
+            .expect("resource is not updated");
+
+        let created = cache
+            .direct_get(&gvk, &resource.get_namespaced_name())
+            .await
+            .expect("cannot get resource");
+
+        assert_eq!(created.map(|v| v.data), Some(resource.data));
+
         cache.shutdown().unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_update() {
+        setup_tracing(Some("=TRACE".to_string()));
+
+        let service = FakeKubeApiService::new();
+        let resource = anyapplication();
+        let resource_name = resource.get_namespaced_name();
+        let test_labels: BTreeMap<String, String> =
+            BTreeMap::from([("test".into(), "test".into())]);
+
+        let gvk = GroupVersionKind::gvk("dcp.hiro.io", "v1", "AnyApplication");
+        let ar = ApiResource::from_gvk(&gvk);
+        service.register(&ar);
+
+        service
+            .store(resource.clone())
+            .await
+            .expect("saving kubernetes resource");
+
+        let client = kube::Client::new(service, "default");
+        let cache = KubeCache::new(client);
+
+        let mut to_update = cache
+            .direct_get(&gvk, &resource_name)
+            .await
+            .expect("cannot get resource")
+            .ok_or(anyhow!("no result returned"))
+            .unwrap();
+
+        to_update.metadata.labels = Some(test_labels.clone());
+        to_update.metadata.managed_fields = None;
+        cache
+            .direct_patch_apply(to_update)
+            .await
+            .expect("resource is not updated");
+
+        let updated = cache
+            .direct_get(&gvk, &resource_name)
+            .await
+            .expect("cannot get resource")
+            .ok_or(anyhow!("no result returned"))
+            .unwrap();
+
+        assert_eq!(updated.metadata.labels.unwrap(), test_labels);
+
+        cache.shutdown().unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_delete() {
+        setup_tracing(Some("=TRACE".to_string()));
+
+        let service = FakeKubeApiService::new();
+        let resource = anyapplication();
+        let resource_name = resource.get_namespaced_name();
+
+        let gvk = GroupVersionKind::gvk("dcp.hiro.io", "v1", "AnyApplication");
+        let ar = ApiResource::from_gvk(&gvk);
+        service.register(&ar);
+
+        service
+            .store(resource.clone())
+            .await
+            .expect("saving kubernetes resource");
+
+        let client = kube::Client::new(service, "default");
+        let cache = KubeCache::new(client);
+
+        let status = cache
+            .direct_delete(&gvk, &resource_name)
+            .await
+            .expect("resource is not deleted");
+        info!("delete status {:?}", status);
+
+        let deleted = cache
+            .direct_get(&gvk, &resource_name)
+            .await
+            .expect("cannot get resource");
+
+        assert_eq!(deleted, None);
+
+        cache.shutdown().unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore]
+    async fn test_lifecycle() {
+        setup_tracing(Some("=TRACE".to_string()));
+
+        let service = FakeKubeApiService::new();
+
+        let test_labels: BTreeMap<String, String> =
+            BTreeMap::from([("test".into(), "test".into())]);
+        let gvk = GroupVersionKind::gvk("dcp.hiro.io", "v1", "AnyApplication");
+        let ar = ApiResource::from_gvk(&gvk);
+        let resource = anyapplication();
+        let resource_name = resource.get_namespaced_name();
+
+        service.register(&ar);
+
+        let client = kube::Client::new(service, "default");
+        let cache = KubeCache::new(client);
+
+        let subscriber = cache.subscribe(&gvk).await.expect("cache subscription");
+
+        // Empty snapshot
+        if let CacheProtocol::Snapshot { snapshot } =
+            subscriber.recv().expect("receive snapshot event")
+        {
+            assert_eq!(snapshot.len(), 0);
+        }
+
+        // Create
+        cache
+            .direct_patch_apply(resource)
+            .await
+            .expect("resource is not updated");
+        assert!(matches!(
+            subscriber.recv().expect("receive create event"),
+            CacheProtocol::Update(_)
+        ));
+
+        // Update
+        let mut to_update = cache
+            .direct_get(&gvk, &resource_name)
+            .await
+            .expect("cannot get resource")
+            .ok_or(anyhow!("no result returned"))
+            .unwrap();
+
+        to_update.metadata.labels = Some(test_labels.clone());
+        to_update.metadata.managed_fields = None;
+        cache
+            .direct_patch_apply(to_update)
+            .await
+            .expect("resource is not updated");
+
+        if let CacheProtocol::Update(updated) = subscriber.recv().expect("receive update event") {
+            assert_eq!(updated.metadata.labels.unwrap(), test_labels);
+        } else {
+            panic!("invalid event received");
+        }
+
+        // Delete
+        cache
+            .direct_delete(&gvk, &resource_name)
+            .await
+            .expect("resource is not deleted");
+        assert!(matches!(
+            subscriber.recv().unwrap(),
+            CacheProtocol::Delete(_)
+        ));
+        subscriber.close();
+        assert!(!cache.unsubscribe(&gvk).await.is_err());
+
+        cache.shutdown().expect("cache shutdown");
     }
 
     fn anyapplication() -> DynamicObject {

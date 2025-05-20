@@ -5,7 +5,7 @@ use super::{
     request::{ApiRequest, Args},
     response::ApiResponse,
     storage::Storage,
-    types::{ApiHandler, ApiServiceType},
+    types::{ApiHandler, ApiServiceType, EventStream},
 };
 use anyhow::Result;
 
@@ -32,6 +32,16 @@ impl ApiRequestRouter {
             }
             (ApiServiceType::Resource, Args::Resource(arg)) => {
                 self.resources.call(&method, arg).await
+            }
+            (svc, arg) => unimplemented!("unknown request type {} and arg {}", svc, arg),
+        }
+    }
+
+    pub async fn handle_watch(&self, req: ApiRequest) -> Result<EventStream> {
+        let method = req.method().clone();
+        match (req.service, req.args) {
+            (ApiServiceType::Resource, Args::Resource(arg)) => {
+                self.resources.watch_method(&method, arg).await
             }
             (svc, arg) => unimplemented!("unknown request type {} and arg {}", svc, arg),
         }

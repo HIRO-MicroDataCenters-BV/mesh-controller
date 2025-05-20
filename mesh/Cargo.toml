@@ -50,7 +50,7 @@ schemars.workspace = true
 reqwest.workspace = true
 kube.workspace = true
 k8s-openapi.workspace=true
-
+either.workspace = true
 
 [dev-dependencies]
 figment = { workspace = true, features = ["test"] }
@@ -64,6 +64,9 @@ tower-service.workspace = true
 strum_macros.workspace = true
 strum.workspace = true
 regex.workspace = true
+hyper-util.workspace = true
+http-body.workspace = true
+http-body-util.workspace = true
 
 
 [build-dependencies]

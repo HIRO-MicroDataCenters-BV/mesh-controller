@@ -4,15 +4,17 @@ use http::Request;
 use kube::api::{ApiResource, DynamicObject};
 use kube::client::Body;
 
+use super::response::ApiResponse;
+use super::router::ApiRequestRouter;
+use super::storage::Storage;
+use super::unified_body::UnifiedBody;
 use anyhow::Result;
+use http::StatusCode;
 use std::sync::Arc;
 use std::task::Poll;
 use std::{pin::Pin, task::Context};
 use tower_service::Service;
-
-use super::response::ApiResponse;
-use super::router::ApiRequestRouter;
-use super::storage::Storage;
+use tracing::trace;
 
 pub struct FakeKubeApiService {
     storage: Arc<Storage>,
@@ -34,13 +36,13 @@ impl FakeKubeApiService {
         self.storage.register(ar);
     }
 
-    pub fn store(&self, resource: DynamicObject) -> Result<()> {
-        self.storage.store(resource)
+    pub async fn store(&self, resource: DynamicObject) -> Result<()> {
+        self.storage.store(resource).await
     }
 }
 
 impl Service<Request<Body>> for FakeKubeApiService {
-    type Response = http::Response<Body>;
+    type Response = http::Response<UnifiedBody>;
     type Error = anyhow::Error;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
@@ -51,8 +53,16 @@ impl Service<Request<Body>> for FakeKubeApiService {
     fn call(&mut self, req: Request<Body>) -> Self::Future {
         let router = self.router.clone();
         Box::pin(async move {
+            trace!("received request {req:?}");
             match ApiRequest::try_from(req).await {
-                Ok(req) => router.handle(req).await.and_then(|v| v.to_http_response()),
+                Ok(req) => {
+                    if req.is_watch {
+                        let events = router.handle_watch(req).await.unwrap();
+                        ApiResponse::from_stream(StatusCode::OK, events)
+                    } else {
+                        router.handle(req).await.and_then(|r| r.to_http_response())
+                    }
+                }
                 Err(error) => ApiResponse::from(error).to_http_response(),
             }
         })

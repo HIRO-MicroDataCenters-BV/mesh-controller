@@ -2,13 +2,6 @@ use std::collections::BTreeMap;
 
 use kube::api::DynamicObject;
 use std::sync::Arc;
-use thiserror::Error;
-
-#[derive(Debug, Error)]
-pub enum CacheError {
-    #[error("Unknown error")]
-    Unknown,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default, PartialOrd, Ord)]
 pub struct NamespacedName {

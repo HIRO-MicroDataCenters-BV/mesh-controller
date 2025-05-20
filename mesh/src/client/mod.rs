@@ -5,3 +5,4 @@ pub mod router;
 pub mod service;
 pub mod storage;
 pub mod types;
+pub mod unified_body;
