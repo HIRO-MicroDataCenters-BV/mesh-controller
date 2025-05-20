@@ -27,7 +27,6 @@ pub enum ApiServiceType {
     Resource,
 }
 
-
 pub trait ApiHandler {
     type Req;
 
