@@ -96,14 +96,13 @@ impl ApiRequest {
         let path = path_and_query.path();
         let re = Regex::new(r"^/apis/(?P<group>[^/]+)/(?P<version>[^/]+)/namespaces/(?P<namespace>[^/]+)/(?P<pluralkind>[^/]+)/(?P<name>[^/]+)").unwrap();
         re.captures(path).map(|captures| {
-            let extract_capture = |name: &str| {
-                captures.name(name).map(|m| m.as_str()).unwrap_or("").into()
-            };
+            let extract_capture =
+                |name: &str| captures.name(name).map(|m| m.as_str()).unwrap_or("").into();
 
             let group = extract_capture("group");
             let version = extract_capture("version");
             let kind_plural = extract_capture("pluralkind");
-            let namespace = extract_capture("namespace");            
+            let namespace = extract_capture("namespace");
             let name = extract_capture("name");
 
             let resource_name = Some(NamespacedName::new(namespace, name));
@@ -134,10 +133,8 @@ impl ApiRequest {
         let re = Regex::new(r"^/apis/(?P<group>[^/]+)/(?P<version>[^/]+)/(?P<pluralkind>[^/]+)")
             .unwrap();
         re.captures(path).map(|captures| {
-
-            let extract_capture = |name: &str| {
-                captures.name(name).map(|m| m.as_str()).unwrap_or("").into()
-            };
+            let extract_capture =
+                |name: &str| captures.name(name).map(|m| m.as_str()).unwrap_or("").into();
             let group = extract_capture("group");
             let version = extract_capture("version");
             let kind_plural = extract_capture("pluralkind");
@@ -167,9 +164,8 @@ impl ApiRequest {
         let path = path_and_query.path();
         let re = Regex::new(r"^/apis/(?P<group>[^/]+)/(?P<version>[^/|?]+)").unwrap();
         re.captures(path).map(|captures| {
-            let extract_capture = |name: &str| {
-                captures.name(name).map(|m| m.as_str()).unwrap_or("").into()
-            };
+            let extract_capture =
+                |name: &str| captures.name(name).map(|m| m.as_str()).unwrap_or("").into();
             let group = extract_capture("group");
             let version = extract_capture("version");
 
