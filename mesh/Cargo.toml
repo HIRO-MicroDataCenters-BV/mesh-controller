@@ -33,6 +33,7 @@ p2panda-core.workspace = true
 p2panda-net.workspace = true
 p2panda-sync.workspace = true
 p2panda-discovery.workspace = true
+iroh-base.workspace = true
 rand.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -67,7 +68,6 @@ regex.workspace = true
 hyper-util.workspace = true
 http-body.workspace = true
 http-body-util.workspace = true
-
 
 [build-dependencies]
 built.workspace = true
