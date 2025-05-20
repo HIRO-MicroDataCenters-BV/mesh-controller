@@ -7,6 +7,7 @@ use super::handlers::resource::ResourceArgs;
 use super::types::ApiServiceType;
 use anyhow::Result;
 use anyhow::bail;
+use bytes::Bytes;
 use http::Method;
 use http::Request;
 use http::request::Parts;
@@ -14,7 +15,6 @@ use http::uri::PathAndQuery;
 use kube::client::Body;
 use regex::Regex;
 use strum::Display;
-use tracing::info;
 use url::form_urlencoded;
 
 #[derive(Debug, Clone, Display)]
@@ -69,113 +69,122 @@ impl ApiRequest {
             .map(|v| v.parse::<bool>().unwrap_or(false))
             .unwrap_or(false);
 
+        if let Some(result) = ApiRequest::parse_resource(path_and_query, &input, &params, is_watch)
+        {
+            return result;
+        }
+
+        if let Some(result) =
+            ApiRequest::parse_resource_list(path_and_query, &input, &params, is_watch)
+        {
+            return result;
+        }
+
+        if let Some(result) = ApiRequest::parse_api_resources(path_and_query, &input, is_watch) {
+            return result;
+        }
+
+        bail!("unknown path {}", path_and_query.path())
+    }
+
+    fn parse_resource(
+        path_and_query: &PathAndQuery,
+        input: &Bytes,
+        params: &BTreeMap<String, String>,
+        is_watch: bool,
+    ) -> Option<Result<(Args, ApiServiceType, bool)>> {
         let path = path_and_query.path();
-        let re = Regex::new(r"^/apis/(?P<group>[^/]+)/(?P<version>[^/]+)/namespaces/(?P<namespace>[^/]+)/(?P<pluralkind>[^/]+)/(?P<name>[^/]+)")
-            .unwrap(); // TODO
-        if let Some(captures) = re.captures(path) {
-            let group = captures
-                .name("group")
-                .map(|m| m.as_str())
-                .unwrap_or("")
-                .into();
-            let version = captures
-                .name("version")
-                .map(|m| m.as_str())
-                .unwrap_or("")
-                .into();
-            let kind_plural = captures
-                .name("pluralkind")
-                .map(|m| m.as_str())
-                .unwrap_or("")
-                .into();
-            let namespace = captures
-                .name("namespace")
-                .map(|m| m.as_str())
-                .unwrap_or("")
-                .into();
-            let name = captures
-                .name("name")
-                .map(|m| m.as_str())
-                .unwrap_or("")
-                .into();
+        let re = Regex::new(r"^/apis/(?P<group>[^/]+)/(?P<version>[^/]+)/namespaces/(?P<namespace>[^/]+)/(?P<pluralkind>[^/]+)/(?P<name>[^/]+)").unwrap();
+        re.captures(path).map(|captures| {
+            let extract_capture = |name: &str| {
+                captures.name(name).map(|m| m.as_str()).unwrap_or("").into()
+            };
+
+            let group = extract_capture("group");
+            let version = extract_capture("version");
+            let kind_plural = extract_capture("pluralkind");
+            let namespace = extract_capture("namespace");            
+            let name = extract_capture("name");
 
             let resource_name = Some(NamespacedName::new(namespace, name));
             let service = ApiServiceType::Resource;
 
-            return Ok((
+            Ok((
                 Args::Resource(ResourceArgs {
                     group,
                     version,
                     kind_plural,
-                    input,
+                    input: input.clone(),
                     resource_name,
-                    params,
+                    params: params.clone(),
                 }),
                 service,
                 is_watch,
-            ));
-        }
+            ))
+        })
+    }
+
+    fn parse_resource_list(
+        path_and_query: &PathAndQuery,
+        input: &Bytes,
+        params: &BTreeMap<String, String>,
+        is_watch: bool,
+    ) -> Option<Result<(Args, ApiServiceType, bool)>> {
         let path = path_and_query.path();
-        info!("path {path}");
         let re = Regex::new(r"^/apis/(?P<group>[^/]+)/(?P<version>[^/]+)/(?P<pluralkind>[^/]+)")
-            .unwrap(); // TDOO
-        if let Some(captures) = re.captures(path) {
-            info!("parsed {path}");
-            let group = captures
-                .name("group")
-                .map(|m| m.as_str())
-                .unwrap_or("")
-                .into();
-            let version = captures
-                .name("version")
-                .map(|m| m.as_str())
-                .unwrap_or("")
-                .into();
-            let kind_plural = captures
-                .name("pluralkind")
-                .map(|m| m.as_str())
-                .unwrap_or("")
-                .into();
+            .unwrap();
+        re.captures(path).map(|captures| {
+
+            let extract_capture = |name: &str| {
+                captures.name(name).map(|m| m.as_str()).unwrap_or("").into()
+            };
+            let group = extract_capture("group");
+            let version = extract_capture("version");
+            let kind_plural = extract_capture("pluralkind");
+
             let service = ApiServiceType::Resource;
-            return Ok((
+
+            Ok((
                 Args::Resource(ResourceArgs {
                     group,
                     version,
                     kind_plural,
-                    input,
+                    input: input.clone(),
                     resource_name: None,
-                    params,
+                    params: params.clone(),
                 }),
                 service,
                 is_watch,
-            ));
-        }
+            ))
+        })
+    }
 
+    fn parse_api_resources(
+        path_and_query: &PathAndQuery,
+        input: &Bytes,
+        is_watch: bool,
+    ) -> Option<Result<(Args, ApiServiceType, bool)>> {
+        let path = path_and_query.path();
         let re = Regex::new(r"^/apis/(?P<group>[^/]+)/(?P<version>[^/|?]+)").unwrap();
-        if let Some(captures) = re.captures(path) {
-            let group = captures
-                .name("group")
-                .map(|m| m.as_str())
-                .unwrap_or("")
-                .into();
-            let version = captures
-                .name("version")
-                .map(|m| m.as_str())
-                .unwrap_or("")
-                .into();
+        re.captures(path).map(|captures| {
+            let extract_capture = |name: &str| {
+                captures.name(name).map(|m| m.as_str()).unwrap_or("").into()
+            };
+            let group = extract_capture("group");
+            let version = extract_capture("version");
+
             let service = ApiServiceType::ApiResources;
-            return Ok((
+
+            Ok((
                 Args::ApiResource(ApiResourceArgs {
                     group,
                     version,
-                    input,
+                    input: input.clone(),
                 }),
                 service,
                 is_watch,
-            ));
-        }
-
-        bail!("unknown path {path}")
+            ))
+        })
     }
 
     pub fn method(&self) -> &Method {
