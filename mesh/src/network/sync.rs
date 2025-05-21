@@ -24,6 +24,9 @@ pub struct MeshSyncProtocol {
 pub enum Message {
     #[serde(rename = "handshake")]
     Handshake(Query),
+
+    #[serde(rename = "snapshot")]
+    Resource(),
 }
 
 #[async_trait]
@@ -43,7 +46,7 @@ impl<'a> SyncProtocol<'a, Query> for MeshSyncProtocol {
         let span = span!(Level::DEBUG, "initiator", session_id = hex::encode(session_id), %query);
 
         let mut sink = into_cbor_sink(tx);
-        let mut stream = into_cbor_stream::<Message>(rx);
+        let _stream = into_cbor_stream::<Message>(rx);
 
         // Inform p2panda backend about query.
         app_tx
