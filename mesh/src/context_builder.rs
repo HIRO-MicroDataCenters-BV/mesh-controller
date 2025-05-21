@@ -6,8 +6,8 @@ use crate::http::api::MeshApiImpl;
 
 use crate::api::server::MeshHTTPServer;
 use crate::kube::cache::KubeCache;
-use crate::network::sync::MeshSyncProtocol;
 use crate::network::Panda;
+use crate::network::sync::MeshSyncProtocol;
 use crate::node::mesh::{MeshNode, NodeOptions};
 use anyhow::{Context as AnyhowContext, Result, anyhow};
 use kube::Client;
@@ -105,10 +105,7 @@ impl ContextBuilder {
 
         let resync_config = ContextBuilder::to_resync_config(&config);
 
-        let sync_protocol = MeshSyncProtocol::new(
-            node_config.clone(),
-            private_key.clone(),
-        );
+        let sync_protocol = MeshSyncProtocol::new(node_config.clone(), private_key.clone());
 
         let sync_config = SyncConfiguration::new(sync_protocol).resync(resync_config);
 
@@ -125,7 +122,7 @@ impl ContextBuilder {
             .ok_or_else(|| anyhow!("socket is not bind to any interface"))?;
         let panda = Panda::new(network);
 
-        let options = NodeOptions{
+        let options = NodeOptions {
             public_key: node_id,
             private_key,
             direct_addresses,
@@ -185,5 +182,4 @@ impl ContextBuilder {
             })
             .unwrap_or_default()
     }
-
 }

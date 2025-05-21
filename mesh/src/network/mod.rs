@@ -1,6 +1,6 @@
 mod actor;
 // pub mod membership;
-// pub mod sync;
+pub mod sync;
 pub mod types;
 
 use anyhow::Result;
