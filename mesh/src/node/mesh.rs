@@ -1,8 +1,8 @@
 use std::net::SocketAddr;
 
-use crate::kube::kube_api::KubeApi;
 use crate::JoinErrToStr;
 use crate::config::configuration::Config;
+use crate::kube::kube_api::KubeApi;
 use crate::network::Panda;
 use anyhow::{Context, Result, anyhow};
 use futures_util::future::{MapErr, Shared};
@@ -15,7 +15,7 @@ use tokio::task::JoinError;
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{error, warn};
 
-use super::actor::{NodeActor, ToNodeActor};
+use super::actor::{MeshNodeActor, ToNodeActor};
 
 #[derive(Debug, Clone, Default)]
 pub struct NodeOptions {
@@ -29,7 +29,9 @@ pub struct NodeOptions {
 pub struct NodeConfig {}
 
 pub struct MeshNode {
+    #[allow(dead_code)]
     node_id: PublicKey,
+    #[allow(dead_code)]
     direct_addresses: Vec<SocketAddr>,
     node_actor_tx: mpsc::Sender<ToNodeActor>,
     actor_handle: Shared<MapErr<AbortOnDropHandle<()>, JoinErrToStr>>,
@@ -38,7 +40,7 @@ pub struct MeshNode {
 impl MeshNode {
     pub fn new(panda: Panda, kube: KubeApi, options: NodeOptions) -> Result<Self> {
         let (node_actor_tx, node_actor_rx) = mpsc::channel(512);
-        let node_actor = NodeActor::new(
+        let node_actor = MeshNodeActor::new(
             options.node_config,
             options.private_key,
             panda,
