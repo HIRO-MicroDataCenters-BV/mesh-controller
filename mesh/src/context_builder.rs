@@ -6,11 +6,14 @@ use crate::http::api::MeshApiImpl;
 
 use crate::api::server::MeshHTTPServer;
 use crate::kube::cache::KubeCache;
-use crate::node::mesh::MeshNode;
-use anyhow::{Context as AnyhowContext, Result};
+use crate::network::sync::MeshSyncProtocol;
+use crate::network::Panda;
+use crate::node::mesh::{MeshNode, NodeOptions};
+use anyhow::{Context as AnyhowContext, Result, anyhow};
 use kube::Client;
 use p2panda_core::{PrivateKey, PublicKey};
 
+use p2panda_net::{NetworkBuilder, ResyncConfiguration, SyncConfiguration};
 use tokio::runtime::{Builder, Runtime};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -97,8 +100,39 @@ impl ContextBuilder {
         ))
     }
 
-    async fn init(_config: Config, _private_key: PrivateKey) -> Result<MeshNode> {
-        Ok(MeshNode {})
+    async fn init(config: Config, private_key: PrivateKey) -> Result<MeshNode> {
+        let (node_config, p2p_network_config) = MeshNode::configure_p2p_network(&config).await?;
+
+        let resync_config = ContextBuilder::to_resync_config(&config);
+
+        let sync_protocol = MeshSyncProtocol::new(
+            node_config.clone(),
+            private_key.clone(),
+        );
+
+        let sync_config = SyncConfiguration::new(sync_protocol).resync(resync_config);
+
+        let builder = NetworkBuilder::from_config(p2p_network_config)
+            .private_key(private_key.clone())
+            .sync(sync_config);
+
+        let network = builder.build().await?;
+
+        let node_id = network.node_id();
+        let direct_addresses = network
+            .direct_addresses()
+            .await
+            .ok_or_else(|| anyhow!("socket is not bind to any interface"))?;
+        let panda = Panda::new(network);
+
+        let options = NodeOptions{
+            public_key: node_id,
+            private_key,
+            direct_addresses,
+            node_config,
+        };
+
+        MeshNode::new(panda, options)
     }
 
     /// Starts the HTTP server with health endpoint.
@@ -138,4 +172,18 @@ impl ContextBuilder {
             Ok(client)
         }
     }
+
+    fn to_resync_config(config: &Config) -> ResyncConfiguration {
+        config
+            .node
+            .protocol
+            .as_ref()
+            .map(|c| {
+                ResyncConfiguration::new()
+                    .poll_interval(c.poll_interval_seconds)
+                    .interval(c.resync_interval_seconds)
+            })
+            .unwrap_or_default()
+    }
+
 }
