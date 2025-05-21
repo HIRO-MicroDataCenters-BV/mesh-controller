@@ -43,6 +43,7 @@ pub struct SubscriptionEntry {
     handle: Shared<MapErr<AbortOnDropHandle<()>, JoinErrToStr>>,
 }
 
+// #[derive(Debug)]
 pub struct KubeCache {
     resources: DashMap<GroupVersionKind, Arc<KindResources>>,
     subscriptions: DashMap<GroupVersionKind, SubscriptionEntry>,
