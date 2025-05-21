@@ -1,5 +1,6 @@
 mod actor;
-// pub mod membership;
+pub mod membership;
+pub mod message;
 pub mod sync;
 pub mod types;
 

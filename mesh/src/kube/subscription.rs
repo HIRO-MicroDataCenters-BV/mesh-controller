@@ -72,10 +72,6 @@ impl Subscription {
             .map_err(Box::new(|e: JoinError| e.to_string()) as JoinErrToStr)
             .shared()
     }
-
-    pub fn stop(self) {
-        self.inner.cancelation.cancel();
-    }
 }
 pub struct SubscriptionInner {
     #[allow(dead_code)]

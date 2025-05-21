@@ -69,8 +69,13 @@ impl Context {
     }
 
     pub fn shutdown(self) -> Result<()> {
+        self.mesh_runtime.block_on(async move {
+            self.mesh_node
+                .shutdown()
+                .await
+                .context("Failure during node shutdown")
+        })?;
         let _ = self.kube_cache.shutdown();
-        self.mesh_node.shutdown();
         self.http_handle.abort();
         self.http_runtime.shutdown_background();
         self.mesh_runtime.shutdown_background();

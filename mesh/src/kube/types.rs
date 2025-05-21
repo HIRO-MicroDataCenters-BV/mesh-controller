@@ -1,11 +1,12 @@
 use kube::api::DynamicObject;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fmt::{self, Display};
 use std::sync::Arc;
 
 use super::dynamic_object_ext::DynamicObjectExt;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Default, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct NamespacedName {
     pub namespace: String,
     pub name: String,
@@ -18,13 +19,21 @@ impl NamespacedName {
 }
 // TODO explicitely keep version for each protocol item
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum CacheProtocol {
     Update(DynamicObject),
     Delete(DynamicObject),
     Snapshot {
         snapshot: BTreeMap<NamespacedName, Arc<DynamicObject>>,
     },
+}
+
+impl CacheProtocol {
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        ciborium::into_writer(&self, &mut bytes).expect("encoding network message");
+        bytes
+    }
 }
 
 impl Display for CacheProtocol {

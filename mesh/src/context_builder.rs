@@ -8,6 +8,7 @@ use crate::api::server::MeshHTTPServer;
 use crate::kube::cache::KubeCache;
 use crate::kube::kube_api::KubeApi;
 use crate::network::Panda;
+use crate::network::membership::Membership;
 use crate::network::sync::MeshSyncProtocol;
 use crate::node::mesh::{MeshNode, NodeOptions};
 use anyhow::{Context as AnyhowContext, Result, anyhow};
@@ -112,7 +113,11 @@ impl ContextBuilder {
 
         let builder = NetworkBuilder::from_config(p2p_network_config)
             .private_key(private_key.clone())
-            .sync(sync_config);
+            .sync(sync_config)
+            .discovery(Membership::new(
+                &config.node.known_nodes,
+                config.node.discovery.to_owned().unwrap_or_default(),
+            ));
 
         let network = builder.build().await?;
 
