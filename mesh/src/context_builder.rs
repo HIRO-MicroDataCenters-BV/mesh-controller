@@ -6,6 +6,7 @@ use crate::http::api::MeshApiImpl;
 
 use crate::api::server::MeshHTTPServer;
 use crate::kube::cache::KubeCache;
+use crate::kube::kube_api::KubeApi;
 use crate::network::Panda;
 use crate::network::sync::MeshSyncProtocol;
 use crate::node::mesh::{MeshNode, NodeOptions};
@@ -128,8 +129,9 @@ impl ContextBuilder {
             direct_addresses,
             node_config,
         };
+        let kube = KubeApi::new();
 
-        MeshNode::new(panda, options)
+        MeshNode::new(panda, kube, options)
     }
 
     /// Starts the HTTP server with health endpoint.
