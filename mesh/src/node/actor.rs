@@ -85,7 +85,7 @@ impl MeshNodeActor {
                 },
                 Some(event) = self.kube_consumer_rx.next() => {
                     if let Err(err) = self.on_kube_event(event).await {
-                        warn!("error during nats event handling: {}", err);
+                        warn!("error during kube event handling: {}", err);
                     }
                 },
                 Some(event) = self.p2panda_topic_rx.next() => {

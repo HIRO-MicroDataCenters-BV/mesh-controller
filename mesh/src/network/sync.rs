@@ -14,8 +14,11 @@ use super::types::Query;
 
 #[derive(Debug)]
 pub struct MeshSyncProtocol {
+    #[allow(dead_code)]
     config: NodeConfig,
+    #[allow(dead_code)]
     private_key: PrivateKey,
+    #[allow(dead_code)]
     public_key: PublicKey,
 }
 
