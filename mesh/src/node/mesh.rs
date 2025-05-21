@@ -1,5 +1,6 @@
 use std::net::SocketAddr;
 
+use crate::kube::kube_api::KubeApi;
 use crate::JoinErrToStr;
 use crate::config::configuration::Config;
 use crate::network::Panda;
@@ -35,12 +36,13 @@ pub struct MeshNode {
 }
 
 impl MeshNode {
-    pub fn new(panda: Panda, options: NodeOptions) -> Result<Self> {
+    pub fn new(panda: Panda, kube: KubeApi, options: NodeOptions) -> Result<Self> {
         let (node_actor_tx, node_actor_rx) = mpsc::channel(512);
         let node_actor = NodeActor::new(
             options.node_config,
             options.private_key,
             panda,
+            kube,
             node_actor_rx,
         );
         let actor_handle = tokio::task::spawn(async move {
