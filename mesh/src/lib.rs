@@ -1,6 +1,4 @@
 pub mod api;
-#[cfg(test)]
-pub mod client;
 pub mod config;
 pub mod context;
 pub mod context_builder;

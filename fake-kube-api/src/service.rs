@@ -1,8 +1,8 @@
-use crate::client::request::ApiRequest;
-
 use http::Request;
 use kube::api::{ApiResource, DynamicObject};
 use kube::client::Body;
+
+use crate::request::ApiRequest;
 
 use super::response::ApiResponse;
 use super::router::ApiRequestRouter;
@@ -41,6 +41,12 @@ impl FakeKubeApiService {
     }
 }
 
+impl Default for FakeKubeApiService {
+    fn default() -> Self {
+        FakeKubeApiService::new()
+    }
+}
+
 impl Service<Request<Body>> for FakeKubeApiService {
     type Response = http::Response<UnifiedBody>;
     type Error = anyhow::Error;
@@ -60,10 +66,10 @@ impl Service<Request<Body>> for FakeKubeApiService {
                         let events = router.handle_watch(req).await.unwrap();
                         ApiResponse::from_stream(StatusCode::OK, events)
                     } else {
-                        router.handle(req).await.and_then(|r| r.to_http_response())
+                        router.handle(req).await.and_then(|r| r.try_into())
                     }
                 }
-                Err(error) => ApiResponse::from(error).to_http_response(),
+                Err(error) => ApiResponse::from(error).try_into(),
             }
         })
     }

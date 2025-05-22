@@ -19,11 +19,6 @@ pub struct ApiResponse {
 }
 
 impl ApiResponse {
-    pub fn new(code: StatusCode, body: String) -> ApiResponse {
-        let body = UnifiedBody::from_str(&body);
-        ApiResponse { code, body }
-    }
-
     pub fn try_from<T>(code: StatusCode, body: T) -> Result<ApiResponse>
     where
         T: Serialize,
@@ -49,8 +44,12 @@ impl ApiResponse {
 
         Ok(response)
     }
+}
 
-    pub fn to_http_response(self) -> Result<Response<UnifiedBody>> {
+impl TryInto<Response<UnifiedBody>> for ApiResponse {
+    type Error = anyhow::Error;
+
+    fn try_into(self) -> Result<Response<UnifiedBody>, Self::Error> {
         let response = Response::builder().status(self.code).body(self.body)?;
         Ok(response)
     }

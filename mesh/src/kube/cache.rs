@@ -178,7 +178,6 @@ pub mod tests {
 
     use super::*;
     use crate::{
-        client::service::FakeKubeApiService,
         kube::{
             anyapplication::{
                 AnyApplication, AnyApplicationApplication, AnyApplicationApplicationHelm,
@@ -189,6 +188,7 @@ pub mod tests {
         tracing::setup_tracing,
     };
     use anyhow::anyhow;
+    use fake_kube_api::service::FakeKubeApiService;
     use kube::api::{ApiResource, ObjectMeta};
     pub use serde::{Deserialize, Serialize};
     use std::collections::BTreeMap;
