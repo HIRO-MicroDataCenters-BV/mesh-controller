@@ -10,15 +10,13 @@ use kube::core::ErrorResponse;
 use kube::core::response::StatusDetails;
 use kube::core::response::StatusSummary;
 
-use crate::kube::dynamic_object_ext::DynamicObjectExt;
-use crate::{
-    client::{
-        response::ApiResponse,
-        storage::Storage,
-        types::{ApiHandler, ApiHandlerResponse, ApiHandlerWatchResponse},
-    },
-    kube::types::NamespacedName,
-};
+use crate::dynamic_object_ext::DynamicObjectExt;
+use crate::dynamic_object_ext::NamespacedName;
+use crate::response::ApiResponse;
+use crate::storage::Storage;
+use crate::types::ApiHandler;
+use crate::types::ApiHandlerResponse;
+use crate::types::ApiHandlerWatchResponse;
 
 pub struct ResourceHandler {
     storage: Arc<Storage>,
@@ -68,13 +66,13 @@ impl ApiHandler for ResourceHandler {
                             )
                         })
                 } else {
-                    return ApiResponse::try_from(StatusCode::OK, to_object_list(&ar, objects));
+                    ApiResponse::try_from(StatusCode::OK, to_object_list(&ar, objects))
                 }
             } else {
-                return ApiResponse::try_from(
+                ApiResponse::try_from(
                     StatusCode::NOT_FOUND,
                     to_not_found(&group, &version, &kind_plural),
-                );
+                )
             }
         })
     }

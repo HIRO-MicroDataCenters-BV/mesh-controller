@@ -1,7 +1,7 @@
 use std::pin::Pin;
 use std::{collections::BTreeMap, sync::atomic::AtomicU64};
 
-use crate::kube::{dynamic_object_ext::DynamicObjectExt, types::NamespacedName};
+use crate::dynamic_object_ext::{DynamicObjectExt, NamespacedName};
 use anyhow::{Result, anyhow, bail};
 use dashmap::DashMap;
 use futures::Stream;
@@ -48,14 +48,9 @@ impl Storage {
 
     pub fn register(&self, ar: &ApiResource) {
         let gvk = GroupVersionKind::gvk(&ar.group, &ar.version, &ar.kind);
-        let mut entry = self
-            .metadata
-            .entry(gvk.to_owned())
-            .or_insert_with(|| vec![]);
+        let mut entry = self.metadata.entry(gvk.to_owned()).or_default();
         entry.value_mut().push(ar.clone());
-        self.resources
-            .entry(gvk.to_owned())
-            .or_insert_with(|| DashMap::new());
+        self.resources.entry(gvk.to_owned()).or_default();
     }
 
     pub async fn store(&self, resource: DynamicObject) -> Result<()> {
@@ -63,10 +58,7 @@ impl Storage {
         if !self.metadata.contains_key(&gvk) {
             bail!("Resource {gvk:?} is not registred.");
         }
-        let resources = self
-            .resources
-            .entry(gvk.to_owned())
-            .or_insert_with(|| DashMap::new());
+        let resources = self.resources.entry(gvk.to_owned()).or_default();
 
         let ns_name = resource.get_namespaced_name();
 
@@ -148,7 +140,7 @@ impl Storage {
 
         let items = changelog
             .range(resource_version..)
-            .filter(|(_, e)| match_gvk(&e, &gvk))
+            .filter(|(_, e)| match_gvk(e, &gvk))
             .map(|(_, e)| e.to_owned())
             .collect::<Vec<WatchEvent<DynamicObject>>>();
 
@@ -158,7 +150,7 @@ impl Storage {
             (self.event_rx.clone(), false),
             move |(event_rx, is_terminated)| async move {
                 if is_terminated {
-                    return None;
+                    None
                 } else {
                     match event_rx.recv_async().await {
                         Ok(event) => Some((event, (event_rx, false))),
@@ -189,9 +181,9 @@ impl Storage {
             if let Some(entry) = self.resources.get_mut(&gvk) {
                 let named_resources = entry.value();
                 let updated = self
-                    .update_internal(resource, named_resources, &ns_name)
+                    .update_internal(resource, named_resources, ns_name)
                     .await;
-                return Ok(updated);
+                Ok(updated)
             } else {
                 Err(anyhow!(
                     "Group, Vesion, Kind ({group},{version},{kind_plural}) is not registered"
@@ -218,8 +210,8 @@ impl Storage {
 
             if let Some(entry) = self.resources.get_mut(&gvk) {
                 let named_resources = entry.value();
-                let deleted = self.delete_internal(named_resources, &ns_name).await;
-                return deleted.ok_or(anyhow!("Object is not found"));
+                let deleted = self.delete_internal(named_resources, ns_name).await;
+                deleted.ok_or(anyhow!("Object is not found"))
             } else {
                 Err(anyhow!(
                     "Group, Vesion, Kind ({group},{version},{kind_plural}) is not registered"
@@ -247,7 +239,7 @@ impl Storage {
                 .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
             resource.metadata.uid = Some(uid.to_string());
         }
-        if let Some(mut ns_entry) = resources.get_mut(&ns_name) {
+        if let Some(mut ns_entry) = resources.get_mut(ns_name) {
             let entry = ns_entry.value_mut();
             if entry.tombstone {
                 entry.tombstone = false;
@@ -292,10 +284,10 @@ impl Storage {
     ) -> Option<DynamicObject> {
         let mut changelog = self.changelog.write().await;
 
-        if let Some(mut ns_entry) = resources.get_mut(&ns_name) {
+        if let Some(mut ns_entry) = resources.get_mut(ns_name) {
             let entry = ns_entry.value_mut();
             if entry.tombstone {
-                return None;
+                None
             } else {
                 let resource = &mut entry.resource;
 
@@ -344,7 +336,7 @@ fn match_gvk(event: &WatchEvent<DynamicObject>, gvk: &GroupVersionKind) -> bool 
     }
     match event {
         WatchEvent::Added(obj) | WatchEvent::Modified(obj) | WatchEvent::Deleted(obj) => {
-            match_object(&obj, gvk)
+            match_object(obj, gvk)
         }
         WatchEvent::Bookmark(_) | WatchEvent::Error(_) => true,
     }

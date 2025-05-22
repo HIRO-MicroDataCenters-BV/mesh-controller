@@ -31,10 +31,10 @@ pub trait ApiHandler {
     type Req;
 
     fn call(&self, method: &Method, request: Self::Req) -> ApiHandlerResponse {
-        match method {
-            &http::Method::GET => self.get(request),
-            &http::Method::DELETE => self.delete(request),
-            &http::Method::PATCH => self.patch(request),
+        match *method {
+            http::Method::GET => self.get(request),
+            http::Method::DELETE => self.delete(request),
+            http::Method::PATCH => self.patch(request),
             _ => unimplemented!("{}", method),
         }
     }

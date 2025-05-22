@@ -5,7 +5,7 @@ use http::StatusCode;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::{APIResource, APIResourceList};
 use kube::api::ApiResource;
 
-use crate::client::{
+use crate::{
     response::ApiResponse,
     storage::Storage,
     types::{ApiHandler, ApiHandlerResponse},
@@ -25,6 +25,7 @@ impl ApiResourceHandler {
 pub struct ApiResourceArgs {
     pub group: String,
     pub version: String,
+    #[allow(dead_code)]
     pub input: Bytes,
 }
 
@@ -43,12 +44,36 @@ impl ApiHandler for ApiResourceHandler {
             )
         })
     }
+
+    fn call(&self, method: &http::Method, request: Self::Req) -> crate::types::ApiHandlerResponse {
+        match *method {
+            http::Method::GET => self.get(request),
+            http::Method::DELETE => self.delete(request),
+            http::Method::PATCH => self.patch(request),
+            _ => std::unimplemented!("{}", method),
+        }
+    }
+
+    fn watch_method(
+        &self,
+        method: &http::Method,
+        request: Self::Req,
+    ) -> crate::types::ApiHandlerWatchResponse {
+        match method {
+            &http::Method::GET => self.watch(request),
+            _ => std::unimplemented!("{}", method),
+        }
+    }
+
+    fn watch(&self, _request: Self::Req) -> crate::types::ApiHandlerWatchResponse {
+        std::unimplemented!()
+    }
 }
 
 fn api_resource_list_to_response(
     group: &str,
     version: &str,
-    ar: &Vec<ApiResource>,
+    ar: &[ApiResource],
 ) -> APIResourceList {
     let resources = ar
         .iter()

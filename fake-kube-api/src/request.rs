@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::kube::types::NamespacedName;
+use crate::dynamic_object_ext::NamespacedName;
 
 use super::handlers::api_resource::ApiResourceArgs;
 use super::handlers::resource::ResourceArgs;

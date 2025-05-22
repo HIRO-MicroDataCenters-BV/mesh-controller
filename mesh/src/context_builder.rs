@@ -171,7 +171,7 @@ impl ContextBuilder {
         }
         #[cfg(test)]
         {
-            let svc = crate::client::service::FakeKubeApiService::new();
+            let svc = fake_kube_api::service::FakeKubeApiService::new();
             let client = kube::Client::new(svc, "default");
             Ok(client)
         }

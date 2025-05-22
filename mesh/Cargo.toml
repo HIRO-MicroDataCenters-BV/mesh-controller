@@ -55,19 +55,8 @@ either.workspace = true
 
 [dev-dependencies]
 figment = { workspace = true, features = ["test"] }
+fake-kube-api.workspace = true
 once_cell.workspace = true
-dashmap.workspace = true
-serde_json.workspace = true
-url.workspace = true
-tower-test.workspace = true
-http.workspace = true
-tower-service.workspace = true
-strum_macros.workspace = true
-strum.workspace = true
-regex.workspace = true
-hyper-util.workspace = true
-http-body.workspace = true
-http-body-util.workspace = true
 
 [build-dependencies]
 built.workspace = true
