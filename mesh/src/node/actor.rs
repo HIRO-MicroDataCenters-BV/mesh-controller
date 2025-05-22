@@ -174,11 +174,17 @@ impl MeshNodeActor {
             .expect("signatures was already checked at this point and should be given");
 
         match &network_message.payload {
-            NetworkPayload::ResourceUpdate(_subject, payload) => {
+            NetworkPayload::ResourceUpdate(source, payload) => {
                 let object: DynamicObject =
                     serde_json::from_slice(payload).context("deserialize resource payload")?;
 
-                self.kube.publish(object).await?;
+                self.kube.apply_update(source, object).await?;
+            }
+            NetworkPayload::ResourceSnapshot(source, payload) => {
+                let object: DynamicObject =
+                    serde_json::from_slice(payload).context("deserialize resource payload")?;
+
+                self.kube.apply_snapshot(source, object).await?;
             }
         }
 

@@ -4,9 +4,10 @@ use anyhow::{Result, bail};
 use p2panda_net::network::{FromNetwork, ToNetwork};
 use p2panda_net::{Network, TopicId};
 use tokio::sync::{mpsc, oneshot};
-use tracing::{error, trace, warn};
+use tracing::{error, warn};
 
-use super::types::Query;
+use super::log_sync::LogHeightTopic;
+
 
 pub enum ToPandaActor {
     Broadcast {
@@ -15,7 +16,7 @@ pub enum ToPandaActor {
         reply: oneshot::Sender<Result<()>>,
     },
     Subscribe {
-        query: Query,
+        query: LogHeightTopic,
         reply: oneshot::Sender<Option<mpsc::Receiver<FromNetwork>>>,
     },
     Shutdown {
@@ -25,7 +26,7 @@ pub enum ToPandaActor {
 
 pub struct PandaActor {
     /// p2panda-net network.
-    network: Network<Query>,
+    network: Network<LogHeightTopic>,
 
     /// Map containing senders for all subscribed topics. Messages sent on this channels will be
     /// broadcast to peers interested in the same topic.
@@ -36,7 +37,7 @@ pub struct PandaActor {
 }
 
 impl PandaActor {
-    pub fn new(network: Network<Query>, inbox: mpsc::Receiver<ToPandaActor>) -> Self {
+    pub fn new(network: Network<LogHeightTopic>, inbox: mpsc::Receiver<ToPandaActor>) -> Self {
         Self {
             network,
             topic_gossip_tx_map: HashMap::default(),
@@ -111,18 +112,18 @@ impl PandaActor {
         }
     }
 
-    async fn on_subscribe(&mut self, query: Query) -> Result<Option<mpsc::Receiver<FromNetwork>>> {
+    async fn on_subscribe(&mut self, query: LogHeightTopic) -> Result<Option<mpsc::Receiver<FromNetwork>>> {
         let topic_id = query.id();
 
-        if query.is_no_sync() && self.topic_gossip_tx_map.contains_key(&topic_id) {
-            return Ok(None);
-        }
+        // if query.is_no_sync() && self.topic_gossip_tx_map.contains_key(&topic_id) {
+        //     return Ok(None);
+        // }
 
-        trace!(
-            topic_id = hex::encode(topic_id),
-            %query,
-            "subscribe to topic"
-        );
+        // trace!(
+        //     topic_id = hex::encode(topic_id),
+        //     %query,
+        //     "subscribe to topic"
+        // );
         let (tx, rx, _) = self.network.subscribe(query).await?;
         if let hash_map::Entry::Vacant(entry) = self.topic_gossip_tx_map.entry(topic_id) {
             entry.insert(tx);

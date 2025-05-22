@@ -1,25 +1,22 @@
-use std::collections::BTreeMap;
-
 use anyhow::Result;
 use kube::api::DynamicObject;
 
-use super::types::CacheProtocol;
-
-#[derive(Debug, Default)]
-pub struct KubeApi {}
+#[derive(Debug, Clone, Default)]
+pub struct KubeApi {
+    
+}
 
 impl KubeApi {
     pub fn new() -> KubeApi {
         KubeApi {}
     }
 
-    pub async fn publish(&self, _object: DynamicObject) -> Result<()> {
+    pub async fn apply_update(&self, _source: &String, _object: DynamicObject) -> Result<()> {
         Ok(())
     }
 
-    pub fn snapshot(&self) -> Result<CacheProtocol> {
-        Ok(CacheProtocol::Snapshot {
-            snapshot: BTreeMap::new(),
-        })
+    pub async fn apply_snapshot(&self, _source: &String, _object: DynamicObject) -> Result<()> {
+        Ok(())
     }
+
 }

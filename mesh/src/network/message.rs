@@ -21,14 +21,22 @@ pub struct NetworkMessage {
 
 impl NetworkMessage {
     pub fn new_resource_msg(
-        subject: String,
+        source: String,
         message: CacheProtocol,
         public_key: &PublicKey,
     ) -> Self {
+        let payload = match message {
+            CacheProtocol::Update(_) | CacheProtocol::Delete(_) => {
+                NetworkPayload::ResourceUpdate(source, message.to_bytes().into())
+            }
+            CacheProtocol::Snapshot { .. } => {
+                NetworkPayload::ResourceSnapshot(source, message.to_bytes().into())
+            }
+        };
         Self {
-            payload: NetworkPayload::ResourceUpdate(subject, message.to_bytes().into()),
             public_key: public_key.to_owned(),
             signature: None,
+            payload,
         }
     }
 
@@ -74,8 +82,11 @@ impl NetworkMessage {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", content = "value")]
 pub enum NetworkPayload {
-    #[serde(rename = "resource")]
+    #[serde(rename = "update")]
     ResourceUpdate(String, Bytes),
+
+    #[serde(rename = "snapshot")]
+    ResourceSnapshot(String, Bytes),
 }
 
 #[cfg(test)]

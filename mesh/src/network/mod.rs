@@ -3,17 +3,18 @@ pub mod membership;
 pub mod message;
 pub mod sync;
 pub mod types;
+pub mod log_sync;
 
 use anyhow::Result;
 use futures_util::future::{MapErr, Shared};
 use futures_util::{FutureExt, TryFutureExt};
+use log_sync::LogHeightTopic;
 use p2panda_net::Network;
 use p2panda_net::network::FromNetwork;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinError;
 use tokio_util::task::AbortOnDropHandle;
 use tracing::error;
-use types::Query;
 
 use crate::JoinErrToStr;
 use crate::network::actor::{PandaActor, ToPandaActor};
@@ -26,7 +27,7 @@ pub struct Panda {
 }
 
 impl Panda {
-    pub fn new(network: Network<Query>) -> Self {
+    pub fn new(network: Network<LogHeightTopic>) -> Self {
         let (panda_actor_tx, panda_actor_rx) = mpsc::channel(512);
         let panda_actor = PandaActor::new(network, panda_actor_rx);
 
@@ -47,7 +48,7 @@ impl Panda {
     }
 
     /// Subscribe to a data stream in the network.
-    pub async fn subscribe(&self, query: Query) -> Result<Option<mpsc::Receiver<FromNetwork>>> {
+    pub async fn subscribe(&self, query: LogHeightTopic) -> Result<Option<mpsc::Receiver<FromNetwork>>> {
         let (reply, reply_rx) = oneshot::channel();
         self.panda_actor_tx
             .send(ToPandaActor::Subscribe { query, reply })
