@@ -214,7 +214,7 @@ pub mod tests {
 
         let subscriber = cache.subscribe(&gvk).await.expect("cache subscription");
 
-        if let CacheProtocol::Snapshot { snapshot } =
+        if let CacheProtocol::Snapshot { snapshot, .. } =
             subscriber.recv().expect("receive snapshot event")
         {
             assert_eq!(snapshot.len(), 1);
@@ -365,7 +365,7 @@ pub mod tests {
         let subscriber = cache.subscribe(&gvk).await.expect("cache subscription");
 
         // Empty snapshot
-        if let CacheProtocol::Snapshot { snapshot } =
+        if let CacheProtocol::Snapshot { snapshot, .. } =
             subscriber.recv().expect("receive snapshot event")
         {
             assert_eq!(snapshot.len(), 0);
@@ -378,7 +378,7 @@ pub mod tests {
             .expect("resource is not updated");
         assert!(matches!(
             subscriber.recv().expect("receive create event"),
-            CacheProtocol::Update(_)
+            CacheProtocol::Update { .. }
         ));
 
         // Update
@@ -396,8 +396,10 @@ pub mod tests {
             .await
             .expect("resource is not updated");
 
-        if let CacheProtocol::Update(updated) = subscriber.recv().expect("receive update event") {
-            assert_eq!(updated.metadata.labels.unwrap(), test_labels);
+        if let CacheProtocol::Update { object, .. } =
+            subscriber.recv().expect("receive update event")
+        {
+            assert_eq!(object.metadata.labels.unwrap(), test_labels);
         } else {
             panic!("invalid event received");
         }
@@ -409,7 +411,7 @@ pub mod tests {
             .expect("resource is not deleted");
         assert!(matches!(
             subscriber.recv().unwrap(),
-            CacheProtocol::Delete(_)
+            CacheProtocol::Delete { .. }
         ));
         subscriber.close();
         assert!(!cache.unsubscribe(&gvk).await.is_err());

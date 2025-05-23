@@ -26,7 +26,7 @@ impl NetworkMessage {
         public_key: &PublicKey,
     ) -> Self {
         let payload = match message {
-            CacheProtocol::Update(_) | CacheProtocol::Delete(_) => {
+            CacheProtocol::Update { .. } | CacheProtocol::Delete { .. } => {
                 NetworkPayload::ResourceUpdate(source, message.to_bytes().into())
             }
             CacheProtocol::Snapshot { .. } => {
@@ -78,14 +78,10 @@ impl NetworkMessage {
     }
 }
 
-#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", content = "value")]
 pub enum NetworkPayload {
-    #[serde(rename = "update")]
     ResourceUpdate(String, Bytes),
-
-    #[serde(rename = "snapshot")]
     ResourceSnapshot(String, Bytes),
 }
 

@@ -125,21 +125,21 @@ impl SubscriptionInner {
     }
 
     fn apply_resource(
-        obj: DynamicObject,
+        object: DynamicObject,
         resources: &DashMap<NamespacedName, DashMap<UID, ResourceEntry>>,
         tx: &loole::Sender<CacheProtocol>,
         must_distribute: bool,
     ) -> Result<()> {
-        let ns_name = obj.get_namespaced_name();
-        let uid = obj
+        let ns_name = object.get_namespaced_name();
+        let uid = object
             .uid()
             .ok_or(anyhow!("UID is not set for dynamic object"))?;
-        let version = obj
+        let version = object
             .resource_version()
             .ok_or(anyhow!("resourceVersion is not set for dynamic object"))?
             .parse::<u64>()
             .context("unparsable resourceVersion in dynamic object")?;
-        let resource = Arc::new(obj.clone());
+        let resource = Arc::new(object.clone());
 
         let resource_entries = resources.entry(ns_name).or_default();
 
@@ -165,27 +165,27 @@ impl SubscriptionInner {
         };
 
         if updated && must_distribute {
-            tx.send(CacheProtocol::Update(obj))
+            tx.send(CacheProtocol::Update { version, object })
                 .unwrap_or_else(|e| error!("Failed to send update event: {}", e));
         }
         Ok(())
     }
 
     fn delete_resource(
-        obj: DynamicObject,
+        object: DynamicObject,
         resources: &DashMap<NamespacedName, DashMap<UID, ResourceEntry>>,
         tx: &loole::Sender<CacheProtocol>,
     ) -> Result<()> {
-        let ns_name = obj.get_namespaced_name();
-        let uid = obj
+        let ns_name = object.get_namespaced_name();
+        let uid = object
             .uid()
             .ok_or(anyhow!("UID is not set for dynamic object"))?;
-        let version = obj
+        let version = object
             .resource_version()
             .ok_or(anyhow!("resourceVersion is not set for dynamic object"))?
             .parse::<u64>()
             .context("unparsable resourceVersion in dynamic object")?;
-        let resource = Arc::new(obj.clone());
+        let resource = Arc::new(object.clone());
 
         let resource_entries = resources.entry(ns_name).or_default();
 
@@ -202,7 +202,7 @@ impl SubscriptionInner {
                 resource,
                 tombstone: true,
             };
-            tx.send(CacheProtocol::Delete(obj))
+            tx.send(CacheProtocol::Delete { version, object })
                 .unwrap_or_else(|e| error!("Failed to send delete event: {}", e));
         }
         Ok(())
@@ -229,8 +229,12 @@ impl SubscriptionInner {
                 maybe_object.map(|object| (entry.key().to_owned(), object))
             })
             .collect::<BTreeMap<NamespacedName, Arc<DynamicObject>>>();
-
-        tx.send(CacheProtocol::Snapshot { snapshot })
+        let version = resources
+            .iter()
+            .flat_map(|entry| entry.value().iter().map(|e| e.value().version).max())
+            .max()
+            .unwrap_or(0);
+        tx.send(CacheProtocol::Snapshot { version, snapshot })
             .unwrap_or_else(|e| error!("Failed to send snapshot event: {}", e));
 
         Ok(())
