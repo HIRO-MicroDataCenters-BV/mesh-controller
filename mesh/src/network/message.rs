@@ -89,6 +89,18 @@ pub enum NetworkPayload {
     ResourceSnapshot(String, Bytes),
 }
 
+impl NetworkPayload {
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        let message: Self = ciborium::from_reader(bytes)?;
+        Ok(message)
+    }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        ciborium::into_writer(&self, &mut bytes).expect("encoding network message");
+        bytes
+    }
+}
 #[cfg(test)]
 mod tests {
     use p2panda_core::PrivateKey;

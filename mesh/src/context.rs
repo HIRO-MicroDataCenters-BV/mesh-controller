@@ -7,6 +7,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::config::configuration::Config;
 use crate::kube::cache::KubeCache;
+use crate::logs::topic::MeshTopic;
 use crate::node::mesh::MeshNode;
 
 pub struct Context {
@@ -53,8 +54,10 @@ impl Context {
     }
 
     async fn configure_inner(&self) -> Result<()> {
-        // TODO subscribe membership and message sync
-        Ok(())
+        self.mesh_node
+            .subscribe(MeshTopic::new("resources"))
+            .await?;
+        self.mesh_node.publish(MeshTopic::new("resources")).await
     }
 
     pub fn wait_for_termination(&self) -> Result<()> {

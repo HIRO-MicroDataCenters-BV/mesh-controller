@@ -4,6 +4,7 @@ pub mod context;
 pub mod context_builder;
 mod http;
 pub mod kube;
+pub mod logs;
 pub mod metrics;
 pub mod network;
 pub mod node;

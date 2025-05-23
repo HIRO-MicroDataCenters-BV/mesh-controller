@@ -2,7 +2,8 @@ use std::net::SocketAddr;
 
 use crate::JoinErrToStr;
 use crate::config::configuration::Config;
-use crate::kube::kube_api::KubeApi;
+use crate::logs::kube_api::KubeApi;
+use crate::logs::topic::MeshTopic;
 use crate::network::Panda;
 use anyhow::{Context, Result, anyhow};
 use futures_util::future::{MapErr, Shared};
@@ -104,6 +105,22 @@ impl MeshNode {
             network_config.direct_node_addresses.push(node_address);
         }
         Ok((node_config, network_config))
+    }
+
+    pub async fn subscribe(&self, topic: MeshTopic) -> Result<()> {
+        let (reply, reply_rx) = oneshot::channel();
+        self.node_actor_tx
+            .send(ToNodeActor::Subscribe { topic, reply })
+            .await?;
+        reply_rx.await?
+    }
+
+    pub async fn publish(&self, topic: MeshTopic) -> Result<()> {
+        let (reply, reply_rx) = oneshot::channel();
+        self.node_actor_tx
+            .send(ToNodeActor::Publish { topic, reply })
+            .await?;
+        reply_rx.await?
     }
 
     /// Graceful shutdown of the rhio node.

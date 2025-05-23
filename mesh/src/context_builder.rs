@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::config::private_key::load_private_key_from_file;
@@ -7,16 +6,16 @@ use crate::http::api::MeshApiImpl;
 
 use crate::api::server::MeshHTTPServer;
 use crate::kube::cache::KubeCache;
-use crate::kube::kube_api::KubeApi;
-use crate::network::log_sync::{LogHeightTopic, LogHeightTopicMap};
+use crate::logs::kube_api::{KubeApi, MeshLogId};
+use crate::logs::topic::MeshTopicLogMap;
 use crate::network::Panda;
 use crate::network::membership::Membership;
 use crate::node::mesh::{MeshNode, NodeOptions};
 use anyhow::{Context as AnyhowContext, Result, anyhow};
 use kube::Client;
 use p2panda_core::{PrivateKey, PublicKey};
-use p2panda_store::MemoryStore;
 use p2panda_net::{NetworkBuilder, ResyncConfiguration, SyncConfiguration};
+use p2panda_store::MemoryStore;
 use p2panda_sync::log_sync::LogSyncProtocol;
 use tokio::runtime::{Builder, Runtime};
 use tokio::task::JoinHandle;
@@ -109,14 +108,10 @@ impl ContextBuilder {
 
         let resync_config = ContextBuilder::to_resync_config(&config);
 
-        let kube = KubeApi::new();
+        let log_store = MemoryStore::<MeshLogId>::new();
+        let kube = KubeApi::new(log_store.clone());
 
-        let log_store = MemoryStore::<u64>::new();
-
-        let mut topic_map = LogHeightTopicMap::new();
-        let topic_query = LogHeightTopic::new("messages");
-        let logs = HashMap::new();
-        topic_map.insert(&topic_query, logs);
+        let topic_map = MeshTopicLogMap::new(private_key.public_key());
         let sync_protocol = LogSyncProtocol::new(topic_map, log_store);
 
         let sync_config = SyncConfiguration::new(sync_protocol).resync(resync_config);
