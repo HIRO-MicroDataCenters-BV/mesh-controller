@@ -7,12 +7,15 @@ use crate::http::api::MeshApiImpl;
 use crate::api::server::MeshHTTPServer;
 use crate::kube::cache::KubeCache;
 use crate::logs::kube_api::{KubeApi, MeshLogId};
+use crate::logs::operations::{Extensions, OperationExt};
 use crate::logs::topic::MeshTopicLogMap;
 use crate::network::Panda;
 use crate::network::membership::Membership;
 use crate::node::mesh::{MeshNode, NodeOptions};
 use anyhow::{Context as AnyhowContext, Result, anyhow};
+use futures::StreamExt;
 use kube::Client;
+use kube::api::GroupVersionKind;
 use p2panda_core::{PrivateKey, PublicKey};
 use p2panda_net::{NetworkBuilder, ResyncConfiguration, SyncConfiguration};
 use p2panda_store::MemoryStore;
@@ -77,7 +80,7 @@ impl ContextBuilder {
             let client = ContextBuilder::build_kube_client().await?;
             let cache = KubeCache::new(client);
 
-            let node = ContextBuilder::init(self.config.clone(), self._private_key.clone())
+            let node = ContextBuilder::init(self.config.clone(), self._private_key.clone(), &cache)
                 .await
                 .context("failed to initialize mesh node")?;
             Ok::<_, anyhow::Error>((node, cache))
@@ -103,13 +106,24 @@ impl ContextBuilder {
         ))
     }
 
-    async fn init(config: Config, private_key: PrivateKey) -> Result<MeshNode> {
+    async fn init(
+        config: Config,
+        private_key: PrivateKey,
+        kube_cache: &KubeCache,
+    ) -> Result<MeshNode> {
         let (node_config, p2p_network_config) = MeshNode::configure_p2p_network(&config).await?;
 
         let resync_config = ContextBuilder::to_resync_config(&config);
 
-        let log_store = MemoryStore::<MeshLogId>::new();
-        let kube = KubeApi::new(log_store.clone());
+        let log_store = MemoryStore::<MeshLogId, Extensions>::new();
+        let gvk = GroupVersionKind::gvk("dcp.hiro.io", "v1", "AnyApplication");
+        let rx = kube_cache
+            .subscribe(&gvk)
+            .await?
+            .into_stream()
+            .to_operation(private_key.to_owned())
+            .boxed();
+        let kube = KubeApi::new(log_store.clone(), rx);
 
         let topic_map = MeshTopicLogMap::new(private_key.public_key());
         let sync_protocol = LogSyncProtocol::new(topic_map, log_store);

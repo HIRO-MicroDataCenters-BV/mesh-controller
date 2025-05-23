@@ -1,6 +1,7 @@
 use crate::kube::types::CacheProtocol;
 use crate::logs::kube_api::KubeApi;
 use crate::logs::kube_api::MeshLogId;
+use crate::logs::operations::Extensions;
 use crate::logs::topic::MeshTopic;
 use crate::metrics::MESSAGE_RECEIVE_TOTAL;
 use crate::network::message::NetworkMessage;
@@ -11,9 +12,11 @@ use futures_util::stream::SelectAll;
 use loole::RecvStream;
 use p2panda_core::Body;
 use p2panda_core::Header;
+use p2panda_core::cbor::decode_cbor;
 use p2panda_core::{PrivateKey, PublicKey};
 use p2panda_net::TopicId;
 use p2panda_net::network::FromNetwork;
+use std::io::Cursor;
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::ReceiverStream;
@@ -211,8 +214,9 @@ impl MeshNodeActor {
                 (header, payload, delivered_from, false)
             }
         };
-        let header: Header<()> =
-            Header::try_from(&header_bytes[..]).context("Header deserialization")?;
+
+        let header: Header<Extensions> =
+            decode_cbor(Cursor::new(&header_bytes)).context("Header deserialization")?;
         let body: Option<Body> = payload_bytes.map(|b| Body::new(&b));
 
         self.kube
