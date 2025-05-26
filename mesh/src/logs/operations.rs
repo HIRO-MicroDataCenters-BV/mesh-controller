@@ -3,6 +3,7 @@ use std::task::Context;
 
 use crate::kube::types::CacheProtocol;
 use futures::Stream;
+use futures::StreamExt;
 use futures::ready;
 use loole::RecvStream;
 use p2panda_core::Body;
@@ -11,6 +12,8 @@ use p2panda_core::cbor::decode_cbor;
 use p2panda_core::{Hash, Header, Operation, PrivateKey, PruneFlag};
 use pin_project::pin_project;
 use serde::{Deserialize, Serialize};
+use tokio::sync::broadcast;
+use tokio_stream::wrappers::BroadcastStream;
 use std::task::Poll;
 use tracing::info;
 
@@ -33,6 +36,12 @@ pub struct Extensions {
 pub struct KubeOperation {
     pub panda_op: Operation<Extensions>,
     pub backlink: Option<Hash>,
+}
+
+impl std::fmt::Display for KubeOperation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "KubeOperation(hash: {}, backlink: {:?})", self.panda_op.hash, self.backlink)
+    }
 }
 
 #[pin_project]
@@ -128,7 +137,8 @@ fn create_operation(
 
 impl OperationExt<RecvStream<CacheProtocol>> for RecvStream<CacheProtocol> {}
 
-pub type BoxedOperationStream = Pin<Box<dyn Stream<Item = KubeOperation> + Send>>;
+pub type OpStream = dyn Stream<Item = KubeOperation> + Send + Sync + 'static;
+pub type BoxedOperationStream = Pin<Box<OpStream>>;
 
 impl TryFrom<&[u8]> for Extensions {
     type Error = DecodeError;
@@ -138,3 +148,41 @@ impl TryFrom<&[u8]> for Extensions {
     }
 }
 
+
+pub fn fanout2<T, S>(
+    stream: S,
+    capacity: usize,
+) -> (impl Stream<Item = T> + Send + Sync + 'static, impl Stream<Item = T> + Send + Sync + 'static)
+where
+    T: Clone + Send + Sync + 'static,
+    S: Stream<Item = T> + Send + Sync + 'static
+{
+    let (tx, _rx) = broadcast::channel(capacity);
+    let mut stream = stream.boxed();
+    let tx_clone = tx.clone();
+    tokio::spawn(async move {
+        while let Some(item) = stream.next().await {
+            let _ = tx_clone.send(item);
+        }
+    });
+
+    let to_store = 
+        BroadcastStream::new(tx.subscribe())
+            .filter_map(|value| async{
+                match value {
+                    Ok(v) => Some(v),
+                    Err(_e) => None
+                }
+            });
+
+    let to_network = BroadcastStream::new(tx.subscribe())
+            .filter_map(|value|async {
+                match value {
+                    Ok(v) => Some(v),
+                    Err(_e) => None
+                }
+            });
+
+
+    (to_store, to_network)
+}

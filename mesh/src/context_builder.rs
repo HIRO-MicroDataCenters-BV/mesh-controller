@@ -7,13 +7,12 @@ use crate::http::api::MeshApiImpl;
 use crate::api::server::MeshHTTPServer;
 use crate::kube::cache::KubeCache;
 use crate::logs::kube_api::{KubeApi, MeshLogId};
-use crate::logs::operations::{Extensions, OperationExt};
+use crate::logs::operations::{fanout2, Extensions, OperationExt};
 use crate::logs::topic::MeshTopicLogMap;
 use crate::network::Panda;
 use crate::network::membership::Membership;
 use crate::node::mesh::{MeshNode, NodeOptions};
 use anyhow::{Context as AnyhowContext, Result, anyhow};
-use futures::StreamExt;
 use kube::Client;
 use kube::api::GroupVersionKind;
 use p2panda_core::{PrivateKey, PublicKey};
@@ -121,9 +120,11 @@ impl ContextBuilder {
             .subscribe(&gvk)
             .await?
             .into_stream()
-            .to_operation(private_key.to_owned())
-            .boxed();
-        let kube = KubeApi::new(log_store.clone(), rx);
+            .to_operation(private_key.to_owned());
+
+        let (to_network, to_store) = fanout2(rx, 100);
+        
+        let kube = KubeApi::new(log_store.clone(), Box::pin(to_store));
 
         let topic_map = MeshTopicLogMap::new(private_key.public_key());
         let sync_protocol = LogSyncProtocol::new(topic_map, log_store);
@@ -154,7 +155,7 @@ impl ContextBuilder {
             node_config,
         };
 
-        MeshNode::new(panda, kube, options)
+        MeshNode::new(panda, kube, Box::pin(to_network), options)
     }
 
     /// Starts the HTTP server with health endpoint.
@@ -208,3 +209,4 @@ impl ContextBuilder {
             .unwrap_or_default()
     }
 }
+
