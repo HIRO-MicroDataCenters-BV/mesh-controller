@@ -111,9 +111,12 @@ impl KubeCache {
     }
 
     pub async fn merge(&self, protocol: CacheProtocol) -> Result<()>{
-        trace!("merging incoming event {protocol}");
+        
         match protocol {
-            CacheProtocol::Update { version: _, object } => {
+            CacheProtocol::Update { version: _, mut object } => {
+                trace!("incoming update {object:?}");
+                object.metadata.managed_fields = None; // Remove managed fields to avoid conflicts
+                object.metadata.uid = None; 
                 let gvk = object.get_gvk().context("Unable to derive GroupVersionKind")?;
                 let ns_name = object.get_namespaced_name();
                 let (ar, _) = kube::discovery::pinned_kind(&self.client, &gvk).await?;
@@ -126,6 +129,7 @@ impl KubeCache {
                 trace!(name = ?ns_name, "Resource update");
             }
             CacheProtocol::Delete { version: _, object } => {
+                trace!("incoming delete {object:?}");
                 let gvk = object.get_gvk().context("Unable to derive GroupVersionKind")?;
                 let ns_name = object.get_namespaced_name();
                 let (ar, _caps) = kube::discovery::pinned_kind(&self.client, &gvk).await?;
@@ -139,6 +143,7 @@ impl KubeCache {
                 trace!(status = ?status, name = ?ns_name, "Resource deleted");
             }
             CacheProtocol::Snapshot { version, snapshot } => {
+                trace!("incoming snapshot {snapshot:?}");
                 for elements in snapshot {
 
                 }                

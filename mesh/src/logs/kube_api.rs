@@ -100,7 +100,7 @@ impl KubeApi {
         header_bytes: Vec<u8>,
         log_id: &MeshLogId,
     ) -> Result<()> {
-        trace!("KubeApi ingest operation {}", header.hash());
+        trace!("KubeApi ingest operation {}, seq_num {}", header.hash() , header.seq_num);
         let result = ingest_operation(&mut self.store, header, body, header_bytes, log_id, false)
             .await
             .inspect_err(|e| {

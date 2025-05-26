@@ -126,7 +126,7 @@ impl ContextBuilder {
         let kube = KubeApi::new(log_store.clone(), kube_cache, Box::pin(to_store));
 
         let topic_map = MeshTopicLogMap::new(private_key.public_key());
-        let sync_protocol = LogSyncProtocol::new(topic_map, log_store);
+        let sync_protocol = LogSyncProtocol::new(topic_map.clone(), log_store);
 
         let sync_config = SyncConfiguration::new(sync_protocol).resync(resync_config);
 
@@ -136,6 +136,7 @@ impl ContextBuilder {
             .discovery(Membership::new(
                 &config.node.known_nodes,
                 config.node.discovery.to_owned().unwrap_or_default(),
+                topic_map,
             ));
 
         let network = builder.build().await?;
