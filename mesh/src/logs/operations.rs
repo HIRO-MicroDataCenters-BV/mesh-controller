@@ -166,7 +166,7 @@ where
         }
     });
 
-    let to_store = 
+    let left = 
         BroadcastStream::new(tx.subscribe())
             .filter_map(|value| async{
                 match value {
@@ -175,7 +175,7 @@ where
                 }
             });
 
-    let to_network = BroadcastStream::new(tx.subscribe())
+    let right = BroadcastStream::new(tx.subscribe())
             .filter_map(|value|async {
                 match value {
                     Ok(v) => Some(v),
@@ -184,5 +184,5 @@ where
             });
 
 
-    (to_store, to_network)
+    (left, right)
 }

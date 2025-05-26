@@ -6,7 +6,7 @@ use p2panda_core::Operation;
 use p2panda_core::Body;
 use p2panda_core::{Header, PublicKey};
 use p2panda_store::MemoryStore;
-use p2panda_stream::operation::ingest_operation;
+use p2panda_stream::operation::{ingest_operation, IngestResult};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fmt::Debug};
 use tokio::task::JoinError;
@@ -65,7 +65,14 @@ impl KubeApi {
                                 break;
                             }
                             Ok(result) => {
-                                info!("ingest result {:?}", result);
+                                match result {
+                                    IngestResult::Complete(op) => {
+                                        info!("Ingested operation: {:?}", op);
+                                    }
+                                    IngestResult::Retry(_,_,_,ops_missing) => {
+                                        info!("Retrying operation: missing ops = {:?}", ops_missing);
+                                    }
+                                }                            
                             }
                         }
                     }

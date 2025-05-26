@@ -185,6 +185,9 @@ impl MeshNodeActor {
         self.panda
             .broadcast(message.to_bytes(), topic_id)
             .await
+            .inspect_err(|e| {
+                error!(?e, "failed to broadcast message");
+            })
             .context("broadcast message")?;
         Ok(())
     }
