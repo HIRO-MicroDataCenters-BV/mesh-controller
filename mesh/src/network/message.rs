@@ -10,14 +10,9 @@ pub struct NetworkMessage {
 }
 
 impl NetworkMessage {
-    pub fn new(
-        source: &str,
-        op: Operation<Extensions>,
-    ) -> Self {
+    pub fn new(source: &str, op: Operation<Extensions>) -> Self {
         let payload = NetworkPayload::Operation(source.into(), op.header, op.body);
-        Self {
-            payload,
-        }
+        Self { payload }
     }
 
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
@@ -30,7 +25,6 @@ impl NetworkMessage {
         ciborium::into_writer(&self, &mut bytes).expect("encoding network message");
         bytes
     }
-
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

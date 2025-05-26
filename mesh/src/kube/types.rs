@@ -50,6 +50,15 @@ impl CacheProtocol {
     }
 }
 
+impl TryFrom<Vec<u8>> for CacheProtocol {
+    type Error = ciborium::de::Error<std::io::Error>;
+
+    fn try_from(bytes: Vec<u8>) -> Result<Self, Self::Error> {
+        ciborium::from_reader(&bytes[..])
+    }
+}
+
+
 impl Display for CacheProtocol {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

@@ -7,7 +7,7 @@ use crate::http::api::MeshApiImpl;
 use crate::api::server::MeshHTTPServer;
 use crate::kube::cache::KubeCache;
 use crate::logs::kube_api::{KubeApi, MeshLogId};
-use crate::logs::operations::{fanout2, Extensions, OperationExt};
+use crate::logs::operations::{Extensions, OperationExt, fanout2};
 use crate::logs::topic::MeshTopicLogMap;
 use crate::network::Panda;
 use crate::network::membership::Membership;
@@ -75,14 +75,14 @@ impl ContextBuilder {
             .build()
             .expect("Mesh Controller tokio runtime");
 
-        let (mesh_node, cache) = mesh_runtime.block_on(async {
-            let client = ContextBuilder::build_kube_client().await?;
+        let mesh_node = mesh_runtime.block_on(async {
+            let client = ContextBuilder::build_kube_client(&self.config).await?;
             let cache = KubeCache::new(client);
 
-            let node = ContextBuilder::init(self.config.clone(), self._private_key.clone(), &cache)
+            let node = ContextBuilder::init(self.config.clone(), self._private_key.clone(), cache)
                 .await
                 .context("failed to initialize mesh node")?;
-            Ok::<_, anyhow::Error>((node, cache))
+            Ok::<_, anyhow::Error>(node)
         })?;
 
         let http_runtime = Builder::new_multi_thread()
@@ -95,7 +95,6 @@ impl ContextBuilder {
 
         Ok(Context::new(
             self.config.clone(),
-            cache,
             mesh_node,
             self.public_key,
             http_handle,
@@ -108,7 +107,7 @@ impl ContextBuilder {
     async fn init(
         config: Config,
         private_key: PrivateKey,
-        kube_cache: &KubeCache,
+        kube_cache: KubeCache,
     ) -> Result<MeshNode> {
         let (node_config, p2p_network_config) = MeshNode::configure_p2p_network(&config).await?;
 
@@ -123,8 +122,8 @@ impl ContextBuilder {
             .to_operation(private_key.to_owned());
 
         let (to_network, to_store) = fanout2(rx, 100);
-        
-        let kube = KubeApi::new(log_store.clone(), Box::pin(to_store));
+
+        let kube = KubeApi::new(log_store.clone(), kube_cache, Box::pin(to_store));
 
         let topic_map = MeshTopicLogMap::new(private_key.public_key());
         let sync_protocol = LogSyncProtocol::new(topic_map, log_store);
@@ -179,13 +178,11 @@ impl ContextBuilder {
         }))
     }
 
-    async fn build_kube_client() -> Result<Client> {
+    async fn build_kube_client(_config: &Config) -> Result<Client> {
         #[cfg(not(test))]
         {
-            let config = kube::config::Config::infer()
-                .await
-                .context("failed to load kube config")?;
-            let client = kube::Client::try_from(config).context("failed to create kube client")?;
+            let kube_config = ContextBuilder::to_kube_config(_config).await?;
+            let client = kube::Client::try_from(kube_config).context("failed to create kube client")?;
             Ok(client)
         }
         #[cfg(test)]
@@ -193,6 +190,31 @@ impl ContextBuilder {
             let svc = fake_kube_api::service::FakeKubeApiService::new();
             let client = kube::Client::new(svc, "default");
             Ok(client)
+        }
+    }
+
+    #[cfg(not(test))]
+    async fn to_kube_config(config: &Config) -> Result<kube::config::Config> {
+        use crate::config::configuration::KubeConfiguration;
+        match config.kubernetes.as_ref() {
+            Some(kube_config) => {
+                match kube_config {
+                    KubeConfiguration::InCluster => {
+                        kube::config::Config::infer().await.context("failed to infer kube config")
+                    }
+                    KubeConfiguration::External(external_config) => {
+                        let kube_context = external_config.kube_context.to_owned().unwrap_or("default".into());
+                        let options = kube::config::KubeConfigOptions {
+                            context: Some(kube_context),
+                            ..Default::default()
+                        };
+                        kube::config::Config::from_kubeconfig(&options)
+                            .await
+                            .context("failed to create kube config from path")
+                    }
+                }
+            },
+            None => kube::config::Config::infer().await.context("failed to infer kube config"),
         }
     }
 
@@ -209,4 +231,3 @@ impl ContextBuilder {
             .unwrap_or_default()
     }
 }
-

@@ -5,7 +5,7 @@ use super::{
     types::{CacheProtocol, NamespacedName},
 };
 use crate::kube::dynamic_object_ext::DynamicObjectExt;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use dashmap::DashMap;
 use either::Either;
 use futures::future::MapErr;
@@ -14,10 +14,8 @@ use kube::Client;
 use kube::Error;
 use kube::api::{Api, DeleteParams, DynamicObject, GroupVersionKind, Patch, PatchParams};
 use kube::client::Status;
-use std::sync::{
-    Arc,
-    atomic::{AtomicU32, Ordering},
-};
+use tracing::trace;
+use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::AbortOnDropHandle;
@@ -38,30 +36,27 @@ pub struct SubscriptionEntry {
     pub pool_tx: loole::Sender<CacheProtocol>,
     pub subscriber_rx: loole::Receiver<CacheProtocol>,
     pub cancellation: CancellationToken,
-    pub primary_subscriber: u32,
     #[allow(dead_code)]
     handle: Shared<MapErr<AbortOnDropHandle<()>, JoinErrToStr>>,
 }
 
-// #[derive(Debug)]
+#[derive(Clone)]
 pub struct KubeCache {
-    resources: DashMap<GroupVersionKind, Arc<KindResources>>,
-    subscriptions: DashMap<GroupVersionKind, SubscriptionEntry>,
+    inner: Arc<RwLock<Subscriptions>>,
     client: Client,
     root: CancellationToken,
-    subscriber_id: AtomicU32,
-    mutable_lock: RwLock<()>,
 }
 
 impl KubeCache {
     pub fn new(client: Client) -> Self {
+        let root = CancellationToken::new();
         Self {
-            root: CancellationToken::new(),
-            resources: DashMap::new(),
-            subscriptions: DashMap::new(),
-            mutable_lock: RwLock::new(()),
-            subscriber_id: AtomicU32::new(1),
+            inner: Arc::new(RwLock::new(Subscriptions::new(
+                client.clone(),
+                root.clone(),
+            ))),
             client,
+            root,
         }
     }
 
@@ -70,11 +65,13 @@ impl KubeCache {
         gvk: &GroupVersionKind,
         namspaced_name: &NamespacedName,
     ) -> Result<Option<DynamicObject>> {
-        let ns = &namspaced_name.namespace;
-        let name = &namspaced_name.name;
         let (ar, _caps) = kube::discovery::pinned_kind(&self.client, gvk).await?;
-        let api = Api::<DynamicObject>::namespaced_with(self.client.clone(), ns, &ar);
-        let results = api.get(name).await;
+        let api = Api::<DynamicObject>::namespaced_with(
+            self.client.clone(),
+            &namspaced_name.namespace,
+            &ar,
+        );
+        let results = api.get(&namspaced_name.name).await;
         if object_not_found(&results) {
             Ok(None)
         } else {
@@ -87,12 +84,14 @@ impl KubeCache {
         gvk: &GroupVersionKind,
         namspaced_name: &NamespacedName,
     ) -> Result<Either<DynamicObject, Status>> {
-        let ns = &namspaced_name.namespace;
-        let name = &namspaced_name.name;
         let (ar, _caps) = kube::discovery::pinned_kind(&self.client, gvk).await?;
-        let api = Api::<DynamicObject>::namespaced_with(self.client.clone(), ns, &ar);
+        let api = Api::<DynamicObject>::namespaced_with(
+            self.client.clone(),
+            &namspaced_name.namespace,
+            &ar,
+        );
         let params = DeleteParams::default();
-        let status = api.delete(name, &params).await?;
+        let status = api.delete(&namspaced_name.name, &params).await?;
         Ok(status)
     }
 
@@ -111,12 +110,81 @@ impl KubeCache {
         Ok(())
     }
 
+    pub async fn merge(&self, protocol: CacheProtocol) -> Result<()>{
+        trace!("merging incoming event {protocol}");
+        match protocol {
+            CacheProtocol::Update { version: _, object } => {
+                let gvk = object.get_gvk().context("Unable to derive GroupVersionKind")?;
+                let ns_name = object.get_namespaced_name();
+                let (ar, _) = kube::discovery::pinned_kind(&self.client, &gvk).await?;
+                let api =
+                    Api::<DynamicObject>::namespaced_with(self.client.clone(), &ns_name.namespace, &ar);
+                let patch_params = PatchParams::apply(&ns_name.name).force();
+
+                api.patch(&ns_name.name, &patch_params, &Patch::Apply(object))
+                    .await?;
+                trace!(name = ?ns_name, "Resource update");
+            }
+            CacheProtocol::Delete { version: _, object } => {
+                let gvk = object.get_gvk().context("Unable to derive GroupVersionKind")?;
+                let ns_name = object.get_namespaced_name();
+                let (ar, _caps) = kube::discovery::pinned_kind(&self.client, &gvk).await?;
+                let api = Api::<DynamicObject>::namespaced_with(
+                    self.client.clone(),
+                    &ns_name.namespace,
+                    &ar,
+                );
+                let params = DeleteParams::default();
+                let status = api.delete(&ns_name.name, &params).await?;
+                trace!(status = ?status, name = ?ns_name, "Resource deleted");
+            }
+            CacheProtocol::Snapshot { version, snapshot } => {
+                for elements in snapshot {
+
+                }                
+            }
+        }
+        Ok(())
+    }
+
     pub async fn subscribe(
         &self,
         gvk: &GroupVersionKind,
     ) -> Result<loole::Receiver<CacheProtocol>> {
-        let guard = self.mutable_lock.write().await;
-        let subscriber_id = self.subscriber_id.fetch_add(1, Ordering::AcqRel);
+        self.inner.write().await.subscribe(gvk).await
+    }
+
+    pub async fn unsubscribe(&self, gvk: &GroupVersionKind) -> anyhow::Result<()> {
+        self.inner.write().await.unsubscribe(gvk).await
+    }
+
+    pub fn shutdown(&self) -> Result<()> {
+        self.root.cancel();
+        Ok(())
+    }
+}
+
+pub struct Subscriptions {
+    resources: DashMap<GroupVersionKind, Arc<KindResources>>,
+    subscriptions: DashMap<GroupVersionKind, SubscriptionEntry>,
+    client: Client,
+    root: CancellationToken,
+}
+
+impl Subscriptions {
+    pub fn new(client: Client, root: CancellationToken) -> Self {
+        Self {
+            resources: DashMap::new(),
+            subscriptions: DashMap::new(),
+            root,
+            client,
+        }
+    }
+
+    pub async fn subscribe(
+        &self,
+        gvk: &GroupVersionKind,
+    ) -> Result<loole::Receiver<CacheProtocol>> {
         let subscription_entry = self.subscriptions.entry(gvk.clone()).or_insert_with(|| {
             let (pool_tx, subscriber_rx) = loole::unbounded();
 
@@ -128,7 +196,6 @@ impl KubeCache {
                 .clone();
             let cancelation = self.root.child_token();
             let subscription = Subscription::new(
-                subscriber_id,
                 self.client.to_owned(),
                 gvk.to_owned(),
                 pool_tx.to_owned(),
@@ -140,28 +207,20 @@ impl KubeCache {
                 pool_tx,
                 subscriber_rx,
                 cancellation: cancelation.to_owned(),
-                primary_subscriber: subscriber_id,
                 handle,
             }
         });
-        drop(guard);
 
         let subscriber_rx = subscription_entry.value().subscriber_rx.clone();
         Ok(subscriber_rx)
     }
 
     pub async fn unsubscribe(&self, gvk: &GroupVersionKind) -> anyhow::Result<()> {
-        let _guard = self.mutable_lock.write().await;
         if let Some((_, subscription_entry)) = self.subscriptions.remove(gvk) {
             subscription_entry.cancellation.cancel();
             subscription_entry.pool_tx.close();
             self.resources.remove(gvk);
         }
-        Ok(())
-    }
-
-    pub fn shutdown(&self) -> Result<()> {
-        self.root.cancel();
         Ok(())
     }
 }

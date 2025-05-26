@@ -35,7 +35,6 @@ pub struct Subscription {
 
 impl Subscription {
     pub fn new(
-        subscriber_id: u32,
         client: Client,
         gvk: GroupVersionKind,
         tx: loole::Sender<CacheProtocol>,
@@ -44,7 +43,6 @@ impl Subscription {
     ) -> Subscription {
         Subscription {
             inner: Arc::new(SubscriptionInner {
-                subscriber_id,
                 client,
                 gvk,
                 tx,
@@ -74,8 +72,6 @@ impl Subscription {
     }
 }
 pub struct SubscriptionInner {
-    #[allow(dead_code)]
-    subscriber_id: u32,
     client: Client,
     gvk: GroupVersionKind,
     tx: loole::Sender<CacheProtocol>,

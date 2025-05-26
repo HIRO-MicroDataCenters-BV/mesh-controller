@@ -1,12 +1,14 @@
+use crate::kube::cache::KubeCache;
+use crate::kube::types::CacheProtocol;
 use crate::JoinErrToStr;
 use anyhow::Result;
 use futures::future::{MapErr, Shared};
 use futures::{FutureExt, StreamExt, TryFutureExt};
-use p2panda_core::Operation;
 use p2panda_core::Body;
+use p2panda_core::Operation;
 use p2panda_core::{Header, PublicKey};
 use p2panda_store::MemoryStore;
-use p2panda_stream::operation::{ingest_operation, IngestResult};
+use p2panda_stream::operation::{IngestResult, ingest_operation};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fmt::Debug};
 use tokio::task::JoinError;
@@ -22,6 +24,7 @@ pub type Logs<T> = HashMap<PublicKey, Vec<T>>;
 
 pub struct KubeApi {
     store: MemoryStore<MeshLogId, Extensions>,
+    cache: KubeCache,
     #[allow(dead_code)]
     handle: Shared<MapErr<AbortOnDropHandle<()>, JoinErrToStr>>,
 }
@@ -29,6 +32,7 @@ pub struct KubeApi {
 impl KubeApi {
     pub fn new(
         store: MemoryStore<MeshLogId, Extensions>,
+        cache: KubeCache,
         mut local_operations_stream: BoxedOperationStream,
     ) -> KubeApi {
         let mut the_store = store.clone();
@@ -64,16 +68,17 @@ impl KubeApi {
                                 error!("Error during ingest operation {}", error);
                                 break;
                             }
-                            Ok(result) => {
-                                match result {
-                                    IngestResult::Complete(op) => {
-                                        info!("Ingested operation: {:?}", op);
-                                    }
-                                    IngestResult::Retry(_,_,_,ops_missing) => {
-                                        info!("Retrying operation: missing ops = {:?}", ops_missing);
-                                    }
-                                }                            
-                            }
+                            Ok(result) => match result {
+                                IngestResult::Complete(op) => {
+                                    info!("Local ingested operation: {:?}", op);
+                                }
+                                IngestResult::Retry(_, _, _, ops_missing) => {
+                                    info!(
+                                        "Local retrying operation: missing ops = {:?}",
+                                        ops_missing
+                                    );
+                                }
+                            },
                         }
                     }
                     None => break,
@@ -85,10 +90,10 @@ impl KubeApi {
             .map_err(Box::new(|e: JoinError| e.to_string()) as JoinErrToStr)
             .shared();
 
-        KubeApi { store, handle }
+        KubeApi { store, cache, handle }
     }
 
-    pub async fn ingest(
+    pub async fn incoming(
         &mut self,
         header: Header<Extensions>,
         body: Option<Body>,
@@ -96,7 +101,23 @@ impl KubeApi {
         log_id: &MeshLogId,
     ) -> Result<()> {
         trace!("KubeApi ingest operation {}", header.hash());
-        ingest_operation(&mut self.store, header, body, header_bytes, log_id, false).await?;
+        let result = ingest_operation(&mut self.store, header, body, header_bytes, log_id, false)
+            .await
+            .inspect_err(|e| {
+                error!("Error during ingest operation {}", e);
+            })?;
+        match result {
+            IngestResult::Complete(op) => {
+                info!("Incoming operation ingest completed: {:?}", op);
+                if let Some(body) = op.body {
+                    let incoming_event = CacheProtocol::try_from(body.to_bytes())?;
+                    self.cache.merge(incoming_event).await?;
+                }
+            }
+            IngestResult::Retry(_, _, _, ops_missing) => {
+                info!("Incoming operation retry: missing ops = {:?}", ops_missing);
+            }
+        }
         Ok(())
     }
 }

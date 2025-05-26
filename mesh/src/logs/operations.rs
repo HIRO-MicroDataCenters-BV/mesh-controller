@@ -12,9 +12,9 @@ use p2panda_core::cbor::decode_cbor;
 use p2panda_core::{Hash, Header, Operation, PrivateKey, PruneFlag};
 use pin_project::pin_project;
 use serde::{Deserialize, Serialize};
+use std::task::Poll;
 use tokio::sync::broadcast;
 use tokio_stream::wrappers::BroadcastStream;
-use std::task::Poll;
 use tracing::info;
 
 pub trait OperationExt<S>: Stream<Item = CacheProtocol> {
@@ -40,7 +40,11 @@ pub struct KubeOperation {
 
 impl std::fmt::Display for KubeOperation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "KubeOperation(hash: {}, backlink: {:?})", self.panda_op.hash, self.backlink)
+        write!(
+            f,
+            "KubeOperation(hash: {}, backlink: {:?})",
+            self.panda_op.hash, self.backlink
+        )
     }
 }
 
@@ -148,14 +152,16 @@ impl TryFrom<&[u8]> for Extensions {
     }
 }
 
-
 pub fn fanout2<T, S>(
     stream: S,
     capacity: usize,
-) -> (impl Stream<Item = T> + Send + Sync + 'static, impl Stream<Item = T> + Send + Sync + 'static)
+) -> (
+    impl Stream<Item = T> + Send + Sync + 'static,
+    impl Stream<Item = T> + Send + Sync + 'static,
+)
 where
     T: Clone + Send + Sync + 'static,
-    S: Stream<Item = T> + Send + Sync + 'static
+    S: Stream<Item = T> + Send + Sync + 'static,
 {
     let (tx, _rx) = broadcast::channel(capacity);
     let mut stream = stream.boxed();
@@ -166,23 +172,19 @@ where
         }
     });
 
-    let left = 
-        BroadcastStream::new(tx.subscribe())
-            .filter_map(|value| async{
-                match value {
-                    Ok(v) => Some(v),
-                    Err(_e) => None
-                }
-            });
+    let left = BroadcastStream::new(tx.subscribe()).filter_map(|value| async {
+        match value {
+            Ok(v) => Some(v),
+            Err(_e) => None,
+        }
+    });
 
-    let right = BroadcastStream::new(tx.subscribe())
-            .filter_map(|value|async {
-                match value {
-                    Ok(v) => Some(v),
-                    Err(_e) => None
-                }
-            });
-
+    let right = BroadcastStream::new(tx.subscribe()).filter_map(|value| async {
+        match value {
+            Ok(v) => Some(v),
+            Err(_e) => None,
+        }
+    });
 
     (left, right)
 }

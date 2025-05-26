@@ -1,9 +1,9 @@
 use std::net::SocketAddr;
 
-use crate::logs::operations::BoxedOperationStream;
 use crate::JoinErrToStr;
 use crate::config::configuration::Config;
 use crate::logs::kube_api::KubeApi;
+use crate::logs::operations::BoxedOperationStream;
 use crate::logs::topic::MeshTopic;
 use crate::network::Panda;
 use anyhow::{Context, Result, anyhow};
@@ -40,7 +40,12 @@ pub struct MeshNode {
 }
 
 impl MeshNode {
-    pub fn new(panda: Panda, kube: KubeApi, from_kube: BoxedOperationStream, options: NodeOptions) -> Result<Self> {
+    pub fn new(
+        panda: Panda,
+        kube: KubeApi,
+        from_kube: BoxedOperationStream,
+        options: NodeOptions,
+    ) -> Result<Self> {
         let (node_actor_tx, node_actor_rx) = mpsc::channel(512);
         let node_actor = MeshNodeActor::new(
             options.node_config,

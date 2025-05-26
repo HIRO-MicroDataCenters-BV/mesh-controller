@@ -13,8 +13,8 @@ use axum_prometheus::metrics;
 use futures_util::stream::SelectAll;
 use p2panda_core::Body;
 use p2panda_core::Header;
-use p2panda_core::cbor::decode_cbor;
 use p2panda_core::Operation;
+use p2panda_core::cbor::decode_cbor;
 use p2panda_core::{PrivateKey, PublicKey};
 use p2panda_net::TopicId;
 use p2panda_net::network::FromNetwork;
@@ -172,7 +172,7 @@ impl MeshNodeActor {
 
         let mesh_topic_id: [u8; 32] = MeshTopic::new("resources").id();
 
-        let KubeOperation { panda_op , .. } = operation;
+        let KubeOperation { panda_op, .. } = operation;
 
         self.broadcast(panda_op, mesh_topic_id).await?;
 
@@ -181,7 +181,7 @@ impl MeshNodeActor {
 
     /// Broadcast message in gossip overlay for this topic.
     async fn broadcast(&self, operation: Operation<Extensions>, topic_id: [u8; 32]) -> Result<()> {
-        let message = NetworkMessage::new("source",  operation);
+        let message = NetworkMessage::new("source", operation);
         self.panda
             .broadcast(message.to_bytes(), topic_id)
             .await
@@ -206,7 +206,8 @@ impl MeshNodeActor {
                     bytes = bytes.len(),
                     "received network message"
                 );
-                let message = NetworkMessage::from_bytes(&bytes).context("message deserialization")?;
+                let message =
+                    NetworkMessage::from_bytes(&bytes).context("message deserialization")?;
                 let NetworkPayload::Operation(_, header, body) = message.payload;
                 let header_bytes = header.to_bytes();
                 (header, header_bytes, body, true)
@@ -221,15 +222,15 @@ impl MeshNodeActor {
                     bytes = header_bytes.len(),
                     "received network message"
                 );
-                let header: Header<Extensions> = decode_cbor(Cursor::new(&header_bytes)).context("Header deserialization")?;
+                let header: Header<Extensions> =
+                    decode_cbor(Cursor::new(&header_bytes)).context("Header deserialization")?;
                 let body: Option<Body> = payload.map(|b| Body::new(&b));
                 (header, header_bytes, body, false)
             }
         };
 
-
         self.kube
-            .ingest(header, body, header_bytes, &MeshLogId())
+            .incoming(header, body, header_bytes, &MeshLogId())
             .await?;
 
         Ok(())
