@@ -30,6 +30,7 @@ const DEFAULT_NETWORK_ID: &str = "default-network-1";
 pub struct Config {
     #[serde(flatten)]
     pub node: NodeConfig,
+    pub kubernetes: Option<KubeConfiguration>,
     pub log_level: Option<String>,
 }
 
@@ -118,6 +119,20 @@ fn try_determine_config_file_path() -> Option<PathBuf> {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Hash)]
+pub enum KubeConfiguration {
+    #[serde(rename = "incluster")]
+    InCluster,
+    #[serde(rename = "external")]
+    External(KubeConfigurationExternal),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Hash)]
+pub struct KubeConfigurationExternal {
+    pub kube_config_path: Option<PathBuf>,
+    pub kube_context: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Hash)]
 pub struct NodeConfig {
     pub bind_port: u16,
     pub http_bind_port: u16,
@@ -188,7 +203,7 @@ mod tests {
     use figment::providers::{Format, Serialized, Yaml};
 
     use crate::config::configuration::{
-        Config, DiscoveryOptions, KnownNode, NodeConfig, ProtocolConfig,
+        Config, DiscoveryOptions, KnownNode, KubeConfiguration, KubeConfigurationExternal, NodeConfig, ProtocolConfig
     };
 
     #[test]
@@ -221,6 +236,7 @@ mod tests {
                         protocol: None,
                         discovery: None
                     },
+                    kubernetes: None,
                     log_level: None,
                 }
             );
@@ -251,6 +267,10 @@ nodes:
         - "some.hostname.org."
         - "192.168.178.100:1112"
         - "[2a02:8109:9c9a:4200:eb13:7c0a:4201:8128]:1113"
+kubernetes:
+    external:
+        kube_config_path: "~/.kube/config.yaml"
+        kube_context: "default"
 "#,
             )?;
 
@@ -283,6 +303,12 @@ nodes:
                         protocol: Some(ProtocolConfig::default()),
                         discovery: Some(DiscoveryOptions::default()),
                     },
+                    kubernetes: Some(KubeConfiguration::External(
+                        KubeConfigurationExternal {
+                            kube_config_path: Some("~/.kube/config.yaml".into()),
+                            kube_context: Some("default".into()),
+                        }
+                    )),
                     log_level: None,
                 }
             );
