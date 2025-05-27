@@ -9,6 +9,7 @@ use crate::api::server::MeshHTTPServer;
 use crate::kube::cache::KubeCache;
 use crate::logs::kube_api::{KubeApi, MeshLogId};
 use crate::logs::operations::{Extensions, OperationExt, fanout2};
+use crate::logs::peer_discovery::PeerDiscovery;
 use crate::logs::topic::MeshTopicLogMap;
 use crate::network::Panda;
 use crate::network::membership::Membership;
@@ -136,10 +137,10 @@ impl ContextBuilder {
             .discovery(Membership::new(
                 &config.node.known_nodes,
                 config.node.discovery.to_owned().unwrap_or_default(),
-                topic_map,
             ));
 
         let network = builder.build().await?;
+        let peer_discovery = PeerDiscovery::start(network.events().await?, topic_map.clone());
 
         let node_id = network.node_id();
         let direct_addresses = network
@@ -155,7 +156,7 @@ impl ContextBuilder {
             node_config,
         };
 
-        MeshNode::new(panda, kube, Box::pin(to_network), options)
+        MeshNode::new(panda, kube, peer_discovery, Box::pin(to_network), options)
     }
 
     /// Starts the HTTP server with health endpoint.

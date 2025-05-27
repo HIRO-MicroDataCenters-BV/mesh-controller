@@ -50,10 +50,8 @@ impl Context {
     }
 
     async fn configure_inner(&self) -> Result<()> {
-        self.mesh_node
-            .subscribe(MeshTopic::new("resources"))
-            .await?;
-        self.mesh_node.publish(MeshTopic::new("resources")).await
+        self.mesh_node.subscribe(MeshTopic::default()).await?;
+        self.mesh_node.publish(MeshTopic::default()).await
     }
 
     pub fn wait_for_termination(&self) -> Result<()> {

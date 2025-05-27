@@ -170,7 +170,7 @@ impl MeshNodeActor {
 
         MeshNodeActor::increment_received_local_messages();
 
-        let mesh_topic_id: [u8; 32] = MeshTopic::new("resources").id();
+        let mesh_topic_id: [u8; 32] = MeshTopic::default().id();
 
         let KubeOperation { panda_op, .. } = operation;
 

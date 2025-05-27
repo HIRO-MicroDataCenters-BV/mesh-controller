@@ -4,6 +4,7 @@ use crate::JoinErrToStr;
 use crate::config::configuration::Config;
 use crate::logs::kube_api::KubeApi;
 use crate::logs::operations::BoxedOperationStream;
+use crate::logs::peer_discovery::PeerDiscovery;
 use crate::logs::topic::MeshTopic;
 use crate::network::Panda;
 use anyhow::{Context, Result, anyhow};
@@ -37,12 +38,15 @@ pub struct MeshNode {
     direct_addresses: Vec<SocketAddr>,
     node_actor_tx: mpsc::Sender<ToNodeActor>,
     actor_handle: Shared<MapErr<AbortOnDropHandle<()>, JoinErrToStr>>,
+    #[allow(dead_code)]
+    peer_discovery: PeerDiscovery,
 }
 
 impl MeshNode {
     pub fn new(
         panda: Panda,
         kube: KubeApi,
+        peer_discovery: PeerDiscovery,
         from_kube: BoxedOperationStream,
         options: NodeOptions,
     ) -> Result<Self> {
@@ -70,6 +74,7 @@ impl MeshNode {
             direct_addresses: options.direct_addresses,
             node_actor_tx,
             actor_handle: actor_drop_handle,
+            peer_discovery,
         };
 
         Ok(node)

@@ -8,9 +8,9 @@ use p2panda_discovery::DiscoveryEvent;
 use p2panda_discovery::{BoxedStream, Discovery};
 
 use tokio_util::task::AbortOnDropHandle;
+use tracing::trace;
 
 use crate::config::configuration::{DiscoveryOptions, KnownNode};
-use crate::logs::topic::MeshTopicLogMap;
 
 type SubscribeReceiver = Receiver<Result<DiscoveryEvent>>;
 
@@ -72,11 +72,7 @@ pub struct Membership {
 }
 
 impl Membership {
-    pub fn new(
-        known_nodes: &Vec<KnownNode>,
-        options: DiscoveryOptions,
-        topic_map: MeshTopicLogMap,
-    ) -> Self {
+    pub fn new(known_nodes: &Vec<KnownNode>, options: DiscoveryOptions) -> Self {
         let mut peers = KnownPeers::new(known_nodes);
         let (sender, rx) = loole::bounded(64);
 
@@ -88,12 +84,11 @@ impl Membership {
                 tokio::select! {
                     _ = interval.tick() => {
                         let discovery_result = peers.discover_and_update().await;
-                        // trace!("Peer discovery result: {:?}", discovery_result);
+                        if !discovery_result.is_empty() {
+                            trace!("Peer discovery result: {:?}", discovery_result);
+                        }
+
                         for node_addr in discovery_result {
-                            // TODO KT probably unverified public key. Use network events instead.
-                            let key = PublicKey::from_bytes(node_addr.node_id.as_bytes())
-                                .expect("public key already checked");
-                            topic_map.add_peer(key);
                             sender.send(Ok(DiscoveryEvent{ provenance: "peer_discovery", node_addr })).ok();
                         }
                     },

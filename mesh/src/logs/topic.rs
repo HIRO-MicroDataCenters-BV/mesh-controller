@@ -27,6 +27,12 @@ impl MeshTopic {
     }
 }
 
+impl Default for MeshTopic {
+    fn default() -> Self {
+        MeshTopic::new("default")
+    }
+}
+
 impl TopicQuery for MeshTopic {}
 
 impl TopicId for MeshTopic {
@@ -52,6 +58,14 @@ impl MeshTopicLogMap {
 
     pub fn add_peer(&self, peer: PublicKey) {
         self.inner.peers.insert(peer);
+    }
+
+    pub fn has_peer(&self, peer: &PublicKey) -> bool {
+        self.inner.peers.contains(peer)
+    }
+
+    pub fn remove_peer(&self, peer: &PublicKey) {
+        self.inner.peers.remove(peer);
     }
 }
 
