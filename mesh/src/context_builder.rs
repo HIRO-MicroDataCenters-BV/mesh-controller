@@ -117,7 +117,7 @@ impl ContextBuilder {
         let log_store = MemoryStore::<MeshLogId, Extensions>::new();
         let gvk = GroupVersionKind::gvk("dcp.hiro.io", "v1", "AnyApplication");
         let rx = kube_cache
-            .subscribe(&gvk)
+            .subscribe(&gvk, &config.mesh.zone)
             .await?
             .into_stream()
             .to_operation(private_key.to_owned());

@@ -16,11 +16,13 @@ pub trait MergeStrategy {
         &self,
         current: Option<DynamicObject>,
         incoming: &DynamicObject,
+        incoming_zone: &String,
     ) -> Result<MergeResult>;
 
     fn merge_delete(
         &self,
         current: Option<DynamicObject>,
         incoming: &DynamicObject,
+        incoming_zone: &String,
     ) -> Result<MergeResult>;
 }

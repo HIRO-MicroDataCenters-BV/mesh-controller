@@ -85,6 +85,7 @@ configuration:
   #     endpoints:
   #       - "192.168.178.100:9102"
   #       - "[2a02:8109:9c9a:4200:eb13:7c0a:4201:8128]:9103"
-
+  mesh:
+    zone: "default"
 
   log_level: =INFO

@@ -41,6 +41,7 @@ impl Subscription {
         tx: loole::Sender<CacheProtocol>,
         resources: Arc<KindResources>,
         cancelation: CancellationToken,
+        zone: String,
     ) -> Subscription {
         Subscription {
             inner: Arc::new(SubscriptionInner {
@@ -49,6 +50,7 @@ impl Subscription {
                 tx,
                 resources,
                 cancelation,
+                zone,
             }),
         }
     }
@@ -78,6 +80,7 @@ pub struct SubscriptionInner {
     tx: loole::Sender<CacheProtocol>,
     resources: Arc<KindResources>,
     cancelation: CancellationToken,
+    zone: String,
 }
 
 impl SubscriptionInner {
@@ -87,10 +90,10 @@ impl SubscriptionInner {
         loop {
             tokio::select! {
                 _ = self.cancelation.cancelled() => break,
-                event = events.next() => {                    
+                event = events.next() => {
                     match event {
                         Some(Ok(event)) => {
-                            SubscriptionInner::handle_event(event, &self.resources, &self.tx)
+                            SubscriptionInner::handle_event(event, &self.resources, &self.tx, &self.zone)
                                 .context("Subscription::handle_event failure")?;
                         },
                         Some(Err(e)) => bail!("Error in event stream {}", e),
@@ -106,13 +109,16 @@ impl SubscriptionInner {
         event: Event<DynamicObject>,
         resources: &DashMap<NamespacedName, DashMap<UID, ResourceEntry>>,
         tx: &loole::Sender<CacheProtocol>,
+        zone: &String,
     ) -> Result<()> {
         match event {
             Event::Init => Ok(()),
-            Event::InitApply(obj) => SubscriptionInner::apply_resource(obj, resources, tx, false),
-            Event::InitDone => SubscriptionInner::send_snapshot(resources, tx),
-            Event::Apply(obj) => SubscriptionInner::apply_resource(obj, resources, tx, true),
-            Event::Delete(obj) => SubscriptionInner::delete_resource(obj, resources, tx),
+            Event::InitApply(obj) => {
+                SubscriptionInner::apply_resource(obj, resources, tx, false, zone)
+            }
+            Event::InitDone => SubscriptionInner::send_snapshot(resources, tx, zone),
+            Event::Apply(obj) => SubscriptionInner::apply_resource(obj, resources, tx, true, zone),
+            Event::Delete(obj) => SubscriptionInner::delete_resource(obj, resources, tx, zone),
         }
     }
 
@@ -121,6 +127,7 @@ impl SubscriptionInner {
         resources: &DashMap<NamespacedName, DashMap<UID, ResourceEntry>>,
         tx: &loole::Sender<CacheProtocol>,
         must_distribute: bool,
+        zone: &String,
     ) -> Result<()> {
         let ns_name = object.get_namespaced_name();
         let uid = object
@@ -157,8 +164,12 @@ impl SubscriptionInner {
         };
 
         if updated && must_distribute {
-            tx.send(CacheProtocol::Update { version, object })
-                .unwrap_or_else(|e| error!("Failed to send update event: {}", e));
+            tx.send(CacheProtocol::Update {
+                zone: zone.to_owned(),
+                version,
+                object,
+            })
+            .unwrap_or_else(|e| error!("Failed to send update event: {}", e));
         }
         Ok(())
     }
@@ -167,6 +178,7 @@ impl SubscriptionInner {
         object: DynamicObject,
         resources: &DashMap<NamespacedName, DashMap<UID, ResourceEntry>>,
         tx: &loole::Sender<CacheProtocol>,
+        zone: &String,
     ) -> Result<()> {
         let ns_name = object.get_namespaced_name();
         let uid = object
@@ -179,7 +191,7 @@ impl SubscriptionInner {
             .context("unparsable resourceVersion in dynamic object")?;
         let resource = Arc::new(object.clone());
 
-        trace!("DELETE {}, uid: {}, version: {}", ns_name, uid, version);        
+        trace!("DELETE {}, uid: {}, version: {}", ns_name, uid, version);
         let resource_entries = resources.entry(ns_name).or_default();
 
         let mut entry = resource_entries
@@ -195,8 +207,12 @@ impl SubscriptionInner {
                 resource,
                 tombstone: true,
             };
-            tx.send(CacheProtocol::Delete { version, object })
-                .unwrap_or_else(|e| error!("Failed to send delete event: {}", e));
+            tx.send(CacheProtocol::Delete {
+                zone: zone.to_owned(),
+                version,
+                object,
+            })
+            .unwrap_or_else(|e| error!("Failed to send delete event: {}", e));
         }
         Ok(())
     }
@@ -204,6 +220,7 @@ impl SubscriptionInner {
     fn send_snapshot(
         resources: &DashMap<NamespacedName, DashMap<UID, ResourceEntry>>,
         tx: &loole::Sender<CacheProtocol>,
+        zone: &String,
     ) -> Result<()> {
         let snapshot = resources
             .iter()
@@ -227,8 +244,12 @@ impl SubscriptionInner {
             .flat_map(|entry| entry.value().iter().map(|e| e.value().version).max())
             .max()
             .unwrap_or(0);
-        tx.send(CacheProtocol::Snapshot { version, snapshot })
-            .unwrap_or_else(|e| error!("Failed to send snapshot event: {}", e));
+        tx.send(CacheProtocol::Snapshot {
+            zone: zone.to_owned(),
+            version,
+            snapshot,
+        })
+        .unwrap_or_else(|e| error!("Failed to send snapshot event: {}", e));
 
         Ok(())
     }

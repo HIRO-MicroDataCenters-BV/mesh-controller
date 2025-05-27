@@ -27,9 +27,15 @@ pub const DEFAULT_HTTP_BIND_PORT: u16 = 3000;
 const DEFAULT_NETWORK_ID: &str = "default-network-1";
 
 #[derive(Clone, Default, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct MeshConfig {
+    pub zone: String,
+}
+
+#[derive(Clone, Default, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Config {
     #[serde(flatten)]
     pub node: NodeConfig,
+    pub mesh: MeshConfig,
     pub kubernetes: Option<KubeConfiguration>,
     pub log_level: Option<String>,
 }
@@ -203,7 +209,7 @@ mod tests {
 
     use crate::config::configuration::{
         Config, DiscoveryOptions, KnownNode, KubeConfiguration, KubeConfigurationExternal,
-        NodeConfig, ProtocolConfig,
+        MeshConfig, NodeConfig, ProtocolConfig,
     };
 
     #[test]
@@ -216,7 +222,8 @@ mod tests {
                 http_bind_port: 2223
                 private_key_path: "/etc/dcp/mesh/private.key"
                 network_id: "default"
-
+                mesh:
+                    zone: "test"
             "#,
             )?;
             let config: Config = Figment::from(Serialized::defaults(Config::default()))
@@ -235,6 +242,9 @@ mod tests {
                         network_id: "default".into(),
                         protocol: None,
                         discovery: None
+                    },
+                    mesh: MeshConfig {
+                        zone: "test".into()
                     },
                     kubernetes: None,
                     log_level: None,
@@ -267,6 +277,8 @@ nodes:
         - "some.hostname.org."
         - "192.168.178.100:1112"
         - "[2a02:8109:9c9a:4200:eb13:7c0a:4201:8128]:1113"
+mesh:
+    zone: "test"
 kubernetes:
     external:
         kube_context: "default"
@@ -305,6 +317,9 @@ kubernetes:
                     kubernetes: Some(KubeConfiguration::External(KubeConfigurationExternal {
                         kube_context: Some("default".into()),
                     })),
+                    mesh: MeshConfig {
+                        zone: "test".into()
+                    },
                     log_level: None,
                 }
             );

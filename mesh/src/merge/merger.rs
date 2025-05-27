@@ -13,7 +13,12 @@ impl Merger {
         Merger { client }
     }
 
-    pub async fn merge_update<M>(&self, incoming: &DynamicObject, strategy: &M) -> Result<()>
+    pub async fn merge_update<M>(
+        &self,
+        source_zone: &String,
+        incoming: &DynamicObject,
+        strategy: &M,
+    ) -> Result<()>
     where
         M: MergeStrategy,
     {
@@ -22,12 +27,17 @@ impl Merger {
             .client
             .direct_get(&gvk, &incoming.get_namespaced_name())
             .await?;
-        let result = strategy.merge_update(current, &incoming)?;
+        let result = strategy.merge_update(current, &incoming, source_zone)?;
         self.handle_result(result, &gvk).await?;
         Ok(())
     }
 
-    pub async fn merge_delete<M>(&self, incoming: &DynamicObject, strategy: &M) -> Result<()>
+    pub async fn merge_delete<M>(
+        &self,
+        source_zone: &String,
+        incoming: &DynamicObject,
+        strategy: &M,
+    ) -> Result<()>
     where
         M: MergeStrategy,
     {
@@ -36,7 +46,7 @@ impl Merger {
             .client
             .direct_get(&gvk, &incoming.get_namespaced_name())
             .await?;
-        let result = strategy.merge_delete(current, &incoming)?;
+        let result = strategy.merge_delete(current, &incoming, source_zone)?;
         self.handle_result(result, &gvk).await?;
         Ok(())
     }

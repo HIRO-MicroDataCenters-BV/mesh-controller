@@ -28,14 +28,17 @@ impl Display for NamespacedName {
 pub enum CacheProtocol {
     Update {
         version: Version,
+        zone: String,
         object: DynamicObject,
     },
     Delete {
         version: Version,
+        zone: String,
         object: DynamicObject,
     },
     Snapshot {
         version: Version,
+        zone: String,
         snapshot: BTreeMap<NamespacedName, Arc<DynamicObject>>,
     },
 }
@@ -67,14 +70,44 @@ impl TryFrom<Vec<u8>> for CacheProtocol {
 impl Display for CacheProtocol {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            CacheProtocol::Update { version, object } => {
-                write!(f, "Update({}, {:?})", version, object.get_namespaced_name())
+            CacheProtocol::Update {
+                zone,
+                version,
+                object,
+            } => {
+                write!(
+                    f,
+                    "Update({}, {}, {:?})",
+                    zone,
+                    version,
+                    object.get_namespaced_name()
+                )
             }
-            CacheProtocol::Delete { version, object } => {
-                write!(f, "Delete({}, {:?})", version, object.get_namespaced_name())
+            CacheProtocol::Delete {
+                zone,
+                version,
+                object,
+            } => {
+                write!(
+                    f,
+                    "Delete({}, {}, {:?})",
+                    zone,
+                    version,
+                    object.get_namespaced_name()
+                )
             }
-            CacheProtocol::Snapshot { version, snapshot } => {
-                write!(f, "Snapshot({}, {} items)", version, snapshot.len())
+            CacheProtocol::Snapshot {
+                zone,
+                version,
+                snapshot,
+            } => {
+                write!(
+                    f,
+                    "Snapshot({}, {}, {} items)",
+                    zone,
+                    version,
+                    snapshot.len()
+                )
             }
         }
     }

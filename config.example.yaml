@@ -31,6 +31,12 @@
 #     endpoints:
 #       - "zone1.cluster.local"
 
+# kubernetes:
+#     incluster: true
+
+# mesh:
+#     zone: "test"
+
 # Set log verbosity.
 #
 # Possible log levels are: ERROR, WARN, INFO, DEBUG, TRACE.

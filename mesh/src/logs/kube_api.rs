@@ -70,7 +70,11 @@ impl KubeApi {
                             }
                             Ok(result) => match result {
                                 IngestResult::Complete(op) => {
-                                    info!("Local ingested operation: seq {} hash, {:?}", op.header.seq_num, op.hash.to_hex());
+                                    info!(
+                                        "Local ingested operation: seq {} hash, {:?}",
+                                        op.header.seq_num,
+                                        op.hash.to_hex()
+                                    );
                                 }
                                 IngestResult::Retry(_, _, _, ops_missing) => {
                                     info!(
@@ -116,13 +120,14 @@ impl KubeApi {
             })?;
         match result {
             IngestResult::Complete(op) => {
-                info!("Incoming operation ingest completed: seq_num {}, hash {}", 
+                info!(
+                    "Incoming operation ingest completed: seq_num {}, hash {}",
                     op.header.seq_num,
                     op.header.hash().to_hex(),
                 );
                 if let Some(body) = op.body {
                     let incoming_event = CacheProtocol::try_from(body.to_bytes())?;
-                    self.cache.merge(incoming_event).await?;
+                    self.cache.merge(&incoming_event).await?;
                 }
             }
             IngestResult::Retry(_, _, _, ops_missing) => {

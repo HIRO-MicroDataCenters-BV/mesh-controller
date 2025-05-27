@@ -61,29 +61,26 @@ impl KubeCache {
         }
     }
 
-    pub async fn merge(&self, protocol: CacheProtocol) -> Result<()> {
+    pub async fn merge(&self, protocol: &CacheProtocol) -> Result<()> {
         let merger = Merger::new(self.client.clone());
         let strategy = AnyApplicationMerge::new();
         match protocol {
-            CacheProtocol::Update { version: _, object } => {
+            CacheProtocol::Update { zone, object, .. } => {
                 let name = object.get_namespaced_name();
                 trace!("incoming update {name:?}");
-                merger.merge_update(&object, &strategy).await?;
+                merger.merge_update(zone, &object, &strategy).await?;
             }
-            CacheProtocol::Delete { version: _, object } => {
+            CacheProtocol::Delete { zone, object, .. } => {
                 let name = object.get_namespaced_name();
                 trace!("incoming delete {name}");
-                merger.merge_delete(&object, &strategy).await?;
+                merger.merge_delete(zone, &object, &strategy).await?;
             }
-            CacheProtocol::Snapshot {
-                version: _,
-                snapshot,
-            } => {
+            CacheProtocol::Snapshot { zone, snapshot, .. } => {
                 trace!("incoming snapshot {snapshot:?}");
                 for (_, object) in snapshot {
                     let name = object.get_namespaced_name();
                     trace!("incoming update {name:?}");
-                    merger.merge_update(&object, &strategy).await?;
+                    merger.merge_update(zone, &object, &strategy).await?;
                 }
             }
         }
@@ -93,8 +90,9 @@ impl KubeCache {
     pub async fn subscribe(
         &self,
         gvk: &GroupVersionKind,
+        zone: &String,
     ) -> Result<loole::Receiver<CacheProtocol>> {
-        self.inner.write().await.subscribe(gvk).await
+        self.inner.write().await.subscribe(gvk, zone).await
     }
 
     pub async fn unsubscribe(&self, gvk: &GroupVersionKind) -> anyhow::Result<()> {
@@ -127,6 +125,7 @@ impl Subscriptions {
     pub async fn subscribe(
         &self,
         gvk: &GroupVersionKind,
+        zone: &String,
     ) -> Result<loole::Receiver<CacheProtocol>> {
         let subscription_entry = self.subscriptions.entry(gvk.clone()).or_insert_with(|| {
             let (pool_tx, subscriber_rx) = loole::unbounded();
@@ -144,6 +143,7 @@ impl Subscriptions {
                 pool_tx.to_owned(),
                 resources,
                 cancelation.to_owned(),
+                zone.to_owned(),
             );
             let handle = subscription.run();
             SubscriptionEntry {
@@ -202,6 +202,7 @@ pub mod tests {
 
         let gvk = GroupVersionKind::gvk("dcp.hiro.io", "v1", "AnyApplication");
         let ar = ApiResource::from_gvk(&gvk);
+        let zone: String = "test".into();
 
         service.register(&ar);
         service
@@ -211,7 +212,10 @@ pub mod tests {
 
         let cache = KubeCache::new(KubeClient::build_fake(service));
 
-        let subscriber = cache.subscribe(&gvk).await.expect("cache subscription");
+        let subscriber = cache
+            .subscribe(&gvk, &zone)
+            .await
+            .expect("cache subscription");
 
         if let CacheProtocol::Snapshot { snapshot, .. } =
             subscriber.recv().expect("receive snapshot event")
@@ -353,6 +357,7 @@ pub mod tests {
             BTreeMap::from([("test".into(), "test".into())]);
         let gvk = GroupVersionKind::gvk("dcp.hiro.io", "v1", "AnyApplication");
         let ar = ApiResource::from_gvk(&gvk);
+        let zone: String = "test".into();
         let resource = anyapplication();
         let resource_name = resource.get_namespaced_name();
 
@@ -361,7 +366,10 @@ pub mod tests {
         let client = KubeClient::build_fake(service);
         let cache = KubeCache::new(client.clone());
 
-        let subscriber = cache.subscribe(&gvk).await.expect("cache subscription");
+        let subscriber = cache
+            .subscribe(&gvk, &zone)
+            .await
+            .expect("cache subscription");
 
         // Empty snapshot
         if let CacheProtocol::Snapshot { snapshot, .. } =
