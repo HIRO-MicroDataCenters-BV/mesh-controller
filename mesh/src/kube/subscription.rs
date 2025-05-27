@@ -5,6 +5,7 @@ use super::{
     types::CacheProtocol,
 };
 use crate::JoinErrToStr;
+use crate::client::kube_client::KubeClient;
 use crate::kube::cache::KindResources;
 use anyhow::Result;
 use anyhow::bail;
@@ -15,10 +16,10 @@ use futures::StreamExt;
 use futures::TryFutureExt;
 use futures::future::MapErr;
 use futures::future::Shared;
-use kube::{Client, api::GroupVersionKind};
+use kube::api::GroupVersionKind;
 use kube::{
-    api::{Api, DynamicObject, ResourceExt},
-    runtime::watcher::{self, Event},
+    api::{DynamicObject, ResourceExt},
+    runtime::watcher::Event,
 };
 use std::time::Duration;
 use std::{collections::BTreeMap, sync::Arc};
@@ -35,7 +36,7 @@ pub struct Subscription {
 
 impl Subscription {
     pub fn new(
-        client: Client,
+        client: KubeClient,
         gvk: GroupVersionKind,
         tx: loole::Sender<CacheProtocol>,
         resources: Arc<KindResources>,
@@ -72,7 +73,7 @@ impl Subscription {
     }
 }
 pub struct SubscriptionInner {
-    client: Client,
+    client: KubeClient,
     gvk: GroupVersionKind,
     tx: loole::Sender<CacheProtocol>,
     resources: Arc<KindResources>,
@@ -81,11 +82,7 @@ pub struct SubscriptionInner {
 
 impl SubscriptionInner {
     async fn run_inner(&self) -> Result<()> {
-        let (ar, _caps) = kube::discovery::pinned_kind(&self.client, &self.gvk).await?;
-        let api = Api::<DynamicObject>::all_with(self.client.clone(), &ar);
-        let wc = watcher::Config::default();
-        let event_stream = watcher::watcher(api, wc);
-
+        let event_stream = self.client.event_stream(&self.gvk).await?;
         let mut events = event_stream.boxed();
         loop {
             tokio::select! {

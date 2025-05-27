@@ -1,5 +1,6 @@
 use crate::{
     JoinErrToStr,
+    client::kube_client::KubeClient,
     merge::{anyapplication_strategy::AnyApplicationMerge, merger::Merger},
 };
 
@@ -10,13 +11,10 @@ use super::{
 use crate::kube::dynamic_object_ext::DynamicObjectExt;
 use anyhow::Result;
 use dashmap::DashMap;
-use either::Either;
 use futures::future::MapErr;
 use futures::future::Shared;
-use kube::Client;
 use kube::Error;
-use kube::api::{Api, DeleteParams, DynamicObject, GroupVersionKind, Patch, PatchParams};
-use kube::client::Status;
+use kube::api::{DynamicObject, GroupVersionKind};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
@@ -46,12 +44,12 @@ pub struct SubscriptionEntry {
 #[derive(Clone)]
 pub struct KubeCache {
     inner: Arc<RwLock<Subscriptions>>,
-    client: Client,
+    client: KubeClient,
     root: CancellationToken,
 }
 
 impl KubeCache {
-    pub fn new(client: Client) -> Self {
+    pub fn new(client: KubeClient) -> Self {
         let root = CancellationToken::new();
         Self {
             inner: Arc::new(RwLock::new(Subscriptions::new(
@@ -63,55 +61,6 @@ impl KubeCache {
         }
     }
 
-    pub async fn direct_get(
-        &self,
-        gvk: &GroupVersionKind,
-        namspaced_name: &NamespacedName,
-    ) -> Result<Option<DynamicObject>> {
-        let (ar, _caps) = kube::discovery::pinned_kind(&self.client, gvk).await?;
-        let api = Api::<DynamicObject>::namespaced_with(
-            self.client.clone(),
-            &namspaced_name.namespace,
-            &ar,
-        );
-        let results = api.get(&namspaced_name.name).await;
-        if object_not_found(&results) {
-            Ok(None)
-        } else {
-            Ok(Some(results?))
-        }
-    }
-
-    pub async fn direct_delete(
-        &self,
-        gvk: &GroupVersionKind,
-        namspaced_name: &NamespacedName,
-    ) -> Result<Either<DynamicObject, Status>> {
-        let (ar, _caps) = kube::discovery::pinned_kind(&self.client, gvk).await?;
-        let api = Api::<DynamicObject>::namespaced_with(
-            self.client.clone(),
-            &namspaced_name.namespace,
-            &ar,
-        );
-        let params = DeleteParams::default();
-        let status = api.delete(&namspaced_name.name, &params).await?;
-        Ok(status)
-    }
-
-    pub async fn direct_patch_apply(&self, resource: DynamicObject) -> Result<()> {
-        let gvk = resource.get_gvk()?;
-        let ns_name = resource.get_namespaced_name();
-
-        let (ar, _) = kube::discovery::pinned_kind(&self.client, &gvk).await?;
-        let api =
-            Api::<DynamicObject>::namespaced_with(self.client.clone(), &ns_name.namespace, &ar);
-        let patch_params = PatchParams::apply(&ns_name.name).force();
-
-        api.patch(&ns_name.name, &patch_params, &Patch::Apply(resource))
-            .await?;
-
-        Ok(())
-    }
     pub async fn merge(&self, protocol: CacheProtocol) -> Result<()> {
         let merger = Merger::new(self.client.clone());
         let strategy = AnyApplicationMerge::new();
@@ -161,12 +110,12 @@ impl KubeCache {
 pub struct Subscriptions {
     resources: DashMap<GroupVersionKind, Arc<KindResources>>,
     subscriptions: DashMap<GroupVersionKind, SubscriptionEntry>,
-    client: Client,
+    client: KubeClient,
     root: CancellationToken,
 }
 
 impl Subscriptions {
-    pub fn new(client: Client, root: CancellationToken) -> Self {
+    pub fn new(client: KubeClient, root: CancellationToken) -> Self {
         Self {
             resources: DashMap::new(),
             subscriptions: DashMap::new(),
@@ -260,8 +209,7 @@ pub mod tests {
             .await
             .expect("saving kubernetes resource");
 
-        let client = kube::Client::new(service, "default");
-        let cache = KubeCache::new(client);
+        let cache = KubeCache::new(KubeClient::build_fake(service));
 
         let subscriber = cache.subscribe(&gvk).await.expect("cache subscription");
 
@@ -290,17 +238,17 @@ pub mod tests {
         let ar = ApiResource::from_gvk(&gvk);
         service.register(&ar);
 
-        let client = kube::Client::new(service, "default");
-        let cache = KubeCache::new(client);
+        let client = KubeClient::build_fake(service);
+        let cache = KubeCache::new(client.clone());
 
         let resource = anyapplication();
 
-        cache
+        client
             .direct_patch_apply(resource.clone())
             .await
             .expect("resource is not updated");
 
-        let created = cache
+        let created = client
             .direct_get(&gvk, &resource.get_namespaced_name())
             .await
             .expect("cannot get resource");
@@ -329,10 +277,10 @@ pub mod tests {
             .await
             .expect("saving kubernetes resource");
 
-        let client = kube::Client::new(service, "default");
-        let cache = KubeCache::new(client);
+        let client = KubeClient::build_fake(service);
+        let cache = KubeCache::new(client.clone());
 
-        let mut to_update = cache
+        let mut to_update = client
             .direct_get(&gvk, &resource_name)
             .await
             .expect("cannot get resource")
@@ -341,12 +289,12 @@ pub mod tests {
 
         to_update.metadata.labels = Some(test_labels.clone());
         to_update.metadata.managed_fields = None;
-        cache
+        client
             .direct_patch_apply(to_update)
             .await
             .expect("resource is not updated");
 
-        let updated = cache
+        let updated = client
             .direct_get(&gvk, &resource_name)
             .await
             .expect("cannot get resource")
@@ -375,16 +323,16 @@ pub mod tests {
             .await
             .expect("saving kubernetes resource");
 
-        let client = kube::Client::new(service, "default");
-        let cache = KubeCache::new(client);
+        let client = KubeClient::build_fake(service);
+        let cache = KubeCache::new(client.clone());
 
-        let status = cache
+        let status = client
             .direct_delete(&gvk, &resource_name)
             .await
             .expect("resource is not deleted");
         info!("delete status {:?}", status);
 
-        let deleted = cache
+        let deleted = client
             .direct_get(&gvk, &resource_name)
             .await
             .expect("cannot get resource");
@@ -410,8 +358,8 @@ pub mod tests {
 
         service.register(&ar);
 
-        let client = kube::Client::new(service, "default");
-        let cache = KubeCache::new(client);
+        let client = KubeClient::build_fake(service);
+        let cache = KubeCache::new(client.clone());
 
         let subscriber = cache.subscribe(&gvk).await.expect("cache subscription");
 
@@ -423,7 +371,7 @@ pub mod tests {
         }
 
         // Create
-        cache
+        client
             .direct_patch_apply(resource)
             .await
             .expect("resource is not updated");
@@ -433,7 +381,7 @@ pub mod tests {
         ));
 
         // Update
-        let mut to_update = cache
+        let mut to_update = client
             .direct_get(&gvk, &resource_name)
             .await
             .expect("cannot get resource")
@@ -442,7 +390,7 @@ pub mod tests {
 
         to_update.metadata.labels = Some(test_labels.clone());
         to_update.metadata.managed_fields = None;
-        cache
+        client
             .direct_patch_apply(to_update)
             .await
             .expect("resource is not updated");
@@ -456,7 +404,7 @@ pub mod tests {
         }
 
         // Delete
-        cache
+        client
             .direct_delete(&gvk, &resource_name)
             .await
             .expect("resource is not deleted");

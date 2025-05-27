@@ -1,21 +1,15 @@
 use super::types::{MergeResult, MergeStrategy};
-use crate::kube::{
-    cache::object_not_found, dynamic_object_ext::DynamicObjectExt, types::NamespacedName,
-};
+use crate::client::kube_client::KubeClient;
+use crate::kube::dynamic_object_ext::DynamicObjectExt;
 use anyhow::Result;
-use either::Either;
-use kube::api::Patch;
-use kube::{
-    Api,
-    api::{DeleteParams, DynamicObject, GroupVersionKind, PatchParams},
-};
+use kube::api::{DynamicObject, GroupVersionKind};
 
 pub struct Merger {
-    client: kube::Client,
+    client: KubeClient,
 }
 
 impl Merger {
-    pub fn new(client: kube::Client) -> Self {
+    pub fn new(client: KubeClient) -> Self {
         Merger { client }
     }
 
@@ -24,7 +18,10 @@ impl Merger {
         M: MergeStrategy,
     {
         let gvk = incoming.get_gvk()?;
-        let current = self.get(&incoming.get_namespaced_name(), &gvk).await?;
+        let current = self
+            .client
+            .direct_get(&gvk, &incoming.get_namespaced_name())
+            .await?;
         let result = strategy.merge_update(current, &incoming)?;
         self.handle_result(result, &gvk).await?;
         Ok(())
@@ -35,7 +32,10 @@ impl Merger {
         M: MergeStrategy,
     {
         let gvk = incoming.get_gvk()?;
-        let current = self.get(&incoming.get_namespaced_name(), &gvk).await?;
+        let current = self
+            .client
+            .direct_get(&gvk, &incoming.get_namespaced_name())
+            .await?;
         let result = strategy.merge_delete(current, &incoming)?;
         self.handle_result(result, &gvk).await?;
         Ok(())
@@ -48,66 +48,18 @@ impl Merger {
     ) -> Result<()> {
         match merge_result {
             MergeResult::Create { object } => {
-                self.create_or_update(&object, &gvk).await?;
+                self.client.direct_patch_apply(object).await?;
             }
             MergeResult::Update { object } => {
-                self.create_or_update(&object, &gvk).await?;
+                self.client.direct_patch_apply(object).await?;
             }
             MergeResult::Delete { name } => {
-                self.delete(&name, &gvk).await?;
+                self.client.direct_delete(gvk, &name).await?;
             }
             MergeResult::Conflict { msg } => {
                 tracing::warn!("Conflict detected: {}", msg);
             }
             MergeResult::DoNothing => (),
-        }
-        Ok(())
-    }
-
-    pub async fn get(
-        &self,
-        name: &NamespacedName,
-        gvk: &GroupVersionKind,
-    ) -> Result<Option<DynamicObject>> {
-        let (ar, _caps) = kube::discovery::pinned_kind(&self.client, gvk).await?;
-        let api = Api::<DynamicObject>::namespaced_with(self.client.clone(), &name.namespace, &ar);
-        let results = api.get(&name.name).await;
-        if object_not_found(&results) {
-            Ok(None)
-        } else {
-            Ok(Some(results?))
-        }
-    }
-
-    pub async fn create_or_update(
-        &self,
-        object: &DynamicObject,
-        gvk: &GroupVersionKind,
-    ) -> Result<()> {
-        let ns_name = object.get_namespaced_name();
-
-        let (ar, _) = kube::discovery::pinned_kind(&self.client, &gvk).await?;
-        let api =
-            Api::<DynamicObject>::namespaced_with(self.client.clone(), &ns_name.namespace, &ar);
-        let patch_params = PatchParams::apply(&ns_name.name).force();
-
-        api.patch(&ns_name.name, &patch_params, &Patch::Apply(object))
-            .await?;
-        Ok(())
-    }
-
-    pub async fn delete(&self, name: &NamespacedName, gvk: &GroupVersionKind) -> Result<()> {
-        let (ar, _caps) = kube::discovery::pinned_kind(&self.client, gvk).await?;
-        let api = Api::<DynamicObject>::namespaced_with(self.client.clone(), &name.namespace, &ar);
-        let params = DeleteParams::default();
-        let status = api.delete(&name.name, &params).await?;
-        match status {
-            Either::Left(_obj) => {
-                tracing::info!("Deleted object: {}", name);
-            }
-            Either::Right(status) => {
-                tracing::info!("Deleted object: {} with status: {:?}", name, status);
-            }
         }
         Ok(())
     }

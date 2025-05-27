@@ -54,10 +54,10 @@ reqwest.workspace = true
 kube.workspace = true
 k8s-openapi.workspace=true
 either.workspace = true
+fake-kube-api.workspace = true
 
 [dev-dependencies]
 figment = { workspace = true, features = ["test"] }
-fake-kube-api.workspace = true
 once_cell.workspace = true
 
 [build-dependencies]

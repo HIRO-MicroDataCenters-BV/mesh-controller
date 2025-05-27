@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::client::kube_client::KubeClient;
 use crate::config::private_key::load_private_key_from_file;
 use crate::context::Context;
 use crate::http::api::MeshApiImpl;
@@ -13,7 +14,6 @@ use crate::network::Panda;
 use crate::network::membership::Membership;
 use crate::node::mesh::{MeshNode, NodeOptions};
 use anyhow::{Context as AnyhowContext, Result, anyhow};
-use kube::Client;
 use kube::api::GroupVersionKind;
 use p2panda_core::{PrivateKey, PublicKey};
 use p2panda_net::{NetworkBuilder, ResyncConfiguration, SyncConfiguration};
@@ -179,47 +179,17 @@ impl ContextBuilder {
         }))
     }
 
-    async fn build_kube_client(_config: &Config) -> Result<Client> {
+    async fn build_kube_client(_config: &Config) -> Result<KubeClient> {
         #[cfg(not(test))]
         {
-            let kube_config = ContextBuilder::to_kube_config(_config).await?;
-            let client =
-                kube::Client::try_from(kube_config).context("failed to create kube client")?;
+            let client = KubeClient::build(_config).await?;
             Ok(client)
         }
         #[cfg(test)]
         {
             let svc = fake_kube_api::service::FakeKubeApiService::new();
-            let client = kube::Client::new(svc, "default");
+            let client = KubeClient::build_fake(svc);
             Ok(client)
-        }
-    }
-
-    #[cfg(not(test))]
-    async fn to_kube_config(config: &Config) -> Result<kube::config::Config> {
-        use crate::config::configuration::KubeConfiguration;
-        match config.kubernetes.as_ref() {
-            Some(kube_config) => match kube_config {
-                KubeConfiguration::InCluster => kube::config::Config::infer()
-                    .await
-                    .context("failed to infer kube config"),
-                KubeConfiguration::External(external_config) => {
-                    let kube_context = external_config
-                        .kube_context
-                        .to_owned()
-                        .unwrap_or("default".into());
-                    let options = kube::config::KubeConfigOptions {
-                        context: Some(kube_context),
-                        ..Default::default()
-                    };
-                    kube::config::Config::from_kubeconfig(&options)
-                        .await
-                        .context("failed to create kube config from path")
-                }
-            },
-            None => kube::config::Config::infer()
-                .await
-                .context("failed to infer kube config"),
         }
     }
 
