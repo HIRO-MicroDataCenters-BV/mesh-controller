@@ -25,6 +25,7 @@ impl PeerDiscovery {
                 match event {
                     SystemEvent::GossipNeighborDown { peer, .. } => {
                         tracing::info!("NeighborDown: {}", peer.to_hex());
+                        topic_map.remove_peer(&peer);
                     }
                     SystemEvent::GossipNeighborUp { peer, .. } => {
                         tracing::info!("NeighborUp: {}", peer.to_hex());

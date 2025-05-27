@@ -82,13 +82,12 @@ pub struct SubscriptionInner {
 
 impl SubscriptionInner {
     async fn run_inner(&self) -> Result<()> {
-        let event_stream = self.client.event_stream(&self.gvk).await?;
+        let event_stream = self.client.event_stream_for(&self.gvk).await?;
         let mut events = event_stream.boxed();
         loop {
             tokio::select! {
                 _ = self.cancelation.cancelled() => break,
-                event = events.next() => {
-                    trace!("event received {:?}", event);
+                event = events.next() => {                    
                     match event {
                         Some(Ok(event)) => {
                             SubscriptionInner::handle_event(event, &self.resources, &self.tx)
@@ -133,7 +132,7 @@ impl SubscriptionInner {
             .parse::<u64>()
             .context("unparsable resourceVersion in dynamic object")?;
         let resource = Arc::new(object.clone());
-
+        trace!("APPLY {}, uid: {}, version: {}", ns_name, uid, version);
         let resource_entries = resources.entry(ns_name).or_default();
 
         let updated = if let Some(mut existing) = resource_entries.get_mut(&uid) {
@@ -180,6 +179,7 @@ impl SubscriptionInner {
             .context("unparsable resourceVersion in dynamic object")?;
         let resource = Arc::new(object.clone());
 
+        trace!("DELETE {}, uid: {}, version: {}", ns_name, uid, version);        
         let resource_entries = resources.entry(ns_name).or_default();
 
         let mut entry = resource_entries
