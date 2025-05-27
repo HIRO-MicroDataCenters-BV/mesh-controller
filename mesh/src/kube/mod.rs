@@ -1,4 +1,3 @@
-pub mod anyapplication;
 pub mod cache;
 pub mod dynamic_object_ext;
 mod subscription;

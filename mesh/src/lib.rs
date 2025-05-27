@@ -5,6 +5,7 @@ pub mod context_builder;
 mod http;
 pub mod kube;
 pub mod logs;
+pub mod merge;
 pub mod metrics;
 pub mod network;
 pub mod node;

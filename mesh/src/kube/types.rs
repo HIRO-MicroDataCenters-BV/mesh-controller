@@ -18,6 +18,12 @@ impl NamespacedName {
     }
 }
 
+impl Display for NamespacedName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}/{}", self.namespace, self.name)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum CacheProtocol {
     Update {
@@ -57,7 +63,6 @@ impl TryFrom<Vec<u8>> for CacheProtocol {
         ciborium::from_reader(&bytes[..])
     }
 }
-
 
 impl Display for CacheProtocol {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

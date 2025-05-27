@@ -1,11 +1,14 @@
-use crate::JoinErrToStr;
+use crate::{
+    JoinErrToStr,
+    merge::{anyapplication_strategy::AnyApplicationMerge, merger::Merger},
+};
 
 use super::{
     subscription::Subscription,
     types::{CacheProtocol, NamespacedName},
 };
 use crate::kube::dynamic_object_ext::DynamicObjectExt;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use dashmap::DashMap;
 use either::Either;
 use futures::future::MapErr;
@@ -14,11 +17,11 @@ use kube::Client;
 use kube::Error;
 use kube::api::{Api, DeleteParams, DynamicObject, GroupVersionKind, Patch, PatchParams};
 use kube::client::Status;
-use tracing::trace;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::AbortOnDropHandle;
+use tracing::trace;
 
 pub type UID = String;
 pub type Version = u64;
@@ -109,44 +112,30 @@ impl KubeCache {
 
         Ok(())
     }
-
-    pub async fn merge(&self, protocol: CacheProtocol) -> Result<()>{
-        
+    pub async fn merge(&self, protocol: CacheProtocol) -> Result<()> {
+        let merger = Merger::new(self.client.clone());
+        let strategy = AnyApplicationMerge::new();
         match protocol {
-            CacheProtocol::Update { version: _, mut object } => {
-                trace!("incoming update {object:?}");
-                object.metadata.managed_fields = None; // Remove managed fields to avoid conflicts
-                object.metadata.uid = None; 
-                let gvk = object.get_gvk().context("Unable to derive GroupVersionKind")?;
-                let ns_name = object.get_namespaced_name();
-                let (ar, _) = kube::discovery::pinned_kind(&self.client, &gvk).await?;
-                let api =
-                    Api::<DynamicObject>::namespaced_with(self.client.clone(), &ns_name.namespace, &ar);
-                let patch_params = PatchParams::apply(&ns_name.name).force();
-
-                api.patch(&ns_name.name, &patch_params, &Patch::Apply(object))
-                    .await?;
-                trace!(name = ?ns_name, "Resource update");
+            CacheProtocol::Update { version: _, object } => {
+                let name = object.get_namespaced_name();
+                trace!("incoming update {name:?}");
+                merger.merge_update(&object, &strategy).await?;
             }
             CacheProtocol::Delete { version: _, object } => {
-                trace!("incoming delete {object:?}");
-                let gvk = object.get_gvk().context("Unable to derive GroupVersionKind")?;
-                let ns_name = object.get_namespaced_name();
-                let (ar, _caps) = kube::discovery::pinned_kind(&self.client, &gvk).await?;
-                let api = Api::<DynamicObject>::namespaced_with(
-                    self.client.clone(),
-                    &ns_name.namespace,
-                    &ar,
-                );
-                let params = DeleteParams::default();
-                let status = api.delete(&ns_name.name, &params).await?;
-                trace!(status = ?status, name = ?ns_name, "Resource deleted");
+                let name = object.get_namespaced_name();
+                trace!("incoming delete {name}");
+                merger.merge_delete(&object, &strategy).await?;
             }
-            CacheProtocol::Snapshot { version, snapshot } => {
+            CacheProtocol::Snapshot {
+                version: _,
+                snapshot,
+            } => {
                 trace!("incoming snapshot {snapshot:?}");
-                for elements in snapshot {
-
-                }                
+                for (_, object) in snapshot {
+                    let name = object.get_namespaced_name();
+                    trace!("incoming update {name:?}");
+                    merger.merge_update(&object, &strategy).await?;
+                }
             }
         }
         Ok(())
@@ -230,7 +219,7 @@ impl Subscriptions {
     }
 }
 
-fn object_not_found(results: &Result<DynamicObject, Error>) -> bool {
+pub fn object_not_found(results: &Result<DynamicObject, Error>) -> bool {
     match results {
         Err(Error::Api(response)) => response.reason == "NotFound",
         _ => false,
@@ -241,13 +230,11 @@ fn object_not_found(results: &Result<DynamicObject, Error>) -> bool {
 pub mod tests {
 
     use super::*;
+
     use crate::{
-        kube::{
-            anyapplication::{
-                AnyApplication, AnyApplicationApplication, AnyApplicationApplicationHelm,
-                AnyApplicationSpec, AnyApplicationStatus,
-            },
-            cache::KubeCache,
+        merge::anyapplication::{
+            AnyApplication, AnyApplicationApplication, AnyApplicationApplicationHelm,
+            AnyApplicationSpec, AnyApplicationStatus,
         },
         tracing::setup_tracing,
     };

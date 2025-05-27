@@ -37,15 +37,17 @@ impl TopicId for MeshTopic {
 
 #[derive(Debug, Clone)]
 pub struct MeshTopicLogMap {
-    inner: Arc<MeshTopicLogMapInner>
+    inner: Arc<MeshTopicLogMapInner>,
 }
 
 impl MeshTopicLogMap {
     pub fn new(owner: PublicKey) -> MeshTopicLogMap {
-        MeshTopicLogMap { inner: Arc::new(MeshTopicLogMapInner {
-            owner,
-            peers: DashSet::new(),
-        }) }
+        MeshTopicLogMap {
+            inner: Arc::new(MeshTopicLogMapInner {
+                owner,
+                peers: DashSet::new(),
+            }),
+        }
     }
 
     pub fn add_peer(&self, peer: PublicKey) {

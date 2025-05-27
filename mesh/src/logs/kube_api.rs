@@ -1,6 +1,6 @@
+use crate::JoinErrToStr;
 use crate::kube::cache::KubeCache;
 use crate::kube::types::CacheProtocol;
-use crate::JoinErrToStr;
 use anyhow::Result;
 use futures::future::{MapErr, Shared};
 use futures::{FutureExt, StreamExt, TryFutureExt};
@@ -90,7 +90,11 @@ impl KubeApi {
             .map_err(Box::new(|e: JoinError| e.to_string()) as JoinErrToStr)
             .shared();
 
-        KubeApi { store, cache, handle }
+        KubeApi {
+            store,
+            cache,
+            handle,
+        }
     }
 
     pub async fn incoming(
@@ -100,7 +104,11 @@ impl KubeApi {
         header_bytes: Vec<u8>,
         log_id: &MeshLogId,
     ) -> Result<()> {
-        trace!("KubeApi ingest operation {}, seq_num {}", header.hash() , header.seq_num);
+        trace!(
+            "KubeApi ingest operation {}, seq_num {}",
+            header.hash(),
+            header.seq_num
+        );
         let result = ingest_operation(&mut self.store, header, body, header_bytes, log_id, false)
             .await
             .inspect_err(|e| {

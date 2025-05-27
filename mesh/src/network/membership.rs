@@ -72,7 +72,11 @@ pub struct Membership {
 }
 
 impl Membership {
-    pub fn new(known_nodes: &Vec<KnownNode>, options: DiscoveryOptions, topic_map: MeshTopicLogMap) -> Self {
+    pub fn new(
+        known_nodes: &Vec<KnownNode>,
+        options: DiscoveryOptions,
+        topic_map: MeshTopicLogMap,
+    ) -> Self {
         let mut peers = KnownPeers::new(known_nodes);
         let (sender, rx) = loole::bounded(64);
 
