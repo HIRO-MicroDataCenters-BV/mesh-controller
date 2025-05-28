@@ -1,11 +1,7 @@
-use super::{
-    anyapplication::{AnyApplication, AnyApplicationSpec, AnyApplicationStatus},
-    types::{MergeResult, MergeStrategy},
-};
+use super::types::{MergeResult, MergeStrategy};
 use crate::kube::dynamic_object_ext::DynamicObjectExt;
-use anyhow::{Context, Result, anyhow};
+use anyhow::Result;
 use kube::api::DynamicObject;
-use serde::de::DeserializeOwned;
 
 pub struct DefaultMerge {}
 
@@ -25,9 +21,27 @@ impl MergeStrategy for DefaultMerge {
     ) -> Result<MergeResult> {
         let incoming = incoming.clone();
         if let Some(current) = current {
-            Ok(MergeResult::Update { object: current })
+            let current_owner_version = current.get_owner_version()?;
+
+            let incoming_owner_version = incoming.get_owner_version()?;
+            let incoming_owner_zone = incoming.get_owner_zone()?;
+
+            let acceptable_zone = &incoming_owner_zone == incoming_zone;
+            let new_version = incoming_owner_version > current_owner_version;
+
+            if acceptable_zone && new_version {
+                let mut object = incoming.clone();
+                object.metadata.managed_fields = None;
+                object.metadata.uid = None;
+                Ok(MergeResult::Update { object })
+            } else {
+                Ok(MergeResult::DoNothing)
+            }
         } else {
-            Ok(MergeResult::Create { object: incoming })
+            let mut object = incoming.clone();
+            object.metadata.managed_fields = None;
+            object.metadata.uid = None;
+            Ok(MergeResult::Create { object })
         }
     }
 
@@ -37,10 +51,22 @@ impl MergeStrategy for DefaultMerge {
         incoming: &DynamicObject,
         incoming_zone: &String,
     ) -> Result<MergeResult> {
-        if let Some(_) = current {
-            Ok(MergeResult::Delete {
-                name: incoming.get_namespaced_name(),
-            })
+        if let Some(current) = current {
+            let current_owner_version = current.get_owner_version()?;
+
+            let incoming_owner_version = incoming.get_owner_version()?;
+            let incoming_owner_zone = incoming.get_owner_zone()?;
+
+            let acceptable_zone = &incoming_owner_zone == incoming_zone;
+            let new_version = incoming_owner_version > current_owner_version;
+
+            if acceptable_zone && new_version {
+                Ok(MergeResult::Delete {
+                    name: incoming.get_namespaced_name(),
+                })
+            } else {
+                Ok(MergeResult::DoNothing)
+            }
         } else {
             Ok(MergeResult::DoNothing)
         }
