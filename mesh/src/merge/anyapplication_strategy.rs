@@ -46,7 +46,7 @@ impl MergeStrategy for AnyApplicationMerge {
         if let Some(current) = current {
             let mut into: AnyApplication = current.try_parse()?;
             let from: AnyApplication = incoming.try_parse()?;
-            
+
             let is_spec_merged = self.merge_spec(&mut into.spec, &from.spec, incoming_zone);
             let is_status_merged = self.merge_status(&mut into.status, &from.status, incoming_zone);
             if !is_spec_merged && !is_status_merged {
@@ -60,7 +60,11 @@ impl MergeStrategy for AnyApplicationMerge {
             target.metadata.managed_fields = None;
             target.metadata.uid = None;
 
-            let owner = target.status.as_ref().map(|s|s.owner.to_owned()).unwrap_or("unknown".to_string());
+            let owner = target
+                .status
+                .as_ref()
+                .map(|s| s.owner.to_owned())
+                .unwrap_or("unknown".to_string());
 
             let value =
                 serde_json::to_value(target).context("Failed to serialize merged object")?;
@@ -85,13 +89,11 @@ impl MergeStrategy for AnyApplicationMerge {
     }
 }
 
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AnyApplicationOwnership {
     pub owner: String,
-    pub placements: Vec<String>
+    pub placements: Vec<String>,
 }
-
 
 #[cfg(test)]
 pub mod tests {

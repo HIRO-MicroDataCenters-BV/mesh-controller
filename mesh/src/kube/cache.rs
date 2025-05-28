@@ -127,35 +127,40 @@ impl Subscriptions {
         gvk: &GroupVersionKind,
         zone: &String,
     ) -> Result<loole::Receiver<CacheProtocol>> {
-        let subscription_entry = self.subscriptions.entry(gvk.clone()).or_insert_with(|| {
-            let (pool_tx, subscriber_rx) = loole::unbounded();
+        let entry = self
+            .subscriptions
+            .entry(gvk.clone())
+            .or_insert_with(|| self.new_subscription(gvk, zone));
 
-            let resources = self
-                .resources
-                .entry(gvk.clone())
-                .or_insert_with(|| Arc::new(DashMap::new()))
-                .value()
-                .clone();
-            let cancelation = self.root.child_token();
-            let subscription = Subscription::new(
-                self.client.to_owned(),
-                gvk.to_owned(),
-                pool_tx.to_owned(),
-                resources,
-                cancelation.to_owned(),
-                zone.to_owned(),
-            );
-            let handle = subscription.run();
-            SubscriptionEntry {
-                pool_tx,
-                subscriber_rx,
-                cancellation: cancelation.to_owned(),
-                handle,
-            }
-        });
-
-        let subscriber_rx = subscription_entry.value().subscriber_rx.clone();
+        let subscriber_rx = entry.value().subscriber_rx.clone();
         Ok(subscriber_rx)
+    }
+
+    fn new_subscription(&self, gvk: &GroupVersionKind, zone: &String) -> SubscriptionEntry {
+        let (pool_tx, subscriber_rx) = loole::unbounded();
+
+        let resources = self
+            .resources
+            .entry(gvk.to_owned())
+            .or_insert_with(|| Arc::new(DashMap::new()))
+            .value()
+            .clone();
+        let cancelation = self.root.child_token();
+        let subscription = Subscription::new(
+            self.client.to_owned(),
+            gvk.to_owned(),
+            pool_tx.to_owned(),
+            resources,
+            cancelation.to_owned(),
+            zone.to_owned(),
+        );
+        let handle = subscription.run();
+        SubscriptionEntry {
+            pool_tx,
+            subscriber_rx,
+            cancellation: cancelation.to_owned(),
+            handle,
+        }
     }
 
     pub async fn unsubscribe(&self, gvk: &GroupVersionKind) -> anyhow::Result<()> {
