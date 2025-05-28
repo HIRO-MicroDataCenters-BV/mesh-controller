@@ -1,11 +1,11 @@
 use super::{
     anyapplication::{AnyApplication, AnyApplicationSpec, AnyApplicationStatus},
+    anyapplication_ext::AnyApplicationExt,
     types::{MergeResult, MergeStrategy},
 };
-use crate::kube::dynamic_object_ext::DynamicObjectExt;
+use crate::kube::{cache::Version, dynamic_object_ext::DynamicObjectExt};
 use anyhow::{Context, Result, anyhow};
 use kube::api::DynamicObject;
-use serde::de::DeserializeOwned;
 
 pub struct AnyApplicationMerge {}
 
@@ -14,24 +14,118 @@ impl AnyApplicationMerge {
         AnyApplicationMerge {}
     }
 
+    fn merge_update_internal(
+        &self,
+        current: DynamicObject,
+        incoming: DynamicObject,
+        incoming_zone: &str,
+    ) -> Result<MergeResult> {
+        let mut current: AnyApplication = current.try_parse()?;
+        let current_owner_version = current.get_owner_version()?;
+
+        let incoming: AnyApplication = incoming.try_parse()?;
+        let incoming_owner_version = incoming.get_owner_version()?;
+        let incoming_owner_zone = incoming.get_owner_zone();
+
+        let merged_spec = self.merge_spec(
+            current_owner_version,
+            &incoming.spec,
+            incoming_owner_version,
+            incoming_zone,
+            &incoming_owner_zone,
+        );
+        let merged_status = self.merge_status(
+            &current.status,
+            current_owner_version,
+            &incoming.status,
+            incoming_owner_version,
+            incoming_zone,
+            &incoming_owner_zone,
+        );
+        let mut updated = false;
+        if let Some(spec) = merged_spec {
+            current.spec = spec;
+            updated = true;
+        }
+        if let Some(status) = merged_status {
+            current.status = Some(status);
+            updated = true;
+        }
+
+        if !updated {
+            return Ok(MergeResult::DoNothing);
+        }
+        current.set_owner_version(incoming_owner_version);
+
+        let value = serde_json::to_value(current).context("Failed to serialize merged object")?;
+        let object: DynamicObject = serde_json::from_value(value)?;
+        Ok(MergeResult::Update { object })
+    }
+
     fn merge_spec(
         &self,
-        target: &mut AnyApplicationSpec,
-        from: &AnyApplicationSpec,
-        from_zone: &str,
-    ) -> bool {
-        // This strategy does not handle status updates
-        unimplemented!()
+        current_owner_version: Version,
+        incoming: &AnyApplicationSpec,
+        incoming_owner_version: Version,
+        incoming_zone: &str,
+        incoming_owner_zone: &str,
+    ) -> Option<AnyApplicationSpec> {
+        let acceptable_zone = incoming_zone == incoming_owner_zone;
+        let new_change = incoming_owner_version > current_owner_version;
+        if acceptable_zone && new_change {
+            Some(incoming.to_owned())
+        } else {
+            None
+        }
     }
 
     fn merge_status(
         &self,
-        target: &mut Option<AnyApplicationStatus>,
-        from: &Option<AnyApplicationStatus>,
-        from_zone: &str,
-    ) -> bool {
-        // This strategy does not handle status updates
-        unimplemented!()
+        current: &Option<AnyApplicationStatus>,
+        current_owner_version: Version,
+        incoming: &Option<AnyApplicationStatus>,
+        incoming_owner_version: Version,
+        incoming_zone: &str,
+        incoming_owner_zone: &str,
+    ) -> Option<AnyApplicationStatus> {
+        let acceptable_zone = incoming_zone == incoming_owner_zone;
+        let new_change = incoming_owner_version > current_owner_version;
+
+        if acceptable_zone && new_change {
+            None
+        } else {
+            None
+        }
+    }
+
+    fn merge_create_internal(&self, mut incoming: DynamicObject) -> Result<MergeResult> {
+        incoming.metadata.managed_fields = None;
+        incoming.metadata.uid = None;
+        Ok(MergeResult::Create { object: incoming })
+    }
+
+    fn merge_delete_internal(
+        &self,
+        current: DynamicObject,
+        incoming: &DynamicObject,
+        incoming_zone: &String,
+    ) -> Result<MergeResult> {
+        let current: AnyApplication = current.try_parse()?;
+        let current_owner_version = current.get_owner_version()?;
+
+        let name = incoming.get_namespaced_name();
+        let incoming: AnyApplication = incoming.to_owned().try_parse()?;
+        let incoming_owner_version = incoming.get_owner_version()?;
+        let incoming_owner_zone = incoming.get_owner_zone();
+
+        let acceptable_zone = incoming_zone == &incoming_owner_zone;
+        let new_change = incoming_owner_version > current_owner_version;
+
+        if acceptable_zone && new_change {
+            Ok(MergeResult::Delete { name })
+        } else {
+            Ok(MergeResult::DoNothing)
+        }
     }
 }
 
@@ -44,32 +138,9 @@ impl MergeStrategy for AnyApplicationMerge {
     ) -> Result<MergeResult> {
         let incoming = incoming.clone();
         if let Some(current) = current {
-            let mut into: AnyApplication = current.try_parse()?;
-            let from: AnyApplication = incoming.try_parse()?;
-
-            let is_spec_merged = self.merge_spec(&mut into.spec, &from.spec, incoming_zone);
-            let is_status_merged = self.merge_status(&mut into.status, &from.status, incoming_zone);
-            if !is_spec_merged && !is_status_merged {
-                return Ok(MergeResult::DoNothing);
-            }
-            let value = serde_json::to_value(into).context("Failed to serialize merged object")?;
-            let object: DynamicObject = serde_json::from_value(value)?;
-            Ok(MergeResult::Update { object })
+            self.merge_update_internal(current, incoming.clone(), &incoming_zone)
         } else {
-            let mut target: AnyApplication = incoming.try_parse()?;
-            target.metadata.managed_fields = None;
-            target.metadata.uid = None;
-
-            let owner = target
-                .status
-                .as_ref()
-                .map(|s| s.owner.to_owned())
-                .unwrap_or("unknown".to_string());
-
-            let value =
-                serde_json::to_value(target).context("Failed to serialize merged object")?;
-            let object: DynamicObject = serde_json::from_value(value)?;
-            Ok(MergeResult::Create { object })
+            self.merge_create_internal(incoming)
         }
     }
 
@@ -79,10 +150,8 @@ impl MergeStrategy for AnyApplicationMerge {
         incoming: &DynamicObject,
         incoming_zone: &String,
     ) -> Result<MergeResult> {
-        if let Some(_) = current {
-            Ok(MergeResult::Delete {
-                name: incoming.get_namespaced_name(),
-            })
+        if let Some(current) = current {
+            self.merge_delete_internal(current, incoming, incoming_zone)
         } else {
             Ok(MergeResult::DoNothing)
         }

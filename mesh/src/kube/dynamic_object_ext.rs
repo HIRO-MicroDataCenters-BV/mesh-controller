@@ -2,12 +2,20 @@ use anyhow::{Context, Result, anyhow};
 use kube::ResourceExt;
 use kube::api::{DynamicObject, GroupVersionKind};
 
+use super::cache::Version;
 use super::types::NamespacedName;
+
+const OWNER_VERSION: &str = "dcp.hiro.io/owner-version";
+const OWNER_ZONE: &str = "dcp.hiro.io/owner-zone";
 
 pub trait DynamicObjectExt {
     fn get_gvk(&self) -> Result<GroupVersionKind>;
     fn get_namespaced_name(&self) -> NamespacedName;
     fn get_first_item_or_fail(&self) -> Result<Option<DynamicObject>>;
+    fn get_owner_version(&self) -> Result<Version>;
+    fn set_owner_version(&mut self, version: Version);
+    fn get_owner_zone(&self) -> Result<String>;
+    fn set_owner_zone(&mut self, zone: &String);
 }
 
 impl DynamicObjectExt for DynamicObject {
@@ -68,5 +76,38 @@ impl DynamicObjectExt for DynamicObject {
         } else {
             Ok(Some(self.clone()))
         }
+    }
+
+    fn get_owner_version(&self) -> Result<Version> {
+        self.metadata
+            .labels
+            .as_ref()
+            .ok_or(anyhow!("{} label not set", OWNER_VERSION))?
+            .get(OWNER_VERSION)
+            .map(|v| {
+                v.parse::<Version>()
+                    .map_err(|e| anyhow!("unable to parse version from label. {e}"))
+            })
+            .unwrap_or(Err(anyhow!("{} label not set", OWNER_VERSION)))
+    }
+
+    fn set_owner_version(&mut self, version: Version) {
+        let labels = self.metadata.labels.get_or_insert_default();
+        labels.insert(OWNER_VERSION.into(), version.to_string());
+    }
+
+    fn get_owner_zone(&self) -> Result<String> {
+        self.metadata
+            .labels
+            .as_ref()
+            .ok_or(anyhow!("{} label not set", OWNER_ZONE))?
+            .get(OWNER_ZONE)
+            .cloned()
+            .ok_or(anyhow!("{} label not set", OWNER_ZONE))
+    }
+
+    fn set_owner_zone(&mut self, zone: &String) {
+        let labels = self.metadata.labels.get_or_insert_default();
+        labels.insert(OWNER_ZONE.into(), zone.to_string());
     }
 }
