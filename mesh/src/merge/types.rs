@@ -3,6 +3,7 @@ use kube::api::DynamicObject;
 
 use crate::kube::types::NamespacedName;
 
+#[derive(Debug, Clone, PartialEq)]
 pub enum MergeResult {
     Create { object: DynamicObject },
     Update { object: DynamicObject },
@@ -16,13 +17,13 @@ pub trait MergeStrategy {
         &self,
         current: Option<DynamicObject>,
         incoming: &DynamicObject,
-        incoming_zone: &String,
+        incoming_zone: &str,
     ) -> Result<MergeResult>;
 
     fn merge_delete(
         &self,
         current: Option<DynamicObject>,
         incoming: &DynamicObject,
-        incoming_zone: &String,
+        incoming_zone: &str,
     ) -> Result<MergeResult>;
 }

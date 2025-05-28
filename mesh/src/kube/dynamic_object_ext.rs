@@ -15,7 +15,7 @@ pub trait DynamicObjectExt {
     fn get_owner_version(&self) -> Result<Version>;
     fn set_owner_version(&mut self, version: Version);
     fn get_owner_zone(&self) -> Result<String>;
-    fn set_owner_zone(&mut self, zone: &String);
+    fn set_owner_zone(&mut self, zone: String);
 }
 
 impl DynamicObjectExt for DynamicObject {
@@ -106,7 +106,7 @@ impl DynamicObjectExt for DynamicObject {
             .ok_or(anyhow!("{} label not set", OWNER_ZONE))
     }
 
-    fn set_owner_zone(&mut self, zone: &String) {
+    fn set_owner_zone(&mut self, zone: String) {
         let labels = self.metadata.labels.get_or_insert_default();
         labels.insert(OWNER_ZONE.into(), zone.to_string());
     }

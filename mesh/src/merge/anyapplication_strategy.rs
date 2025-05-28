@@ -108,7 +108,7 @@ impl AnyApplicationMerge {
         &self,
         current: DynamicObject,
         incoming: &DynamicObject,
-        incoming_zone: &String,
+        incoming_zone: &str,
     ) -> Result<MergeResult> {
         let current: AnyApplication = current.try_parse()?;
         let current_owner_version = current.get_owner_version()?;
@@ -134,7 +134,7 @@ impl MergeStrategy for AnyApplicationMerge {
         &self,
         current: Option<DynamicObject>,
         incoming: &DynamicObject,
-        incoming_zone: &String,
+        incoming_zone: &str,
     ) -> Result<MergeResult> {
         let incoming = incoming.clone();
         if let Some(current) = current {
@@ -148,7 +148,7 @@ impl MergeStrategy for AnyApplicationMerge {
         &self,
         current: Option<DynamicObject>,
         incoming: &DynamicObject,
-        incoming_zone: &String,
+        incoming_zone: &str,
     ) -> Result<MergeResult> {
         if let Some(current) = current {
             self.merge_delete_internal(current, incoming, incoming_zone)
