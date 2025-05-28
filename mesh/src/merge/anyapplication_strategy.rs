@@ -1,10 +1,13 @@
 use super::{
-    anyapplication::{AnyApplication, AnyApplicationSpec, AnyApplicationStatus},
+    anyapplication::{
+        AnyApplication, AnyApplicationSpec, AnyApplicationStatus, AnyApplicationStatusConditions,
+        AnyApplicationStatusPlacements,
+    },
     anyapplication_ext::AnyApplicationExt,
     types::{MergeResult, MergeStrategy},
 };
 use crate::kube::{cache::Version, dynamic_object_ext::DynamicObjectExt};
-use anyhow::{Context, Result, anyhow};
+use anyhow::Result;
 use kube::api::DynamicObject;
 
 pub struct AnyApplicationMerge {}
@@ -87,14 +90,109 @@ impl AnyApplicationMerge {
         incoming_zone: &str,
         incoming_owner_zone: &str,
     ) -> Option<AnyApplicationStatus> {
+        let maybe_status = self.merge_ownership_section(
+            current,
+            current_owner_version,
+            incoming,
+            incoming_owner_version,
+            incoming_zone,
+            incoming_owner_zone,
+        );
+
+        let maybe_conditions = self.merge_conditions_section(
+            current
+                .as_ref()
+                .and_then(|v| v.conditions.as_ref())
+                .unwrap_or(&vec![]),
+            incoming
+                .as_ref()
+                .and_then(|v| v.conditions.as_ref())
+                .unwrap_or(&vec![]),
+            incoming_zone,
+            incoming
+                .as_ref()
+                .and_then(|v| v.placements.as_ref())
+                .unwrap_or(&vec![]),
+        );
+
+        if let Some(mut status) = maybe_status {
+            maybe_conditions.into_iter().for_each(|conditions| {
+                status.conditions = Some(conditions);
+            });
+            Some(status)
+        } else if let Some(conditions) = maybe_conditions {
+            if let Some(status) = current {
+                let mut status = status.clone();
+                status.conditions = Some(conditions);
+                Some(status)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
+    fn merge_ownership_section(
+        &self,
+        current: &Option<AnyApplicationStatus>,
+        current_owner_version: Version,
+        incoming: &Option<AnyApplicationStatus>,
+        incoming_owner_version: Version,
+        incoming_zone: &str,
+        incoming_owner_zone: &str,
+    ) -> Option<AnyApplicationStatus> {
         let acceptable_zone = incoming_zone == incoming_owner_zone;
         let new_change = incoming_owner_version > current_owner_version;
 
         if acceptable_zone && new_change {
-            None
+            match (current, incoming) {
+                (Some(_) | None, Some(incoming)) => {
+                    let mut target = incoming.clone();
+                    target.conditions = None;
+                    Some(target)
+                }
+                (_, None) => None,
+            }
         } else {
             None
         }
+    }
+
+    fn merge_conditions_section(
+        &self,
+        current: &Vec<AnyApplicationStatusConditions>,
+        incoming: &Vec<AnyApplicationStatusConditions>,
+        incoming_zone: &str,
+        placements: &Vec<AnyApplicationStatusPlacements>,
+    ) -> Option<Vec<AnyApplicationStatusConditions>> {
+        let acceptable_zone = placements
+            .iter()
+            .find(|p| p.zone == incoming_zone)
+            .is_some();
+        if !acceptable_zone {
+            return None;
+        }
+
+        let incoming_owned_by_zone = incoming.into_iter().filter(|v| v.zone_id == incoming_zone);
+        let mut target = current.clone();
+        let mut updated = false;
+        for incoming_cond in incoming_owned_by_zone {
+            let found = target
+                .iter_mut()
+                .find(|v| v.zone_id == incoming_cond.zone_id && v.r#type == incoming_cond.r#type);
+            if let Some(current_cond) = found {
+                if incoming_cond.zone_version > current_cond.zone_version {
+                    *current_cond = incoming_cond.clone();
+                    updated = true
+                }
+            } else {
+                updated = true;
+                target.push(incoming_cond.clone());
+            }
+        }
+
+        if updated { Some(target) } else { None }
     }
 
     fn merge_create_internal(
@@ -222,7 +320,31 @@ pub mod tests {
     }
 
     #[test]
-    pub fn update_greater_version() {
+    pub fn update_greater_version_spec() {
+        let current = make_anyapplication(1, "zone1", 0);
+        let incoming = make_anyapplication(2, "zone1", 1);
+
+        let strategy = AnyApplicationMerge::new();
+        assert_eq!(
+            MergeResult::Update {
+                object: incoming.to_owned()
+            },
+            strategy
+                .merge_update(Some(current.clone()), &incoming, &"zone1")
+                .unwrap()
+        );
+
+        let strategy = AnyApplicationMerge::new();
+        assert_eq!(
+            MergeResult::DoNothing,
+            strategy
+                .merge_update(Some(current), &incoming, &"zone2")
+                .unwrap()
+        );
+    }
+
+    #[test]
+    pub fn update_greater_version_status_ownership() {
         let current = make_anyapplication(1, "zone1", 0);
         let incoming = make_anyapplication(2, "zone1", 1);
 
@@ -236,6 +358,22 @@ pub mod tests {
                 .unwrap()
         );
     }
+
+    // #[test]
+    // pub fn update_greater_version_status_conditions() {
+    //     let current = make_anyapplication(1, "zone1", 0);
+    //     let incoming = make_anyapplication(2, "zone1", 1);
+
+    //     let strategy = AnyApplicationMerge::new();
+    //     assert_eq!(
+    //         MergeResult::Update {
+    //             object: incoming.to_owned()
+    //         },
+    //         strategy
+    //             .merge_update(Some(current), &incoming, &"zone1")
+    //             .unwrap()
+    //     );
+    // }
 
     #[test]
     pub fn update_other_zone() {}

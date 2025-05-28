@@ -10,13 +10,18 @@ pub mod tests {
         merge::{
             anyapplication::{
                 AnyApplication, AnyApplicationApplication, AnyApplicationApplicationHelm,
-                AnyApplicationSpec, AnyApplicationStatus,
+                AnyApplicationSpec, AnyApplicationStatus, AnyApplicationStatusConditions,
+                AnyApplicationStatusPlacements,
             },
             anyapplication_ext::OWNER_VERSION,
         },
     };
 
-    pub fn make_anyapplication(owner_version: Version, owner_zone: &str, zones: i64) -> DynamicObject {
+    pub fn make_anyapplication(
+        owner_version: Version,
+        owner_zone: &str,
+        zones: i64,
+    ) -> DynamicObject {
         let resource = AnyApplication {
             metadata: ObjectMeta {
                 name: Some("nginx-app".into()),
@@ -45,7 +50,16 @@ pub mod tests {
             status: Some(AnyApplicationStatus {
                 conditions: None,
                 owner: owner_zone.into(),
-                placements: None,
+                placements: Some(vec![
+                    AnyApplicationStatusPlacements {
+                        node_affinity: None,
+                        zone: owner_zone.into(),
+                    },
+                    AnyApplicationStatusPlacements {
+                        node_affinity: None,
+                        zone: "zone2".into(),
+                    },
+                ]),
                 state: "New".into(),
             }),
         };
@@ -53,5 +67,21 @@ pub mod tests {
         let object: DynamicObject =
             serde_json::from_value(resource_str).expect("Cannot parse dynamic object");
         object
+    }
+
+    pub fn anycondition(
+        owner_version: Version,
+        owner_zone: &str,
+        cond_type: &str,
+    ) -> AnyApplicationStatusConditions {
+        AnyApplicationStatusConditions {
+            last_transition_time: "time".into(),
+            msg: None,
+            reason: None,
+            status: "status".into(),
+            r#type: cond_type.into(),
+            zone_id: owner_zone.into(),
+            zone_version: owner_version.to_string(),
+        }
     }
 }

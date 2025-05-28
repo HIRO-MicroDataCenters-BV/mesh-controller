@@ -103,6 +103,8 @@ pub struct AnyApplicationStatusConditions {
     pub r#type: String,
     #[serde(rename = "zoneId")]
     pub zone_id: String,
+    #[serde(rename = "zoneVersion")]
+    pub zone_version: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]

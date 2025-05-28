@@ -125,7 +125,7 @@ impl Subscriptions {
     pub async fn subscribe(
         &self,
         gvk: &GroupVersionKind,
-        zone: &String,
+        zone: &String, // TODO remove zone
     ) -> Result<loole::Receiver<CacheProtocol>> {
         let entry = self
             .subscriptions
