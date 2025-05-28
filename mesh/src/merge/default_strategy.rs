@@ -118,7 +118,9 @@ pub mod tests {
         let strategy = DefaultMerge::new();
         assert_eq!(
             MergeResult::DoNothing,
-            strategy.merge_update(Some(current), &incoming, &"test").unwrap()
+            strategy
+                .merge_update(Some(current), &incoming, &"test")
+                .unwrap()
         );
     }
 
@@ -129,8 +131,12 @@ pub mod tests {
 
         let strategy = DefaultMerge::new();
         assert_eq!(
-            MergeResult::Update { object: incoming.to_owned() },
-            strategy.merge_update(Some(current), &incoming, &"test").unwrap()
+            MergeResult::Update {
+                object: incoming.to_owned()
+            },
+            strategy
+                .merge_update(Some(current), &incoming, &"test")
+                .unwrap()
         );
     }
 
@@ -142,7 +148,9 @@ pub mod tests {
         let strategy = DefaultMerge::new();
         assert_eq!(
             MergeResult::DoNothing,
-            strategy.merge_update(Some(current), &incoming, &"test").unwrap()
+            strategy
+                .merge_update(Some(current), &incoming, &"test")
+                .unwrap()
         );
     }
 
@@ -165,7 +173,9 @@ pub mod tests {
         let strategy = DefaultMerge::new();
         assert_eq!(
             MergeResult::DoNothing,
-            strategy.merge_delete(Some(current), &incoming, &"test").unwrap()
+            strategy
+                .merge_delete(Some(current), &incoming, &"test")
+                .unwrap()
         );
     }
 
@@ -176,8 +186,12 @@ pub mod tests {
 
         let strategy = DefaultMerge::new();
         assert_eq!(
-            MergeResult::Delete { name: current.get_namespaced_name() },
-            strategy.merge_delete(Some(current), &incoming, &"test").unwrap()
+            MergeResult::Delete {
+                name: current.get_namespaced_name()
+            },
+            strategy
+                .merge_delete(Some(current), &incoming, &"test")
+                .unwrap()
         );
     }
 

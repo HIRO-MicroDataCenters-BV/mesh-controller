@@ -1,13 +1,24 @@
 use super::anyapplication::AnyApplication;
 use crate::kube::cache::Version;
+use anyhow::Context;
 use anyhow::{Result, anyhow};
+use kube::api::DynamicObject;
+use serde::Serialize;
 
-const OWNER_VERSION: &str = "dcp.hiro.io/owner-version";
+pub const OWNER_VERSION: &str = "dcp.hiro.io/owner-version";
 
 pub trait AnyApplicationExt {
     fn get_owner_version(&self) -> Result<Version>;
     fn set_owner_version(&mut self, version: Version);
     fn get_owner_zone(&self) -> String;
+    fn to_object(self) -> Result<DynamicObject>
+    where
+        Self: Sized + Serialize,
+    {
+        let value = serde_json::to_value(self).context("Failed to serialize merged object")?;
+        let object: DynamicObject = serde_json::from_value(value)?;
+        Ok(object)
+    }
 }
 
 impl AnyApplicationExt for AnyApplication {
