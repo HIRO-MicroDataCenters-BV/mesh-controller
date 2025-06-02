@@ -30,7 +30,7 @@ impl Partition {
         }
     }
 
-    pub fn apply_mesh(
+    pub fn mesh_apply(
         &mut self,
         incoming: MeshEvent,
         incoming_zone: &str,
@@ -42,7 +42,7 @@ impl Partition {
                 let result = self
                     .merge_strategy
                     .mesh_update(current, &object, incoming_zone)?;
-                self.update_partition(&result);
+                self.mesh_update_partition(&result);
                 Ok(vec![result])
             }
             MeshEvent::Delete { object } => {
@@ -51,7 +51,7 @@ impl Partition {
                 let result = self
                     .merge_strategy
                     .mesh_delete(current, &object, incoming_zone)?;
-                self.update_partition(&result);
+                self.mesh_update_partition(&result);
                 Ok(vec![result])
             }
             MeshEvent::Snapshot { snapshot } => {
@@ -78,7 +78,7 @@ impl Partition {
                         let result =
                             self.merge_strategy
                                 .mesh_delete(current, &object, incoming_zone)?;
-                        self.update_partition(&result);
+                        self.mesh_update_partition(&result);
                         results.push(result);
                     }
                 }
@@ -88,7 +88,7 @@ impl Partition {
                     let result = self
                         .merge_strategy
                         .mesh_update(current, object, incoming_zone)?;
-                    self.update_partition(&result);
+                    self.mesh_update_partition(&result);
                     results.push(result);
                 }
                 Ok(results)
@@ -96,7 +96,7 @@ impl Partition {
         }
     }
 
-    fn update_partition(&mut self, result: &MergeResult) {
+    fn mesh_update_partition(&mut self, result: &MergeResult) {
         match &result {
             MergeResult::Create { object } | MergeResult::Update { object } => {
                 self.resources
@@ -112,7 +112,7 @@ impl Partition {
         }
     }
 
-    pub fn snapshot(&self, current_zone: &str) -> MeshEvent {
+    pub fn mesh_snapshot(&self, current_zone: &str) -> MeshEvent {
         let owned: HashSet<NamespacedName> = self
             .resources
             .iter()
@@ -129,7 +129,7 @@ impl Partition {
         MeshEvent::Snapshot { snapshot }
     }
 
-    pub fn apply_kube(&mut self, event: &KubeEvent, current_zone: &str) -> Result<UpdateResult> {
+    pub fn kube_apply(&mut self, event: &KubeEvent, current_zone: &str) -> Result<UpdateResult> {
         match event {
             KubeEvent::Update {
                 version, object, ..
@@ -142,7 +142,7 @@ impl Partition {
                     *version,
                     current_zone,
                 )?;
-                self.local_update_partition(&result, current_zone)?;
+                self.kube_update_partition(&result, current_zone)?;
                 Ok(result)
             }
             KubeEvent::Delete {
@@ -156,7 +156,7 @@ impl Partition {
                     *version,
                     current_zone,
                 )?;
-                self.local_update_partition(&result, current_zone)?;
+                self.kube_update_partition(&result, current_zone)?;
                 Ok(result)
             }
             KubeEvent::Snapshot {
@@ -184,7 +184,7 @@ impl Partition {
                             *version,
                             current_zone,
                         )?;
-                        self.local_update_partition(&result, current_zone)?;
+                        self.kube_update_partition(&result, current_zone)?;
                         match result {
                             UpdateResult::Create { object } | UpdateResult::Update { object } => {
                                 filtered_snapshot.insert(name.to_owned(), object.clone());
@@ -220,7 +220,7 @@ impl Partition {
                             *version,
                             current_zone,
                         )?;
-                        self.local_update_partition(&result, current_zone)?;
+                        self.kube_update_partition(&result, current_zone)?;
                         match result {
                             UpdateResult::Create { object } | UpdateResult::Update { object } => {
                                 filtered_snapshot.insert(name.to_owned(), object.clone());
@@ -234,14 +234,14 @@ impl Partition {
                     let result = UpdateResult::Snapshot {
                         snapshot: filtered_snapshot,
                     };
-                    self.local_update_partition(&result, current_zone)?;
+                    self.kube_update_partition(&result, current_zone)?;
                     Ok(result)
                 }
             }
         }
     }
 
-    fn local_update_partition(&mut self, result: &UpdateResult, current_zone: &str) -> Result<()> {
+    fn kube_update_partition(&mut self, result: &UpdateResult, current_zone: &str) -> Result<()> {
         match result {
             UpdateResult::Create { object } | UpdateResult::Update { object } => {
                 self.resources

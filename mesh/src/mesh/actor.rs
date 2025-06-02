@@ -19,6 +19,7 @@ use p2panda_store::MemoryStore;
 use p2panda_stream::operation::{IngestResult, ingest_operation};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
+use tracing::debug;
 use tracing::{error, info};
 use tracing::{trace, warn};
 
@@ -102,7 +103,7 @@ impl MeshActor {
     }
 
     async fn on_outgoing_to_network(&mut self, event: KubeEvent) -> Result<()> {
-        let update_result = self.partition.apply_kube(&event, &self.instance_id.zone)?;
+        let update_result = self.partition.kube_apply(&event, &self.instance_id.zone)?;
         let event: Option<MeshEvent> = update_result.into();
 
         if let Some(event) = event {
@@ -119,11 +120,6 @@ impl MeshActor {
             body,
         } = operation;
         let header_bytes = header.to_bytes();
-        trace!(
-            "Outgoing operation: seq_num {}, hash {}",
-            header.seq_num,
-            header.hash().to_hex(),
-        );
         let log_id = header
             .extensions
             .as_ref()
@@ -151,10 +147,8 @@ impl MeshActor {
         match result {
             IngestResult::Complete(op) => {
                 info!(
-                    "Outgoing operation ingest completed: seq_num {}, hash {}, log_id {}",
-                    op.header.seq_num,
-                    op.header.hash().to_hex(),
-                    log_id
+                    "Outgoing Operation({}, {})",
+                    op.header.seq_num, log_id.0.zone
                 );
                 if let Err(err) = self.network_tx.send(op).await {
                     warn!(
@@ -163,9 +157,10 @@ impl MeshActor {
                     );
                 }
             }
-            IngestResult::Retry(_, _, _, ops_missing) => {
+            IngestResult::Retry(h, _, _, ops_missing) => {
                 error!(
-                    "Outgoing operation retry: missing ops = {ops_missing}. This should never happen."
+                    "Outgoing Operation({}, {}), missing ops = {ops_missing}. This should never happen.",
+                    h.seq_num, log_id.0.zone
                 );
             }
         }
@@ -203,18 +198,12 @@ impl MeshActor {
     ) -> Result<()> {
         let is_obsolete = self.update_log_id(&header.public_key, log_id);
         if is_obsolete {
-            trace!(
-                "skipping operation {}, for log {}",
-                header.hash().to_hex(),
-                log_id
+            debug!(
+                "skipping Operation({}, {}), for log {:?}",
+                log_id.0.zone, header.seq_num, log_id
             );
             return Ok(());
         }
-        trace!(
-            "Incoming operation: seq_num {}, hash {}",
-            header.seq_num,
-            header.hash().to_hex(),
-        );
         let header_bytes = header.to_bytes();
         let result = ingest_operation(
             &mut self.store,
@@ -230,14 +219,13 @@ impl MeshActor {
         })?;
         match result {
             IngestResult::Complete(op) => {
-                info!(
-                    "Incoming operation ingest completed: seq_num {}, hash {}",
-                    op.header.seq_num,
-                    op.header.hash().to_hex(),
+                debug!(
+                    "Incoming Operation({},{})",
+                    log_id.0.zone, op.header.seq_num
                 );
                 if let Some(body) = op.body {
                     let mesh_event = MeshEvent::try_from(body.to_bytes())?;
-                    let merge_results = self.partition.apply_mesh(mesh_event, &log_id.0.zone)?;
+                    let merge_results = self.partition.mesh_apply(mesh_event, &log_id.0.zone)?;
                     for merge_result in merge_results.into_iter() {
                         if let Err(err) = self.handle_result(merge_result).await {
                             error!("error while merging {err}");
@@ -247,8 +235,11 @@ impl MeshActor {
                     panic!("event has no body");
                 }
             }
-            IngestResult::Retry(_, _, _, ops_missing) => {
-                info!("Incoming operation retry: missing ops = {:?}", ops_missing);
+            IngestResult::Retry(h, _, _, ops_missing) => {
+                debug!(
+                    "Incoming Operation({},{}), missing ops = {:?}",
+                    log_id.0.zone, h.seq_num, ops_missing
+                );
             }
         }
         Ok(())
@@ -258,7 +249,7 @@ impl MeshActor {
         match self.topic_log_map.get_latest_log(incoming_source) {
             Some(latest) => match latest.0.start_time.cmp(&incoming_log_id.0.start_time) {
                 std::cmp::Ordering::Less => {
-                    info!("new log {} found from peer", incoming_log_id);
+                    debug!("new log {} found from peer", incoming_log_id);
                     self.topic_log_map
                         .update_new_log(incoming_source.to_owned(), incoming_log_id.to_owned());
                     false
@@ -267,7 +258,7 @@ impl MeshActor {
                 std::cmp::Ordering::Greater => true,
             },
             None => {
-                info!("new log {} found from peer", incoming_log_id);
+                debug!("new log {} found from peer", incoming_log_id);
                 self.topic_log_map
                     .update_new_log(incoming_source.to_owned(), incoming_log_id.to_owned());
                 false
@@ -315,7 +306,7 @@ impl MeshActor {
             > self.snapshot_config.snapshot_interval_seconds;
         if truncate_size || truncate_time {
             trace!("sending periodic snapshot");
-            let event = self.partition.snapshot(&self.instance_id.zone);
+            let event = self.partition.mesh_snapshot(&self.instance_id.zone);
             let operation = self.operations.next(event);
             self.outgoing_to_network(operation).await?;
             self.last_snapshot_time = SystemTime::now();

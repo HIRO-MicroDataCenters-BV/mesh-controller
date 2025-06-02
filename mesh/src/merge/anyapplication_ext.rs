@@ -62,9 +62,3 @@ impl AnyApplicationExt for AnyApplication {
             .unwrap_or_default()
     }
 }
-
-pub trait AnyApplicationStatusConditionsExt {
-    fn get_owner_version(&self) -> Result<Version>;
-    fn set_owner_version(&mut self, version: Version);
-    fn get_owner_zone(&self) -> String;
-}

@@ -69,7 +69,60 @@ pub mod tests {
         object
     }
 
-    pub fn anycondition(
+    pub fn make_anyapplication_with_conditions(
+        owner_version: Version,
+        owner_zone: &str,
+        zones: i64,
+        conditions: &[AnyApplicationStatusConditions],
+    ) -> DynamicObject {
+        let resource = AnyApplication {
+            metadata: ObjectMeta {
+                name: Some("nginx-app".into()),
+                namespace: Some("default".into()),
+                labels: Some(BTreeMap::from([(
+                    OWNER_VERSION.into(),
+                    owner_version.to_string(),
+                )])),
+                ..Default::default()
+            },
+            spec: AnyApplicationSpec {
+                application: AnyApplicationApplication {
+                    helm: Some(AnyApplicationApplicationHelm {
+                        chart: "chart".into(),
+                        version: "1.0.0".into(),
+                        namespace: "namespace".into(),
+                        repository: "repo".into(),
+                        values: None,
+                    }),
+                    resource_selector: None,
+                },
+                placement_strategy: None,
+                recover_strategy: None,
+                zones: zones,
+            },
+            status: Some(AnyApplicationStatus {
+                conditions: Some(conditions.into()),
+                owner: owner_zone.into(),
+                placements: Some(vec![
+                    AnyApplicationStatusPlacements {
+                        node_affinity: None,
+                        zone: owner_zone.into(),
+                    },
+                    AnyApplicationStatusPlacements {
+                        node_affinity: None,
+                        zone: "zone2".into(),
+                    },
+                ]),
+                state: "New".into(),
+            }),
+        };
+        let resource_str = serde_json::to_value(&resource).expect("Resource is not serializable");
+        let object: DynamicObject =
+            serde_json::from_value(resource_str).expect("Cannot parse dynamic object");
+        object
+    }
+
+    pub fn anycond(
         owner_version: Version,
         owner_zone: &str,
         cond_type: &str,
