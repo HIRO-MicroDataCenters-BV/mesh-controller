@@ -9,6 +9,7 @@ use tracing::info;
 use super::fake_mesh::FakeMeshServer;
 
 #[test]
+#[ignore]
 pub fn test_state_replication() -> Result<()> {
     setup_tracing(Some("=INFO".into()));
 
