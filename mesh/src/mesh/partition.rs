@@ -43,7 +43,7 @@ impl Partition {
                     .merge_strategy
                     .mesh_update(current, &object, incoming_zone)?;
                 self.update_partition(&result);
-                return Ok(vec![result]);
+                Ok(vec![result])
             }
             MeshEvent::Delete { object } => {
                 let name = object.get_namespaced_name();
@@ -52,7 +52,7 @@ impl Partition {
                     .merge_strategy
                     .mesh_delete(current, &object, incoming_zone)?;
                 self.update_partition(&result);
-                return Ok(vec![result]);
+                Ok(vec![result])
             }
             MeshEvent::Snapshot { snapshot } => {
                 let existing: HashSet<NamespacedName> = self
@@ -73,7 +73,7 @@ impl Partition {
 
                 let mut results = vec![];
                 for name in to_delete {
-                    let current = self.resources.get(&name).cloned();
+                    let current = self.resources.get(name).cloned();
                     if let Some(object) = current.clone() {
                         let result =
                             self.merge_strategy
@@ -85,13 +85,13 @@ impl Partition {
                 for name in to_update {
                     let current = self.resources.get(&name).cloned();
                     let object = snapshot.get(&name).unwrap();
-                    let result =
-                        self.merge_strategy
-                            .mesh_update(current, &object, incoming_zone)?;
+                    let result = self
+                        .merge_strategy
+                        .mesh_update(current, object, incoming_zone)?;
                     self.update_partition(&result);
                     results.push(result);
                 }
-                return Ok(results);
+                Ok(results)
             }
         }
     }
@@ -103,7 +103,7 @@ impl Partition {
                     .insert(object.get_namespaced_name(), object.clone());
             }
             MergeResult::Delete { gvk: _, name } => {
-                self.resources.remove(&name);
+                self.resources.remove(name);
             }
             MergeResult::DoNothing => {}
             MergeResult::Conflict { msg } => {
@@ -126,7 +126,7 @@ impl Partition {
                     current_zone,
                 )?;
                 self.local_update_partition(&result, current_zone)?;
-                return Ok(result);
+                Ok(result)
             }
             KubeEvent::Delete {
                 version, object, ..
@@ -140,7 +140,7 @@ impl Partition {
                     current_zone,
                 )?;
                 self.local_update_partition(&result, current_zone)?;
-                return Ok(result);
+                Ok(result)
             }
             KubeEvent::Snapshot {
                 version, snapshot, ..
@@ -186,7 +186,7 @@ impl Partition {
                         self.resources.insert(name.to_owned(), value.to_owned());
                     }
                     self.initialized = true;
-                    return Ok(snapshot_result);
+                    Ok(snapshot_result)
                 } else {
                     let incoming: HashSet<&NamespacedName> = snapshot
                         .iter()
@@ -196,7 +196,7 @@ impl Partition {
 
                     let mut filtered_snapshot = BTreeMap::new();
                     for name in incoming {
-                        let object = snapshot.get(&name).unwrap();
+                        let object = snapshot.get(name).unwrap();
                         let result = self.merge_strategy.local_update(
                             None,
                             object.clone(),
@@ -218,7 +218,7 @@ impl Partition {
                         snapshot: filtered_snapshot,
                     };
                     self.local_update_partition(&result, current_zone)?;
-                    return Ok(result);
+                    Ok(result)
                 }
             }
         }

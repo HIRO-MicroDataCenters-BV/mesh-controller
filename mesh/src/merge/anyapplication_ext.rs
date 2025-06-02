@@ -57,9 +57,9 @@ impl AnyApplicationExt for AnyApplication {
                 s.placements
                     .as_ref()
                     .map(|p| p.iter().map(|p| p.zone.to_owned()).collect())
-                    .unwrap_or(HashSet::new())
+                    .unwrap_or_default()
             })
-            .unwrap_or(HashSet::new())
+            .unwrap_or_default()
     }
 }
 

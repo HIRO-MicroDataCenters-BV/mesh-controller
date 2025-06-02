@@ -143,18 +143,13 @@ impl ResourceConfig {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Default)]
 pub enum MergeStrategyType {
     #[serde(rename = "default")]
+    #[default]
     Default,
     #[serde(rename = "anyapplication")]
     AnyApplication,
-}
-
-impl Default for MergeStrategyType {
-    fn default() -> MergeStrategyType {
-        MergeStrategyType::Default
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Hash)]

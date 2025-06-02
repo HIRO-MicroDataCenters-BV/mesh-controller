@@ -6,12 +6,18 @@ use super::{
     anyapplication_ext::AnyApplicationExt,
     types::{MergeResult, MergeStrategy, UpdateResult},
 };
-use crate::kube::{pool::Version, dynamic_object_ext::DynamicObjectExt};
+use crate::kube::{dynamic_object_ext::DynamicObjectExt, pool::Version};
 use anyhow::Result;
 use kube::api::{DynamicObject, GroupVersionKind};
 
 pub struct AnyApplicationMerge {
     gvk: GroupVersionKind,
+}
+
+impl Default for AnyApplicationMerge {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl AnyApplicationMerge {
@@ -165,21 +171,18 @@ impl AnyApplicationMerge {
     // only owner should be allowed to merge condition section from placements section
     fn merge_conditions_section(
         &self,
-        current: &Vec<AnyApplicationStatusConditions>,
-        incoming: &Vec<AnyApplicationStatusConditions>,
+        current: &[AnyApplicationStatusConditions],
+        incoming: &[AnyApplicationStatusConditions],
         incoming_zone: &str,
-        placements: &Vec<AnyApplicationStatusPlacements>,
+        placements: &[AnyApplicationStatusPlacements],
     ) -> Option<Vec<AnyApplicationStatusConditions>> {
-        let acceptable_zone = placements
-            .iter()
-            .find(|p| p.zone == incoming_zone)
-            .is_some();
+        let acceptable_zone = placements.iter().any(|p| p.zone == incoming_zone);
         if !acceptable_zone {
             return None;
         }
 
-        let incoming_owned_by_zone = incoming.into_iter().filter(|v| v.zone_id == incoming_zone);
-        let mut target = current.clone();
+        let incoming_owned_by_zone = incoming.iter().filter(|v| v.zone_id == incoming_zone);
+        let mut target = current.to_vec();
         let mut updated = false;
         for incoming_cond in incoming_owned_by_zone {
             let found = target
@@ -231,7 +234,7 @@ impl AnyApplicationMerge {
         let incoming_owner_version = incoming.get_owner_version()?;
         let incoming_owner_zone = incoming.get_owner_zone();
 
-        let acceptable_zone = incoming_zone == &incoming_owner_zone;
+        let acceptable_zone = incoming_zone == incoming_owner_zone;
         let new_change = incoming_owner_version > current_owner_version;
 
         if acceptable_zone && new_change {
@@ -254,9 +257,9 @@ impl MergeStrategy for AnyApplicationMerge {
     ) -> Result<MergeResult> {
         let incoming = incoming.clone();
         if let Some(current) = current {
-            self.merge_update_internal(current, incoming.clone(), &incoming_zone)
+            self.merge_update_internal(current, incoming.clone(), incoming_zone)
         } else {
-            self.merge_create_internal(incoming, &incoming_zone)
+            self.merge_create_internal(incoming, incoming_zone)
         }
     }
 
@@ -310,17 +313,17 @@ impl MergeStrategy for AnyApplicationMerge {
             // TODO
             // for owner zone we diff - the spec, status and zone conditions
             // for placements zones we diff only conditions
-            
+
             if updated {
-                let object = current.to_object()?;                
-                return Ok(UpdateResult::Update { object });
+                let object = current.to_object()?;
+                Ok(UpdateResult::Update { object })
             } else {
-                return Ok(UpdateResult::DoNothing);
+                Ok(UpdateResult::DoNothing)
             }
         } else {
             incoming.set_owner_version(incoming_version);
             let object = incoming.to_object()?;
-            return Ok(UpdateResult::Create { object });
+            Ok(UpdateResult::Create { object })
         }
     }
 
@@ -341,9 +344,9 @@ impl MergeStrategy for AnyApplicationMerge {
         if current.is_some() {
             incoming.set_owner_version(incoming_version);
             let object = incoming.to_object()?;
-            return Ok(UpdateResult::Delete { object });
+            Ok(UpdateResult::Delete { object })
         } else {
-            return Ok(UpdateResult::DoNothing);
+            Ok(UpdateResult::DoNothing)
         }
     }
 }

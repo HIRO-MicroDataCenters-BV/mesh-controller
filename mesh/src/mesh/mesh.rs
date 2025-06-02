@@ -23,6 +23,7 @@ pub struct Mesh {
 }
 
 impl Mesh {
+    #[allow(clippy::too_many_arguments)]
     pub async fn new(
         key: PrivateKey,
         config: &ResourceConfig,
@@ -39,7 +40,7 @@ impl Mesh {
             MergeStrategyType::Default => Partition::new(DefaultMerge::new(gvk.to_owned())),
             MergeStrategyType::AnyApplication => Partition::new(AnyApplicationMerge::new()),
         };
-        let event_rx = pool.subscribe(&gvk, &namespace).await?.into_stream();
+        let event_rx = pool.subscribe(&gvk, namespace).await?.into_stream();
         let actor = MeshActor::new(
             key,
             instance_id,

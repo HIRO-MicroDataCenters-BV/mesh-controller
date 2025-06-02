@@ -1,6 +1,6 @@
-use crate::kube::pool::ObjectPool;
 use crate::kube::dynamic_object_ext::DynamicObjectExt;
 use crate::kube::event::KubeEvent;
+use crate::kube::pool::ObjectPool;
 use crate::merge::types::MergeResult;
 use crate::mesh::event::MeshEvent;
 use anyhow::Result;
@@ -35,6 +35,7 @@ pub struct MeshActor {
 }
 
 impl MeshActor {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         key: PrivateKey,
         instance_id: InstanceId,
@@ -230,24 +231,22 @@ impl MeshActor {
         Ok(())
     }
 
-    fn obsolete_log(&self, source: &PublicKey, log_id: &MeshLogId) -> bool {
-        match self.topic_log_map.get_latest_log(&source) {
-            Some(latest) => {
-                if latest.0.start_time < log_id.0.start_time {
-                    info!("new log {} found from peer", log_id);
+    fn obsolete_log(&self, incoming_source: &PublicKey, incoming_log_id: &MeshLogId) -> bool {
+        match self.topic_log_map.get_latest_log(incoming_source) {
+            Some(latest) => match latest.0.start_time.cmp(&incoming_log_id.0.start_time) {
+                std::cmp::Ordering::Less => {
+                    info!("new log {} found from peer", incoming_log_id);
                     self.topic_log_map
-                        .update_new_log(source.to_owned(), log_id.to_owned());
-                    false
-                } else if latest.0.start_time > log_id.0.start_time {
-                    true
-                } else {
+                        .update_new_log(incoming_source.to_owned(), incoming_log_id.to_owned());
                     false
                 }
-            }
+                std::cmp::Ordering::Equal => false,
+                std::cmp::Ordering::Greater => true,
+            },
             None => {
-                info!("new log {} found from peer", log_id);
+                info!("new log {} found from peer", incoming_log_id);
                 self.topic_log_map
-                    .update_new_log(source.to_owned(), log_id.to_owned());
+                    .update_new_log(incoming_source.to_owned(), incoming_log_id.to_owned());
                 false
             }
         }
@@ -269,7 +268,7 @@ impl MeshActor {
                 }
             }
             MergeResult::Delete { gvk, name } => {
-                if let Some(_) = self.pool.client().direct_get(&gvk, &name).await? {
+                if self.pool.client().direct_get(&gvk, &name).await?.is_some() {
                     self.pool.client().direct_delete(&gvk, &name).await?;
                 } else {
                     warn!("Object not found {name} {gvk:?}. Skipping delete.");

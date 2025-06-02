@@ -1,6 +1,6 @@
-use super::pool::{ObjectEntry, UID};
 use super::dynamic_object_ext::DynamicObjectExt;
 use super::event::KubeEvent;
+use super::pool::{ObjectEntry, UID};
 use super::types::NamespacedName;
 use crate::JoinErrToStr;
 use crate::client::kube_client::KubeClient;

@@ -1,5 +1,5 @@
 use super::types::{MergeResult, MergeStrategy, UpdateResult};
-use crate::kube::{pool::Version, dynamic_object_ext::DynamicObjectExt};
+use crate::kube::{dynamic_object_ext::DynamicObjectExt, pool::Version};
 use anyhow::Result;
 use kube::api::{DynamicObject, GroupVersionKind, TypeMeta};
 
@@ -27,7 +27,7 @@ impl MergeStrategy for DefaultMerge {
             let incoming_owner_version = incoming.get_owner_version()?;
             let incoming_owner_zone = incoming.get_owner_zone()?;
 
-            let acceptable_zone = &incoming_owner_zone == incoming_zone;
+            let acceptable_zone = incoming_owner_zone == incoming_zone;
             let new_version = incoming_owner_version > current_owner_version;
 
             if acceptable_zone && new_version {
@@ -44,7 +44,7 @@ impl MergeStrategy for DefaultMerge {
             }
         } else {
             let incoming_owner_zone = incoming.get_owner_zone()?;
-            let acceptable_zone = &incoming_owner_zone == incoming_zone;
+            let acceptable_zone = incoming_owner_zone == incoming_zone;
             if acceptable_zone {
                 let mut object = incoming.clone();
                 object.metadata.managed_fields = None;
@@ -69,7 +69,7 @@ impl MergeStrategy for DefaultMerge {
         if let Some(_current) = current {
             let incoming_owner_zone = incoming.get_owner_zone()?;
 
-            let acceptable_zone = &incoming_owner_zone == incoming_zone;
+            let acceptable_zone = incoming_owner_zone == incoming_zone;
 
             if acceptable_zone {
                 Ok(MergeResult::Delete {
@@ -102,10 +102,10 @@ impl MergeStrategy for DefaultMerge {
             }
 
             incoming.set_owner_version(incoming_version);
-            return Ok(UpdateResult::Update { object: incoming });
+            Ok(UpdateResult::Update { object: incoming })
         } else {
             incoming.set_owner_version(incoming_version);
-            return Ok(UpdateResult::Create { object: incoming });
+            Ok(UpdateResult::Create { object: incoming })
         }
     }
 
@@ -123,9 +123,9 @@ impl MergeStrategy for DefaultMerge {
         }
         if current.is_some() {
             incoming.set_owner_version(incoming_version);
-            return Ok(UpdateResult::Delete { object: incoming });
+            Ok(UpdateResult::Delete { object: incoming })
         } else {
-            return Ok(UpdateResult::DoNothing);
+            Ok(UpdateResult::DoNothing)
         }
     }
 
@@ -139,7 +139,7 @@ pub mod tests {
     use kube::api::DynamicObject;
 
     use super::*;
-    use crate::kube::{pool::Version, dynamic_object_ext::DynamicObjectExt};
+    use crate::kube::{dynamic_object_ext::DynamicObjectExt, pool::Version};
 
     #[test]
     pub fn non_existing_create() {
