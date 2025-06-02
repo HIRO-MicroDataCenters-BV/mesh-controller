@@ -3,7 +3,8 @@ use super::partition::Partition;
 use super::topic::InstanceId;
 use super::topic::MeshTopicLogMap;
 use super::{operations::Extensions, topic::MeshLogId};
-use crate::config::configuration::{MergeStrategyType, ResourceConfig};
+use crate::config::configuration::MergeStrategyType;
+use crate::config::configuration::MeshConfig;
 use crate::merge::anyapplication_strategy::AnyApplicationMerge;
 use crate::merge::default_strategy::DefaultMerge;
 use crate::{JoinErrToStr, kube::pool::ObjectPool};
@@ -14,6 +15,7 @@ use p2panda_core::{Operation, PrivateKey};
 use p2panda_store::MemoryStore;
 use tokio::sync::mpsc;
 use tokio::task::JoinError;
+use tokio_util::sync::CancellationToken;
 use tokio_util::task::AbortOnDropHandle;
 use tracing::error;
 
@@ -26,25 +28,30 @@ impl Mesh {
     #[allow(clippy::too_many_arguments)]
     pub async fn new(
         key: PrivateKey,
-        config: &ResourceConfig,
+        config: &MeshConfig,
         instance_id: InstanceId,
+        cancelation: CancellationToken,
         pool: ObjectPool,
         topic_log_map: MeshTopicLogMap,
         store: MemoryStore<MeshLogId, Extensions>,
         network_tx: mpsc::Sender<Operation<Extensions>>,
         network_rx: mpsc::Receiver<Operation<Extensions>>,
     ) -> Result<Mesh> {
-        let gvk = config.get_gvk();
-        let namespace = &config.namespace;
-        let partition = match config.merge_strategy {
+        let resource = &config.resource;
+        let snapshot = config.snapshot.to_owned();
+        let gvk = resource.get_gvk();
+        let namespace = &resource.namespace;
+        let partition = match resource.merge_strategy {
             MergeStrategyType::Default => Partition::new(DefaultMerge::new(gvk.to_owned())),
             MergeStrategyType::AnyApplication => Partition::new(AnyApplicationMerge::new()),
         };
         let event_rx = pool.subscribe(&gvk, namespace).await?.into_stream();
         let actor = MeshActor::new(
             key,
+            snapshot,
             instance_id,
             partition,
+            cancelation,
             topic_log_map,
             network_tx,
             network_rx,

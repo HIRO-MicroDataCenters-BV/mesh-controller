@@ -14,7 +14,7 @@ pub struct Context {
     mesh_node: MeshNode,
     http_handle: JoinHandle<Result<()>>,
     http_runtime: Runtime,
-    cancellation_token: CancellationToken,
+    cancellation: CancellationToken,
     mesh_runtime: Runtime,
 }
 
@@ -26,7 +26,7 @@ impl Context {
         public_key: PublicKey,
         http_handle: JoinHandle<Result<()>>,
         http_runtime: Runtime,
-        cancellation_token: CancellationToken,
+        cancellation: CancellationToken,
         mesh_runtime: Runtime,
     ) -> Self {
         Self {
@@ -35,7 +35,7 @@ impl Context {
             mesh_node,
             http_handle,
             http_runtime,
-            cancellation_token,
+            cancellation,
             mesh_runtime,
         }
     }
@@ -55,7 +55,7 @@ impl Context {
     }
 
     pub fn wait_for_termination(&self) -> Result<()> {
-        let cloned_token = self.cancellation_token.clone();
+        let cloned_token = self.cancellation.clone();
         self.http_runtime.block_on(async move {
             tokio::select! {
                 _ = cloned_token.cancelled() => bail!("HTTP server was cancelled"),

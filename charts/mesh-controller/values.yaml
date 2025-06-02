@@ -92,6 +92,11 @@ configuration:
   mesh:
     zone: "zone1"
     bootstrap: true
+
+    snapshot:
+      snapshot_interval_seconds: 300
+      snapshot_max_log: 256
+
     resource:
       group: ""
       version: v1

@@ -1,8 +1,13 @@
+use std::time::Duration;
+use std::time::SystemTime;
+
+use crate::config::configuration::PeriodicSnapshotConfig;
 use crate::kube::dynamic_object_ext::DynamicObjectExt;
 use crate::kube::event::KubeEvent;
 use crate::kube::pool::ObjectPool;
 use crate::merge::types::MergeResult;
 use crate::mesh::event::MeshEvent;
+use anyhow::Context;
 use anyhow::Result;
 use anyhow::anyhow;
 use futures::StreamExt;
@@ -13,6 +18,7 @@ use p2panda_core::{Operation, PrivateKey};
 use p2panda_store::MemoryStore;
 use p2panda_stream::operation::{IngestResult, ingest_operation};
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 use tracing::{trace, warn};
 
@@ -21,6 +27,8 @@ use super::partition::Partition;
 use super::topic::InstanceId;
 use super::topic::MeshTopicLogMap;
 use super::{operations::Extensions, topic::MeshLogId};
+
+const DEFAULT_TICK_INTERVAL: Duration = Duration::from_secs(5);
 
 pub struct MeshActor {
     instance_id: InstanceId,
@@ -32,14 +40,19 @@ pub struct MeshActor {
     store: MemoryStore<MeshLogId, Extensions>,
     operations: LinkedOperations,
     partition: Partition,
+    cancelation: CancellationToken,
+    snapshot_config: PeriodicSnapshotConfig,
+    last_snapshot_time: SystemTime,
 }
 
 impl MeshActor {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         key: PrivateKey,
+        snapshot_config: PeriodicSnapshotConfig,
         instance_id: InstanceId,
         partition: Partition,
+        cancelation: CancellationToken,
         topic_log_map: MeshTopicLogMap,
         network_tx: mpsc::Sender<Operation<Extensions>>,
         network_rx: mpsc::Receiver<Operation<Extensions>>,
@@ -57,26 +70,35 @@ impl MeshActor {
             pool,
             store,
             partition,
+            cancelation,
+            snapshot_config,
+            last_snapshot_time: SystemTime::now(),
         }
     }
 
     pub async fn run(mut self) -> Result<()> {
+        let mut interval = tokio::time::interval(DEFAULT_TICK_INTERVAL);
         loop {
             tokio::select! {
+                _ = self.cancelation.cancelled() => break,
+                _ = interval.tick() => {
+                    if let Err(err) = self.on_tick().await {
+                        error!("error on tick, {}", err);
+                    }
+                },
                 Some(event) = self.event_rx.next() => {
                     if let Err(err) = self.on_outgoing_to_network(event).await {
-                        error!("error while processing cache event {}", err);
+                        error!("error while processing cache event, {}", err);
                     }
                 }
                 Some(message) = self.network_rx.recv() => {
                     if let Err(err) = self.on_incoming_from_network(message).await {
-                        error!("error while processing network event {}", err);
+                        error!("error while processing network event, {}", err);
                     }
                 }
-
             }
         }
-        // Ok(())
+        Ok(())
     }
 
     async fn on_outgoing_to_network(&mut self, event: KubeEvent) -> Result<()> {
@@ -179,7 +201,8 @@ impl MeshActor {
         log_id: &MeshLogId,
         prune_flag: bool,
     ) -> Result<()> {
-        if self.obsolete_log(&header.public_key, log_id) {
+        let is_obsolete = self.update_log_id(&header.public_key, log_id);
+        if is_obsolete {
             trace!(
                 "skipping operation {}, for log {}",
                 header.hash().to_hex(),
@@ -231,7 +254,7 @@ impl MeshActor {
         Ok(())
     }
 
-    fn obsolete_log(&self, incoming_source: &PublicKey, incoming_log_id: &MeshLogId) -> bool {
+    fn update_log_id(&self, incoming_source: &PublicKey, incoming_log_id: &MeshLogId) -> bool {
         match self.topic_log_map.get_latest_log(incoming_source) {
             Some(latest) => match latest.0.start_time.cmp(&incoming_log_id.0.start_time) {
                 std::cmp::Ordering::Less => {
@@ -278,6 +301,24 @@ impl MeshActor {
                 tracing::warn!("Conflict detected: {}", msg);
             }
             MergeResult::DoNothing => (),
+        }
+        Ok(())
+    }
+
+    async fn on_tick(&mut self) -> Result<()> {
+        let truncate_size =
+            self.operations.count_since_snapshot() >= self.snapshot_config.snapshot_max_log;
+        let truncate_time = SystemTime::now()
+            .duration_since(self.last_snapshot_time)
+            .context("compute duration since last snapshot time")?
+            .as_secs()
+            > self.snapshot_config.snapshot_interval_seconds;
+        if truncate_size || truncate_time {
+            trace!("sending periodic snapshot");
+            let event = self.partition.snapshot(&self.instance_id.zone);
+            let operation = self.operations.next(event);
+            self.outgoing_to_network(operation).await?;
+            self.last_snapshot_time = SystemTime::now();
         }
         Ok(())
     }

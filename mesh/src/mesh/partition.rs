@@ -112,6 +112,23 @@ impl Partition {
         }
     }
 
+    pub fn snapshot(&self, current_zone: &str) -> MeshEvent {
+        let owned: HashSet<NamespacedName> = self
+            .resources
+            .iter()
+            .filter(|(_, v)| self.merge_strategy.is_owner_zone(v, current_zone))
+            .map(|(k, _)| k.to_owned())
+            .collect();
+
+        let mut snapshot = BTreeMap::new();
+        for name in owned {
+            if let Some(current) = self.resources.get(&name) {
+                snapshot.insert(name, current.to_owned());
+            };
+        }
+        MeshEvent::Snapshot { snapshot }
+    }
+
     pub fn apply_kube(&mut self, event: &KubeEvent, current_zone: &str) -> Result<UpdateResult> {
         match event {
             KubeEvent::Update {

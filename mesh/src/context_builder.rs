@@ -77,13 +77,19 @@ impl ContextBuilder {
             .build()
             .expect("Mesh Controller tokio runtime");
 
+        let cancellation = CancellationToken::new();
         let mesh_node = mesh_runtime.block_on(async {
             let client = ContextBuilder::build_kube_client(&self.config).await?;
-            let cache = ObjectPool::new(client);
+            let pool = ObjectPool::new(client);
 
-            let node = ContextBuilder::init(self.config.clone(), self._private_key.clone(), cache)
-                .await
-                .context("failed to initialize mesh node")?;
+            let node = ContextBuilder::init(
+                self.config.clone(),
+                self._private_key.clone(),
+                pool,
+                cancellation.clone(),
+            )
+            .await
+            .context("failed to initialize mesh node")?;
             Ok::<_, anyhow::Error>(node)
         })?;
 
@@ -92,8 +98,8 @@ impl ContextBuilder {
             .thread_name("http-server")
             .build()
             .expect("http server tokio runtime");
-        let cancellation_token = CancellationToken::new();
-        let http_handle = self.start_http_server(&http_runtime, cancellation_token.clone())?;
+
+        let http_handle = self.start_http_server(&http_runtime, cancellation.clone())?;
 
         Ok(Context::new(
             self.config.clone(),
@@ -101,12 +107,17 @@ impl ContextBuilder {
             self.public_key,
             http_handle,
             http_runtime,
-            cancellation_token,
+            cancellation,
             mesh_runtime,
         ))
     }
 
-    async fn init(config: Config, private_key: PrivateKey, pool: ObjectPool) -> Result<MeshNode> {
+    async fn init(
+        config: Config,
+        private_key: PrivateKey,
+        pool: ObjectPool,
+        cancelation: CancellationToken,
+    ) -> Result<MeshNode> {
         let (node_config, p2p_network_config) = MeshNode::configure_p2p_network(&config).await?;
 
         let resync_config = ContextBuilder::to_resync_config(&config);
@@ -120,8 +131,9 @@ impl ContextBuilder {
 
         let mesh = Mesh::new(
             private_key.clone(),
-            &config.mesh.resource,
+            &config.mesh,
             instance_id,
+            cancelation,
             pool,
             topic_log_map.clone(),
             log_store.clone(),

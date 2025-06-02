@@ -5,7 +5,10 @@ use std::{
     sync::atomic::{AtomicU16, Ordering},
 };
 
-use crate::config::configuration::{Config, KnownNode, KubeConfiguration, MergeStrategyType, MeshConfig, ResourceConfig};
+use crate::config::configuration::{
+    Config, KnownNode, KubeConfiguration, MergeStrategyType, MeshConfig, PeriodicSnapshotConfig,
+    ResourceConfig,
+};
 
 static TEST_INSTANCE_HTTP_PORT: Lazy<AtomicU16> = Lazy::new(|| AtomicU16::new(8080));
 static TEST_INSTANCE_MESH_PORT: Lazy<AtomicU16> = Lazy::new(|| AtomicU16::new(31000));
@@ -24,6 +27,10 @@ pub fn generate_config() -> Config {
     config.mesh = MeshConfig {
         zone: "zone".into(),
         bootstrap: true,
+        snapshot: PeriodicSnapshotConfig {
+            snapshot_interval_seconds: 10,
+            snapshot_max_log: 10,
+        },
         resource: ResourceConfig {
             group: "".into(),
             version: "v1".into(),
