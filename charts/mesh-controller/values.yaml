@@ -85,7 +85,26 @@ configuration:
   #     endpoints:
   #       - "192.168.178.100:9102"
   #       - "[2a02:8109:9c9a:4200:eb13:7c0a:4201:8128]:9103"
+
+  kubernetes:
+    incluster: true
+
   mesh:
-    zone: "default"
+    zone: "zone1"
+    bootstrap: true
+    resource:
+      group: ""
+      version: v1
+      kind: Secret
+      namespace: test
+      merge_strategy: default
+
+    # resource:
+    #   group: dcp.hiro.io
+    #   version: v1
+    #   kind: AnyApplication
+    #   namespace: test
+    #   merge_strategy: anyapplication
+
 
   log_level: =INFO

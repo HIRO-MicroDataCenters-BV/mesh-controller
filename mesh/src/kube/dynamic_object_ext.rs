@@ -2,7 +2,7 @@ use anyhow::{Context, Result, anyhow};
 use kube::ResourceExt;
 use kube::api::{DynamicObject, GroupVersionKind};
 
-use super::cache::Version;
+use super::pool::Version;
 use super::types::NamespacedName;
 
 const OWNER_VERSION: &str = "dcp.hiro.io/owner-version";
@@ -16,6 +16,7 @@ pub trait DynamicObjectExt {
     fn set_owner_version(&mut self, version: Version);
     fn get_owner_zone(&self) -> Result<String>;
     fn set_owner_zone(&mut self, zone: String);
+    fn normalize(&mut self, default_zone: &str);
 }
 
 impl DynamicObjectExt for DynamicObject {
@@ -109,5 +110,13 @@ impl DynamicObjectExt for DynamicObject {
     fn set_owner_zone(&mut self, zone: String) {
         let labels = self.metadata.labels.get_or_insert_default();
         labels.insert(OWNER_ZONE.into(), zone.to_string());
+    }
+
+    fn normalize(&mut self, default_zone: &str) {
+        self.metadata.managed_fields = None;
+        self.metadata.uid = None;
+        if self.get_owner_zone().is_err() {
+            self.set_owner_zone(default_zone.into());
+        }
     }
 }

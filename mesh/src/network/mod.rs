@@ -14,7 +14,7 @@ use tokio_util::task::AbortOnDropHandle;
 use tracing::error;
 
 use crate::JoinErrToStr;
-use crate::logs::topic::MeshTopic;
+use crate::mesh::topic::MeshTopic;
 use crate::network::actor::{PandaActor, ToPandaActor};
 
 #[derive(Debug)]

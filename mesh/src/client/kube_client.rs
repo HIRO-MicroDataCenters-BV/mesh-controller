@@ -138,8 +138,13 @@ impl KubeClient {
     pub async fn event_stream_for(
         &self,
         gvk: &GroupVersionKind,
+        namespace: &Option<String>,
     ) -> Result<impl Stream<Item = Result<Event<DynamicObject>, watcher::Error>> + Send> {
-        let api = self.get_or_resolve_all_api(gvk).await?;
+        let api = match namespace {
+            Some(namespace) => self.get_or_resolve_namespaced_api(gvk, namespace).await?,
+            None => self.get_or_resolve_all_api(gvk).await?,
+        };
+
         let wc = watcher::Config::default();
         Ok(watcher::watcher(api, wc))
     }

@@ -1,5 +1,7 @@
+use std::collections::HashSet;
+
 use super::anyapplication::AnyApplication;
-use crate::kube::cache::Version;
+use crate::kube::pool::Version;
 use anyhow::Context;
 use anyhow::{Result, anyhow};
 use kube::api::DynamicObject;
@@ -19,6 +21,8 @@ pub trait AnyApplicationExt {
         let object: DynamicObject = serde_json::from_value(value)?;
         Ok(object)
     }
+
+    fn get_placement_zones(&self) -> HashSet<String>;
 }
 
 impl AnyApplicationExt for AnyApplication {
@@ -45,6 +49,17 @@ impl AnyApplicationExt for AnyApplication {
             .as_ref()
             .map(|s| s.owner.to_owned())
             .unwrap_or("unknown".to_string())
+    }
+    fn get_placement_zones(&self) -> HashSet<String> {
+        self.status
+            .as_ref()
+            .map(|s| {
+                s.placements
+                    .as_ref()
+                    .map(|p| p.iter().map(|p| p.zone.to_owned()).collect())
+                    .unwrap_or(HashSet::new())
+            })
+            .unwrap_or(HashSet::new())
     }
 }
 

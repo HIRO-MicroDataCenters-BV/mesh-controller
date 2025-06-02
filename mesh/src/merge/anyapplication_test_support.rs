@@ -6,7 +6,7 @@ pub mod tests {
     use kube::api::{DynamicObject, ObjectMeta};
 
     use crate::{
-        kube::cache::Version,
+        kube::pool::Version,
         merge::{
             anyapplication::{
                 AnyApplication, AnyApplicationApplication, AnyApplicationApplicationHelm,

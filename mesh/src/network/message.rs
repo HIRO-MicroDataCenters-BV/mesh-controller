@@ -2,7 +2,7 @@ use anyhow::Result;
 use p2panda_core::{Body, Header, Operation};
 use serde::{Deserialize, Serialize};
 
-use crate::logs::operations::Extensions;
+use crate::mesh::operations::Extensions;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NetworkMessage {
@@ -10,13 +10,14 @@ pub struct NetworkMessage {
 }
 
 impl NetworkMessage {
-    pub fn new(source: &str, op: Operation<Extensions>) -> Self {
-        let payload = NetworkPayload::Operation(source.into(), op.header, op.body);
-        Self { payload }
+    pub fn new(op: Operation<Extensions>) -> Self {
+        Self {
+            payload: NetworkPayload::Operation(op.header, op.body),
+        }
     }
 
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        let message: Self = ciborium::from_reader(bytes)?;
+        let message: NetworkMessage = ciborium::from_reader(bytes)?;
         Ok(message)
     }
 
@@ -30,7 +31,7 @@ impl NetworkMessage {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", content = "value")]
 pub enum NetworkPayload {
-    Operation(String, Header<Extensions>, Option<Body>),
+    Operation(Header<Extensions>, Option<Body>),
 }
 
 impl NetworkPayload {

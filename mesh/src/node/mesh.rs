@@ -2,15 +2,15 @@ use std::net::SocketAddr;
 
 use crate::JoinErrToStr;
 use crate::config::configuration::Config;
-use crate::logs::kube_api::KubeApi;
-use crate::logs::operations::BoxedOperationStream;
-use crate::logs::peer_discovery::PeerDiscovery;
-use crate::logs::topic::MeshTopic;
+use crate::mesh::mesh::Mesh;
+use crate::mesh::operations::Extensions;
+use crate::mesh::peer_discovery::PeerDiscovery;
+use crate::mesh::topic::MeshTopic;
 use crate::network::Panda;
 use anyhow::{Context, Result, anyhow};
 use futures_util::future::{MapErr, Shared};
 use futures_util::{FutureExt, TryFutureExt};
-use p2panda_core::{Hash, PrivateKey, PublicKey};
+use p2panda_core::{Hash, Operation, PrivateKey, PublicKey};
 use p2panda_net::Config as NetworkConfig;
 use p2panda_net::NodeAddress;
 use tokio::sync::{mpsc, oneshot};
@@ -29,13 +29,17 @@ pub struct NodeOptions {
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct NodeConfig {}
+pub struct NodeConfig {
+    pub topic: String,
+}
 
 pub struct MeshNode {
     #[allow(dead_code)]
     node_id: PublicKey,
     #[allow(dead_code)]
     direct_addresses: Vec<SocketAddr>,
+    #[allow(dead_code)]
+    mesh: Mesh,
     node_actor_tx: mpsc::Sender<ToNodeActor>,
     actor_handle: Shared<MapErr<AbortOnDropHandle<()>, JoinErrToStr>>,
     #[allow(dead_code)]
@@ -43,11 +47,11 @@ pub struct MeshNode {
 }
 
 impl MeshNode {
-    pub fn new(
+    pub async fn new(
         panda: Panda,
-        kube: KubeApi,
+        mesh: Mesh,
         peer_discovery: PeerDiscovery,
-        from_kube: BoxedOperationStream,
+        mesh_tx: mpsc::Sender<Operation<Extensions>>,
         options: NodeOptions,
     ) -> Result<Self> {
         let (node_actor_tx, node_actor_rx) = mpsc::channel(512);
@@ -55,10 +59,10 @@ impl MeshNode {
             options.node_config,
             options.private_key,
             panda,
-            kube,
-            from_kube,
             node_actor_rx,
-        );
+            mesh_tx,
+        )
+        .await;
         let actor_handle = tokio::task::spawn(async move {
             if let Err(err) = node_actor.run().await {
                 error!("node actor failed: {err:?}");
@@ -75,6 +79,7 @@ impl MeshNode {
             node_actor_tx,
             actor_handle: actor_drop_handle,
             peer_discovery,
+            mesh,
         };
 
         Ok(node)
@@ -83,7 +88,17 @@ impl MeshNode {
     pub async fn configure_p2p_network(
         config: &Config,
     ) -> Result<(NodeConfig, NetworkConfig), anyhow::Error> {
-        let node_config = NodeConfig::default();
+        let topic: String = match config.kubernetes.as_ref().unwrap() {
+            crate::config::configuration::KubeConfiguration::InCluster => String::from("unknown"),
+            crate::config::configuration::KubeConfiguration::External(
+                kube_configuration_external,
+            ) => kube_configuration_external
+                .kube_context
+                .as_ref()
+                .unwrap()
+                .into(),
+        };
+        let node_config = NodeConfig { topic };
         let network_id_hash = Hash::new(config.node.network_id.as_bytes());
         let network_id = network_id_hash.as_bytes();
         let mut network_config = NetworkConfig {
@@ -131,6 +146,17 @@ impl MeshNode {
         let (reply, reply_rx) = oneshot::channel();
         self.node_actor_tx
             .send(ToNodeActor::Publish { topic, reply })
+            .await?;
+        reply_rx.await?
+    }
+
+    pub async fn publish_operations(
+        &self,
+        mesh_rx: mpsc::Receiver<Operation<Extensions>>,
+    ) -> Result<()> {
+        let (reply, reply_rx) = oneshot::channel();
+        self.node_actor_tx
+            .send(ToNodeActor::PublishOperations { rx: mesh_rx, reply })
             .await?;
         reply_rx.await?
     }

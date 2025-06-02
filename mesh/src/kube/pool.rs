@@ -1,14 +1,7 @@
-use crate::{
-    JoinErrToStr,
-    client::kube_client::KubeClient,
-    merge::{anyapplication_strategy::AnyApplicationMerge, merger::Merger},
-};
+use crate::{JoinErrToStr, client::kube_client::KubeClient};
 
-use super::{
-    subscription::Subscription,
-    types::{CacheProtocol, NamespacedName},
-};
-use crate::kube::dynamic_object_ext::DynamicObjectExt;
+use super::types::NamespacedName;
+use super::{event::KubeEvent, subscription::Subscription};
 use anyhow::Result;
 use dashmap::DashMap;
 use futures::future::MapErr;
@@ -19,14 +12,13 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::AbortOnDropHandle;
-use tracing::trace;
 
 pub type UID = String;
 pub type Version = u64;
-pub type KindResources = DashMap<NamespacedName, DashMap<UID, ResourceEntry>>;
+pub type NamedObjects = DashMap<NamespacedName, DashMap<UID, ObjectEntry>>;
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ResourceEntry {
+pub struct ObjectEntry {
     pub version: Version,
     pub resource: Arc<DynamicObject>,
     pub tombstone: bool,
@@ -34,21 +26,21 @@ pub struct ResourceEntry {
 
 #[derive(Debug, Clone)]
 pub struct SubscriptionEntry {
-    pub pool_tx: loole::Sender<CacheProtocol>,
-    pub subscriber_rx: loole::Receiver<CacheProtocol>,
+    pub pool_tx: loole::Sender<KubeEvent>,
+    pub subscriber_rx: loole::Receiver<KubeEvent>,
     pub cancellation: CancellationToken,
     #[allow(dead_code)]
     handle: Shared<MapErr<AbortOnDropHandle<()>, JoinErrToStr>>,
 }
 
 #[derive(Clone)]
-pub struct KubeCache {
+pub struct ObjectPool {
     inner: Arc<RwLock<Subscriptions>>,
     client: KubeClient,
     root: CancellationToken,
 }
 
-impl KubeCache {
+impl ObjectPool {
     pub fn new(client: KubeClient) -> Self {
         let root = CancellationToken::new();
         Self {
@@ -61,38 +53,12 @@ impl KubeCache {
         }
     }
 
-    pub async fn merge(&self, protocol: &CacheProtocol) -> Result<()> {
-        let merger = Merger::new(self.client.clone());
-        let strategy = AnyApplicationMerge::new();
-        match protocol {
-            CacheProtocol::Update { zone, object, .. } => {
-                let name = object.get_namespaced_name();
-                trace!("incoming update {name:?}");
-                merger.merge_update(zone, &object, &strategy).await?;
-            }
-            CacheProtocol::Delete { zone, object, .. } => {
-                let name = object.get_namespaced_name();
-                trace!("incoming delete {name}");
-                merger.merge_delete(zone, &object, &strategy).await?;
-            }
-            CacheProtocol::Snapshot { zone, snapshot, .. } => {
-                trace!("incoming snapshot {snapshot:?}");
-                for (_, object) in snapshot {
-                    let name = object.get_namespaced_name();
-                    trace!("incoming update {name:?}");
-                    merger.merge_update(zone, &object, &strategy).await?;
-                }
-            }
-        }
-        Ok(())
-    }
-
     pub async fn subscribe(
         &self,
         gvk: &GroupVersionKind,
-        zone: &String,
-    ) -> Result<loole::Receiver<CacheProtocol>> {
-        self.inner.write().await.subscribe(gvk, zone).await
+        namespace: &Option<String>,
+    ) -> Result<loole::Receiver<KubeEvent>> {
+        self.inner.write().await.subscribe(gvk, namespace).await
     }
 
     pub async fn unsubscribe(&self, gvk: &GroupVersionKind) -> anyhow::Result<()> {
@@ -103,10 +69,14 @@ impl KubeCache {
         self.root.cancel();
         Ok(())
     }
+
+    pub fn client(&self) -> &KubeClient {
+        &self.client
+    }
 }
 
 pub struct Subscriptions {
-    resources: DashMap<GroupVersionKind, Arc<KindResources>>,
+    resources: DashMap<GroupVersionKind, Arc<NamedObjects>>,
     subscriptions: DashMap<GroupVersionKind, SubscriptionEntry>,
     client: KubeClient,
     root: CancellationToken,
@@ -125,18 +95,22 @@ impl Subscriptions {
     pub async fn subscribe(
         &self,
         gvk: &GroupVersionKind,
-        zone: &String, // TODO remove zone
-    ) -> Result<loole::Receiver<CacheProtocol>> {
+        namespace: &Option<String>,
+    ) -> Result<loole::Receiver<KubeEvent>> {
         let entry = self
             .subscriptions
             .entry(gvk.clone())
-            .or_insert_with(|| self.new_subscription(gvk, zone));
+            .or_insert_with(|| self.new_subscription(gvk, namespace));
 
         let subscriber_rx = entry.value().subscriber_rx.clone();
         Ok(subscriber_rx)
     }
 
-    fn new_subscription(&self, gvk: &GroupVersionKind, zone: &String) -> SubscriptionEntry {
+    fn new_subscription(
+        &self,
+        gvk: &GroupVersionKind,
+        namespace: &Option<String>,
+    ) -> SubscriptionEntry {
         let (pool_tx, subscriber_rx) = loole::unbounded();
 
         let resources = self
@@ -152,7 +126,7 @@ impl Subscriptions {
             pool_tx.to_owned(),
             resources,
             cancelation.to_owned(),
-            zone.to_owned(),
+            namespace.to_owned(),
         );
         let handle = subscription.run();
         SubscriptionEntry {
@@ -184,7 +158,7 @@ pub fn object_not_found(results: &Result<DynamicObject, Error>) -> bool {
 pub mod tests {
 
     use super::*;
-
+    use crate::kube::dynamic_object_ext::DynamicObjectExt;
     use crate::{
         merge::anyapplication::{
             AnyApplication, AnyApplicationApplication, AnyApplicationApplicationHelm,
@@ -207,7 +181,6 @@ pub mod tests {
 
         let gvk = GroupVersionKind::gvk("dcp.hiro.io", "v1", "AnyApplication");
         let ar = ApiResource::from_gvk(&gvk);
-        let zone: String = "test".into();
 
         service.register(&ar);
         service
@@ -215,14 +188,14 @@ pub mod tests {
             .await
             .expect("saving kubernetes resource");
 
-        let cache = KubeCache::new(KubeClient::build_fake(service));
+        let cache = ObjectPool::new(KubeClient::build_fake(service));
 
         let subscriber = cache
-            .subscribe(&gvk, &zone)
+            .subscribe(&gvk, &None)
             .await
             .expect("cache subscription");
 
-        if let CacheProtocol::Snapshot { snapshot, .. } =
+        if let KubeEvent::Snapshot { snapshot, .. } =
             subscriber.recv().expect("receive snapshot event")
         {
             assert_eq!(snapshot.len(), 1);
@@ -248,7 +221,7 @@ pub mod tests {
         service.register(&ar);
 
         let client = KubeClient::build_fake(service);
-        let cache = KubeCache::new(client.clone());
+        let cache = ObjectPool::new(client.clone());
 
         let resource = anyapplication();
 
@@ -287,7 +260,7 @@ pub mod tests {
             .expect("saving kubernetes resource");
 
         let client = KubeClient::build_fake(service);
-        let cache = KubeCache::new(client.clone());
+        let cache = ObjectPool::new(client.clone());
 
         let mut to_update = client
             .direct_get(&gvk, &resource_name)
@@ -333,7 +306,7 @@ pub mod tests {
             .expect("saving kubernetes resource");
 
         let client = KubeClient::build_fake(service);
-        let cache = KubeCache::new(client.clone());
+        let cache = ObjectPool::new(client.clone());
 
         let status = client
             .direct_delete(&gvk, &resource_name)
@@ -362,22 +335,21 @@ pub mod tests {
             BTreeMap::from([("test".into(), "test".into())]);
         let gvk = GroupVersionKind::gvk("dcp.hiro.io", "v1", "AnyApplication");
         let ar = ApiResource::from_gvk(&gvk);
-        let zone: String = "test".into();
         let resource = anyapplication();
         let resource_name = resource.get_namespaced_name();
 
         service.register(&ar);
 
         let client = KubeClient::build_fake(service);
-        let cache = KubeCache::new(client.clone());
+        let cache = ObjectPool::new(client.clone());
 
         let subscriber = cache
-            .subscribe(&gvk, &zone)
+            .subscribe(&gvk, &None)
             .await
             .expect("cache subscription");
 
         // Empty snapshot
-        if let CacheProtocol::Snapshot { snapshot, .. } =
+        if let KubeEvent::Snapshot { snapshot, .. } =
             subscriber.recv().expect("receive snapshot event")
         {
             assert_eq!(snapshot.len(), 0);
@@ -390,7 +362,7 @@ pub mod tests {
             .expect("resource is not updated");
         assert!(matches!(
             subscriber.recv().expect("receive create event"),
-            CacheProtocol::Update { .. }
+            KubeEvent::Update { .. }
         ));
 
         // Update
@@ -408,9 +380,7 @@ pub mod tests {
             .await
             .expect("resource is not updated");
 
-        if let CacheProtocol::Update { object, .. } =
-            subscriber.recv().expect("receive update event")
-        {
+        if let KubeEvent::Update { object, .. } = subscriber.recv().expect("receive update event") {
             assert_eq!(object.metadata.labels.unwrap(), test_labels);
         } else {
             panic!("invalid event received");
@@ -423,7 +393,7 @@ pub mod tests {
             .expect("resource is not deleted");
         assert!(matches!(
             subscriber.recv().unwrap(),
-            CacheProtocol::Delete { .. }
+            KubeEvent::Delete { .. }
         ));
         subscriber.close();
         assert!(!cache.unsubscribe(&gvk).await.is_err());

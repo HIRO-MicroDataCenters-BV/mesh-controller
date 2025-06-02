@@ -5,6 +5,7 @@ use clap::Parser;
 use directories::ProjectDirs;
 use figment::Figment;
 use figment::providers::{Env, Format, Serialized, Yaml};
+use kube::api::GroupVersionKind;
 use p2panda_core::PublicKey;
 use serde::{Deserialize, Serialize};
 
@@ -25,11 +26,6 @@ pub const DEFAULT_HTTP_BIND_PORT: u16 = 3000;
 
 /// Default network id.
 const DEFAULT_NETWORK_ID: &str = "default-network-1";
-
-#[derive(Clone, Default, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct MeshConfig {
-    pub zone: String,
-}
 
 #[derive(Clone, Default, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Config {
@@ -124,6 +120,43 @@ fn try_determine_config_file_path() -> Option<PathBuf> {
         .cloned()
 }
 
+#[derive(Clone, Default, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct MeshConfig {
+    pub zone: String,
+    pub bootstrap: bool,
+    pub resource: ResourceConfig,
+}
+
+#[derive(Clone, Default, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ResourceConfig {
+    pub group: String,
+    pub version: String,
+    pub kind: String,
+    pub namespace: Option<String>,
+    #[serde(default)]
+    pub merge_strategy: MergeStrategyType,
+}
+
+impl ResourceConfig {
+    pub fn get_gvk(&self) -> GroupVersionKind {
+        GroupVersionKind::gvk(&self.group, &self.version, &self.kind)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum MergeStrategyType {
+    #[serde(rename = "default")]
+    Default,
+    #[serde(rename = "anyapplication")]
+    AnyApplication,
+}
+
+impl Default for MergeStrategyType {
+    fn default() -> MergeStrategyType {
+        MergeStrategyType::Default
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Hash)]
 pub enum KubeConfiguration {
     #[serde(rename = "incluster")]
@@ -209,7 +242,7 @@ mod tests {
 
     use crate::config::configuration::{
         Config, DiscoveryOptions, KnownNode, KubeConfiguration, KubeConfigurationExternal,
-        MeshConfig, NodeConfig, ProtocolConfig,
+        MergeStrategyType, MeshConfig, NodeConfig, ProtocolConfig, ResourceConfig,
     };
 
     #[test]
@@ -224,6 +257,13 @@ mod tests {
                 network_id: "default"
                 mesh:
                     zone: "test"
+                    bootstrap: false
+                    resource:
+                        group: ""
+                        version: v2
+                        kind: Secret
+                        namespace: null
+                        merge_strategy: default
             "#,
             )?;
             let config: Config = Figment::from(Serialized::defaults(Config::default()))
@@ -244,7 +284,15 @@ mod tests {
                         discovery: None
                     },
                     mesh: MeshConfig {
-                        zone: "test".into()
+                        zone: "test".into(),
+                        bootstrap: false,
+                        resource: ResourceConfig {
+                            group: "".into(),
+                            version: "v2".into(),
+                            kind: "Secret".into(),
+                            namespace: None,
+                            merge_strategy: MergeStrategyType::default()
+                        }
                     },
                     kubernetes: None,
                     log_level: None,
@@ -279,6 +327,14 @@ nodes:
         - "[2a02:8109:9c9a:4200:eb13:7c0a:4201:8128]:1113"
 mesh:
     zone: "test"
+    bootstrap: false
+    resource:
+        group: ""
+        version: v2
+        kind: Secret
+        namespace: null
+        merge_strategy: default
+
 kubernetes:
     external:
         kube_context: "default"
@@ -318,7 +374,15 @@ kubernetes:
                         kube_context: Some("default".into()),
                     })),
                     mesh: MeshConfig {
-                        zone: "test".into()
+                        zone: "test".into(),
+                        bootstrap: false,
+                        resource: ResourceConfig {
+                            group: "".into(),
+                            version: "v2".into(),
+                            kind: "Secret".into(),
+                            namespace: None,
+                            merge_strategy: MergeStrategyType::default()
+                        }
                     },
                     log_level: None,
                 }

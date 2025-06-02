@@ -6,21 +6,22 @@ use crate::context::Context;
 use crate::http::api::MeshApiImpl;
 
 use crate::api::server::MeshHTTPServer;
-use crate::kube::cache::KubeCache;
-use crate::logs::kube_api::{KubeApi, MeshLogId};
-use crate::logs::operations::{Extensions, OperationExt, fanout2};
-use crate::logs::peer_discovery::PeerDiscovery;
-use crate::logs::topic::MeshTopicLogMap;
+use crate::kube::pool::ObjectPool;
+use crate::mesh::mesh::Mesh;
+use crate::mesh::operations::Extensions;
+use crate::mesh::peer_discovery::PeerDiscovery;
+use crate::mesh::topic::{InstanceId, MeshLogId};
+use crate::mesh::topic::{MeshTopic, MeshTopicLogMap};
 use crate::network::Panda;
 use crate::network::membership::Membership;
 use crate::node::mesh::{MeshNode, NodeOptions};
 use anyhow::{Context as AnyhowContext, Result, anyhow};
-use kube::api::GroupVersionKind;
 use p2panda_core::{PrivateKey, PublicKey};
 use p2panda_net::{NetworkBuilder, ResyncConfiguration, SyncConfiguration};
 use p2panda_store::MemoryStore;
 use p2panda_sync::log_sync::LogSyncProtocol;
 use tokio::runtime::{Builder, Runtime};
+use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
@@ -78,7 +79,7 @@ impl ContextBuilder {
 
         let mesh_node = mesh_runtime.block_on(async {
             let client = ContextBuilder::build_kube_client(&self.config).await?;
-            let cache = KubeCache::new(client);
+            let cache = ObjectPool::new(client);
 
             let node = ContextBuilder::init(self.config.clone(), self._private_key.clone(), cache)
                 .await
@@ -105,42 +106,46 @@ impl ContextBuilder {
         ))
     }
 
-    async fn init(
-        config: Config,
-        private_key: PrivateKey,
-        kube_cache: KubeCache,
-    ) -> Result<MeshNode> {
+    async fn init(config: Config, private_key: PrivateKey, pool: ObjectPool) -> Result<MeshNode> {
         let (node_config, p2p_network_config) = MeshNode::configure_p2p_network(&config).await?;
 
         let resync_config = ContextBuilder::to_resync_config(&config);
-
+        let instance_id = InstanceId::new(config.mesh.zone.to_owned());
+        let topic_log_map =
+            MeshTopicLogMap::new(private_key.public_key(), MeshLogId(instance_id.clone()));
         let log_store = MemoryStore::<MeshLogId, Extensions>::new();
-        let gvk = GroupVersionKind::gvk("dcp.hiro.io", "v1", "AnyApplication");
-        let rx = kube_cache
-            .subscribe(&gvk, &config.mesh.zone)
-            .await?
-            .into_stream()
-            .to_operation(private_key.to_owned());
 
-        let (to_network, to_store) = fanout2(rx, 100);
+        let (mesh_tx, network_rx) = mpsc::channel(512);
+        let (network_tx, mesh_rx) = mpsc::channel(512);
 
-        let kube = KubeApi::new(log_store.clone(), kube_cache, Box::pin(to_store));
+        let mesh = Mesh::new(
+            private_key.clone(),
+            &config.mesh.resource,
+            instance_id,
+            pool,
+            topic_log_map.clone(),
+            log_store.clone(),
+            network_tx,
+            network_rx,
+        )
+        .await?;
 
-        let topic_map = MeshTopicLogMap::new(private_key.public_key());
-        let sync_protocol = LogSyncProtocol::new(topic_map.clone(), log_store);
-
+        let sync_protocol = LogSyncProtocol::new(topic_log_map.clone(), log_store);
         let sync_config = SyncConfiguration::new(sync_protocol).resync(resync_config);
 
-        let builder = NetworkBuilder::from_config(p2p_network_config)
+        let mut builder = NetworkBuilder::from_config(p2p_network_config)
             .private_key(private_key.clone())
             .sync(sync_config)
             .discovery(Membership::new(
                 &config.node.known_nodes,
                 config.node.discovery.to_owned().unwrap_or_default(),
             ));
+        if config.mesh.bootstrap {
+            builder = builder.bootstrap();
+        }
 
         let network = builder.build().await?;
-        let peer_discovery = PeerDiscovery::start(network.events().await?, topic_map.clone());
+        let peer_discovery = PeerDiscovery::start(network.events().await?, topic_log_map.clone());
 
         let node_id = network.node_id();
         let direct_addresses = network
@@ -156,7 +161,12 @@ impl ContextBuilder {
             node_config,
         };
 
-        MeshNode::new(panda, kube, peer_discovery, Box::pin(to_network), options)
+        let node = MeshNode::new(panda, mesh, peer_discovery, mesh_tx, options.clone()).await?;
+
+        node.subscribe(MeshTopic::default()).await?;
+        node.publish_operations(mesh_rx).await.ok();
+
+        Ok(node)
     }
 
     /// Starts the HTTP server with health endpoint.

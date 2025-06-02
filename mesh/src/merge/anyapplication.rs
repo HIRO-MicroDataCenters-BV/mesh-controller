@@ -12,7 +12,7 @@ mod prelude {
 use self::prelude::*;
 
 /// AnyApplicationSpec defines the desired state of AnyApplication.
-#[derive(CustomResource, Serialize, Deserialize, Clone, Debug, JsonSchema)]
+#[derive(CustomResource, Serialize, Deserialize, Clone, Debug, JsonSchema, PartialEq)]
 #[kube(
     group = "dcp.hiro.io",
     version = "v1",
@@ -40,7 +40,7 @@ pub struct AnyApplicationSpec {
 }
 
 /// Foo is an example field of AnyApplication. Edit anyapplication_types.go to remove/update
-#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
+#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema, PartialEq)]
 pub struct AnyApplicationApplication {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub helm: Option<AnyApplicationApplicationHelm>,
@@ -52,7 +52,7 @@ pub struct AnyApplicationApplication {
     pub resource_selector: Option<BTreeMap<String, String>>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
+#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema, PartialEq)]
 pub struct AnyApplicationApplicationHelm {
     pub chart: String,
     pub namespace: String,
@@ -62,12 +62,12 @@ pub struct AnyApplicationApplicationHelm {
     pub version: String,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
+#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema, PartialEq)]
 pub struct AnyApplicationPlacementStrategy {
     pub strategy: String,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
+#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema, PartialEq)]
 pub struct AnyApplicationRecoverStrategy {
     #[serde(
         default,
