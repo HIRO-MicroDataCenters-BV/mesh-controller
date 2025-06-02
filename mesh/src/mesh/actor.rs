@@ -255,10 +255,7 @@ impl MeshActor {
 
     pub async fn handle_result(&self, merge_result: MergeResult) -> Result<()> {
         match merge_result {
-            MergeResult::Create { object } => {
-                self.pool.client().direct_patch_apply(object).await?;
-            }
-            MergeResult::Update { mut object } => {
+            MergeResult::Create { mut object } | MergeResult::Update { mut object } => {
                 let gvk = object.get_gvk()?;
                 let name = object.get_namespaced_name();
                 if let Some(existing) = self.pool.client().direct_get(&gvk, &name).await? {
@@ -272,7 +269,11 @@ impl MeshActor {
                 }
             }
             MergeResult::Delete { gvk, name } => {
-                self.pool.client().direct_delete(&gvk, &name).await?;
+                if let Some(_) = self.pool.client().direct_get(&gvk, &name).await? {
+                    self.pool.client().direct_delete(&gvk, &name).await?;
+                } else {
+                    warn!("Object not found {name} {gvk:?}. Skipping delete.");
+                }
             }
             MergeResult::Conflict { msg } => {
                 tracing::warn!("Conflict detected: {}", msg);
