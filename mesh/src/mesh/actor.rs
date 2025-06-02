@@ -1,8 +1,13 @@
-use crate::kube::pool::ObjectPool;
+use std::time::Duration;
+use std::time::SystemTime;
+
+use crate::config::configuration::PeriodicSnapshotConfig;
 use crate::kube::dynamic_object_ext::DynamicObjectExt;
 use crate::kube::event::KubeEvent;
+use crate::kube::pool::ObjectPool;
 use crate::merge::types::MergeResult;
 use crate::mesh::event::MeshEvent;
+use anyhow::Context;
 use anyhow::Result;
 use anyhow::anyhow;
 use futures::StreamExt;
@@ -13,6 +18,8 @@ use p2panda_core::{Operation, PrivateKey};
 use p2panda_store::MemoryStore;
 use p2panda_stream::operation::{IngestResult, ingest_operation};
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
+use tracing::debug;
 use tracing::{error, info};
 use tracing::{trace, warn};
 
@@ -21,6 +28,8 @@ use super::partition::Partition;
 use super::topic::InstanceId;
 use super::topic::MeshTopicLogMap;
 use super::{operations::Extensions, topic::MeshLogId};
+
+const DEFAULT_TICK_INTERVAL: Duration = Duration::from_secs(5);
 
 pub struct MeshActor {
     instance_id: InstanceId,
@@ -32,13 +41,19 @@ pub struct MeshActor {
     store: MemoryStore<MeshLogId, Extensions>,
     operations: LinkedOperations,
     partition: Partition,
+    cancelation: CancellationToken,
+    snapshot_config: PeriodicSnapshotConfig,
+    last_snapshot_time: SystemTime,
 }
 
 impl MeshActor {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         key: PrivateKey,
+        snapshot_config: PeriodicSnapshotConfig,
         instance_id: InstanceId,
         partition: Partition,
+        cancelation: CancellationToken,
         topic_log_map: MeshTopicLogMap,
         network_tx: mpsc::Sender<Operation<Extensions>>,
         network_rx: mpsc::Receiver<Operation<Extensions>>,
@@ -56,30 +71,39 @@ impl MeshActor {
             pool,
             store,
             partition,
+            cancelation,
+            snapshot_config,
+            last_snapshot_time: SystemTime::now(),
         }
     }
 
     pub async fn run(mut self) -> Result<()> {
+        let mut interval = tokio::time::interval(DEFAULT_TICK_INTERVAL);
         loop {
             tokio::select! {
+                _ = self.cancelation.cancelled() => break,
+                _ = interval.tick() => {
+                    if let Err(err) = self.on_tick().await {
+                        error!("error on tick, {}", err);
+                    }
+                },
                 Some(event) = self.event_rx.next() => {
                     if let Err(err) = self.on_outgoing_to_network(event).await {
-                        error!("error while processing cache event {}", err);
+                        error!("error while processing cache event, {}", err);
                     }
                 }
                 Some(message) = self.network_rx.recv() => {
                     if let Err(err) = self.on_incoming_from_network(message).await {
-                        error!("error while processing network event {}", err);
+                        error!("error while processing network event, {}", err);
                     }
                 }
-
             }
         }
-        // Ok(())
+        Ok(())
     }
 
     async fn on_outgoing_to_network(&mut self, event: KubeEvent) -> Result<()> {
-        let update_result = self.partition.apply_kube(&event, &self.instance_id.zone)?;
+        let update_result = self.partition.kube_apply(&event, &self.instance_id.zone)?;
         let event: Option<MeshEvent> = update_result.into();
 
         if let Some(event) = event {
@@ -96,11 +120,6 @@ impl MeshActor {
             body,
         } = operation;
         let header_bytes = header.to_bytes();
-        trace!(
-            "Outgoing operation: seq_num {}, hash {}",
-            header.seq_num,
-            header.hash().to_hex(),
-        );
         let log_id = header
             .extensions
             .as_ref()
@@ -128,10 +147,8 @@ impl MeshActor {
         match result {
             IngestResult::Complete(op) => {
                 info!(
-                    "Outgoing operation ingest completed: seq_num {}, hash {}, log_id {}",
-                    op.header.seq_num,
-                    op.header.hash().to_hex(),
-                    log_id
+                    "Outgoing Operation({}, {})",
+                    op.header.seq_num, log_id.0.zone
                 );
                 if let Err(err) = self.network_tx.send(op).await {
                     warn!(
@@ -140,9 +157,10 @@ impl MeshActor {
                     );
                 }
             }
-            IngestResult::Retry(_, _, _, ops_missing) => {
+            IngestResult::Retry(h, _, _, ops_missing) => {
                 error!(
-                    "Outgoing operation retry: missing ops = {ops_missing}. This should never happen."
+                    "Outgoing Operation({}, {}), missing ops = {ops_missing}. This should never happen.",
+                    h.seq_num, log_id.0.zone
                 );
             }
         }
@@ -178,19 +196,14 @@ impl MeshActor {
         log_id: &MeshLogId,
         prune_flag: bool,
     ) -> Result<()> {
-        if self.obsolete_log(&header.public_key, log_id) {
-            trace!(
-                "skipping operation {}, for log {}",
-                header.hash().to_hex(),
-                log_id
+        let is_obsolete = self.update_log_id(&header.public_key, log_id);
+        if is_obsolete {
+            debug!(
+                "skipping Operation({}, {}), for log {:?}",
+                log_id.0.zone, header.seq_num, log_id
             );
             return Ok(());
         }
-        trace!(
-            "Incoming operation: seq_num {}, hash {}",
-            header.seq_num,
-            header.hash().to_hex(),
-        );
         let header_bytes = header.to_bytes();
         let result = ingest_operation(
             &mut self.store,
@@ -206,14 +219,13 @@ impl MeshActor {
         })?;
         match result {
             IngestResult::Complete(op) => {
-                info!(
-                    "Incoming operation ingest completed: seq_num {}, hash {}",
-                    op.header.seq_num,
-                    op.header.hash().to_hex(),
+                debug!(
+                    "Incoming Operation({},{})",
+                    log_id.0.zone, op.header.seq_num
                 );
                 if let Some(body) = op.body {
                     let mesh_event = MeshEvent::try_from(body.to_bytes())?;
-                    let merge_results = self.partition.apply_mesh(mesh_event, &log_id.0.zone)?;
+                    let merge_results = self.partition.mesh_apply(mesh_event, &log_id.0.zone)?;
                     for merge_result in merge_results.into_iter() {
                         if let Err(err) = self.handle_result(merge_result).await {
                             error!("error while merging {err}");
@@ -223,31 +235,32 @@ impl MeshActor {
                     panic!("event has no body");
                 }
             }
-            IngestResult::Retry(_, _, _, ops_missing) => {
-                info!("Incoming operation retry: missing ops = {:?}", ops_missing);
+            IngestResult::Retry(h, _, _, ops_missing) => {
+                debug!(
+                    "Incoming Operation({},{}), missing ops = {:?}",
+                    log_id.0.zone, h.seq_num, ops_missing
+                );
             }
         }
         Ok(())
     }
 
-    fn obsolete_log(&self, source: &PublicKey, log_id: &MeshLogId) -> bool {
-        match self.topic_log_map.get_latest_log(&source) {
-            Some(latest) => {
-                if latest.0.start_time < log_id.0.start_time {
-                    info!("new log {} found from peer", log_id);
+    fn update_log_id(&self, incoming_source: &PublicKey, incoming_log_id: &MeshLogId) -> bool {
+        match self.topic_log_map.get_latest_log(incoming_source) {
+            Some(latest) => match latest.0.start_time.cmp(&incoming_log_id.0.start_time) {
+                std::cmp::Ordering::Less => {
+                    debug!("new log {} found from peer", incoming_log_id);
                     self.topic_log_map
-                        .update_new_log(source.to_owned(), log_id.to_owned());
-                    false
-                } else if latest.0.start_time > log_id.0.start_time {
-                    true
-                } else {
+                        .update_new_log(incoming_source.to_owned(), incoming_log_id.to_owned());
                     false
                 }
-            }
+                std::cmp::Ordering::Equal => false,
+                std::cmp::Ordering::Greater => true,
+            },
             None => {
-                info!("new log {} found from peer", log_id);
+                debug!("new log {} found from peer", incoming_log_id);
                 self.topic_log_map
-                    .update_new_log(source.to_owned(), log_id.to_owned());
+                    .update_new_log(incoming_source.to_owned(), incoming_log_id.to_owned());
                 false
             }
         }
@@ -269,7 +282,7 @@ impl MeshActor {
                 }
             }
             MergeResult::Delete { gvk, name } => {
-                if let Some(_) = self.pool.client().direct_get(&gvk, &name).await? {
+                if self.pool.client().direct_get(&gvk, &name).await?.is_some() {
                     self.pool.client().direct_delete(&gvk, &name).await?;
                 } else {
                     warn!("Object not found {name} {gvk:?}. Skipping delete.");
@@ -279,6 +292,24 @@ impl MeshActor {
                 tracing::warn!("Conflict detected: {}", msg);
             }
             MergeResult::DoNothing => (),
+        }
+        Ok(())
+    }
+
+    async fn on_tick(&mut self) -> Result<()> {
+        let truncate_size =
+            self.operations.count_since_snapshot() >= self.snapshot_config.snapshot_max_log;
+        let truncate_time = SystemTime::now()
+            .duration_since(self.last_snapshot_time)
+            .context("compute duration since last snapshot time")?
+            .as_secs()
+            > self.snapshot_config.snapshot_interval_seconds;
+        if truncate_size || truncate_time {
+            trace!("sending periodic snapshot");
+            let event = self.partition.mesh_snapshot(&self.instance_id.zone);
+            let operation = self.operations.next(event);
+            self.outgoing_to_network(operation).await?;
+            self.last_snapshot_time = SystemTime::now();
         }
         Ok(())
     }

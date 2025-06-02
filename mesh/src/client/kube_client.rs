@@ -73,7 +73,7 @@ impl KubeClient {
         name: &NamespacedName,
     ) -> Result<Option<DynamicObject>> {
         let results = self
-            .get_or_resolve_namespaced_api(&gvk, &name.namespace)
+            .get_or_resolve_namespaced_api(gvk, &name.namespace)
             .await?
             .get(&name.name)
             .await;
@@ -91,7 +91,7 @@ impl KubeClient {
     ) -> Result<Either<DynamicObject, Status>> {
         let params = DeleteParams::default();
         let status = self
-            .get_or_resolve_namespaced_api(&gvk, &name.namespace)
+            .get_or_resolve_namespaced_api(gvk, &name.namespace)
             .await?
             .delete(&name.name, &params)
             .await?;
@@ -130,7 +130,7 @@ impl KubeClient {
                 Api::<DynamicObject>::namespaced_with(
                     self.client.clone(),
                     namespace,
-                    &resource.value(),
+                    resource.value(),
                 )
             })
     }
@@ -160,7 +160,7 @@ impl KubeClient {
                 "Should not happend, resource not found in cache: {:?}",
                 gvk
             ))
-            .map(|resource| Api::<DynamicObject>::all_with(self.client.clone(), &resource.value()))
+            .map(|resource| Api::<DynamicObject>::all_with(self.client.clone(), resource.value()))
     }
 }
 

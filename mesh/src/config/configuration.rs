@@ -124,6 +124,7 @@ fn try_determine_config_file_path() -> Option<PathBuf> {
 pub struct MeshConfig {
     pub zone: String,
     pub bootstrap: bool,
+    pub snapshot: PeriodicSnapshotConfig,
     pub resource: ResourceConfig,
 }
 
@@ -143,18 +144,13 @@ impl ResourceConfig {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Default)]
 pub enum MergeStrategyType {
     #[serde(rename = "default")]
+    #[default]
     Default,
     #[serde(rename = "anyapplication")]
     AnyApplication,
-}
-
-impl Default for MergeStrategyType {
-    fn default() -> MergeStrategyType {
-        MergeStrategyType::Default
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Hash)]
@@ -168,6 +164,21 @@ pub enum KubeConfiguration {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Hash)]
 pub struct KubeConfigurationExternal {
     pub kube_context: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Hash)]
+pub struct PeriodicSnapshotConfig {
+    pub snapshot_interval_seconds: u64,
+    pub snapshot_max_log: u64,
+}
+
+impl Default for PeriodicSnapshotConfig {
+    fn default() -> Self {
+        Self {
+            snapshot_interval_seconds: 300,
+            snapshot_max_log: 256,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Hash)]
@@ -242,7 +253,8 @@ mod tests {
 
     use crate::config::configuration::{
         Config, DiscoveryOptions, KnownNode, KubeConfiguration, KubeConfigurationExternal,
-        MergeStrategyType, MeshConfig, NodeConfig, ProtocolConfig, ResourceConfig,
+        MergeStrategyType, MeshConfig, NodeConfig, PeriodicSnapshotConfig, ProtocolConfig,
+        ResourceConfig,
     };
 
     #[test]
@@ -286,6 +298,7 @@ mod tests {
                     mesh: MeshConfig {
                         zone: "test".into(),
                         bootstrap: false,
+                        snapshot: PeriodicSnapshotConfig::default(),
                         resource: ResourceConfig {
                             group: "".into(),
                             version: "v2".into(),
@@ -328,6 +341,9 @@ nodes:
 mesh:
     zone: "test"
     bootstrap: false
+    snapshot:
+        snapshot_interval_seconds: 100
+        snapshot_max_log: 100
     resource:
         group: ""
         version: v2
@@ -376,6 +392,10 @@ kubernetes:
                     mesh: MeshConfig {
                         zone: "test".into(),
                         bootstrap: false,
+                        snapshot: PeriodicSnapshotConfig {
+                            snapshot_interval_seconds: 100,
+                            snapshot_max_log: 100
+                        },
                         resource: ResourceConfig {
                             group: "".into(),
                             version: "v2".into(),

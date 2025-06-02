@@ -99,7 +99,7 @@ impl TopicLogMap<MeshTopic, MeshLogId> for MeshTopicLogMap {
                 .value()
                 .as_ref()
                 .map(|log_id| vec![log_id.clone()])
-                .unwrap_or(vec![]);
+                .unwrap_or_default();
             logs.insert(peer.key().to_owned(), log_ids);
         });
         logs.insert(self.inner.owner.to_owned(), vec![self.inner.log_id.clone()]);

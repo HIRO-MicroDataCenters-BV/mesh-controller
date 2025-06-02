@@ -25,30 +25,35 @@ impl TryFrom<&[u8]> for Extensions {
 
 pub struct LinkedOperations {
     key: PrivateKey,
-    seq_num: u64,
-    backlink: Option<Hash>,
     log_id: MeshLogId,
+    seq_num: u64,
+    last_snapshot_seq_num: u64,
+    backlink: Option<Hash>,
 }
 
 impl LinkedOperations {
     pub fn new(key: PrivateKey, instance_id: InstanceId) -> LinkedOperations {
         LinkedOperations {
             key,
-            seq_num: 0,
-            backlink: None,
             log_id: MeshLogId(instance_id),
+            backlink: None,
+            seq_num: 0,
+            last_snapshot_seq_num: 0,
         }
     }
 
     pub fn next(&mut self, event: MeshEvent) -> Operation<Extensions> {
-        let operation = self.make_operation(&event);
+        let is_snapshot = matches!(event, MeshEvent::Snapshot { .. });
+        let operation = self.make_operation(&event, is_snapshot);
+        if is_snapshot {
+            self.last_snapshot_seq_num = self.seq_num;
+        }
         self.seq_num += 1;
         self.backlink = Some(operation.hash);
         operation
     }
 
-    fn make_operation(&self, event: &MeshEvent) -> Operation<Extensions> {
-        let prune_flag = matches!(event, MeshEvent::Snapshot { .. });
+    fn make_operation(&self, event: &MeshEvent, prune_flag: bool) -> Operation<Extensions> {
         let body = Body::new(&event.to_bytes());
         let mut header = Header {
             version: 1,
@@ -72,5 +77,9 @@ impl LinkedOperations {
             header,
             body: Some(body),
         }
+    }
+
+    pub fn count_since_snapshot(&self) -> u64 {
+        self.seq_num.wrapping_sub(self.last_snapshot_seq_num)
     }
 }
