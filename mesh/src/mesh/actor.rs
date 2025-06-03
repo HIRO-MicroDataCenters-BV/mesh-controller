@@ -15,7 +15,9 @@ use loole::RecvStream;
 use p2panda_core::PublicKey;
 use p2panda_core::{Body, Header};
 use p2panda_core::{Operation, PrivateKey};
+use p2panda_store::LogStore;
 use p2panda_store::MemoryStore;
+use p2panda_store::OperationStore;
 use p2panda_stream::operation::{IngestResult, ingest_operation};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -120,17 +122,12 @@ impl MeshActor {
             body,
         } = operation;
         let header_bytes = header.to_bytes();
-        let log_id = header
+        let extensions = header
             .extensions
             .as_ref()
-            .ok_or(anyhow!("extensions are not set in header"))?
-            .log_id
-            .clone();
-        let prune_flag = header
-            .extensions
-            .as_ref()
-            .map(|e| e.prune_flag.is_set())
-            .unwrap_or(false);
+            .ok_or(anyhow!("extensions are not set in header"))?;
+        let log_id = extensions.log_id.clone();
+        let prune_flag = extensions.prune_flag.is_set();
 
         let result = ingest_operation(
             &mut self.store,
@@ -173,17 +170,13 @@ impl MeshActor {
             header,
             body,
         } = operation;
-        let log_id = header
+
+        let extensions = header
             .extensions
             .as_ref()
-            .ok_or(anyhow!("extensions are not set in header"))?
-            .log_id
-            .clone();
-        let prune_flag = header
-            .extensions
-            .as_ref()
-            .map(|e| e.prune_flag.is_set())
-            .unwrap_or(false);
+            .ok_or(anyhow!("extensions are not set in header"))?;
+        let log_id = extensions.log_id.clone();
+        let prune_flag = extensions.prune_flag.is_set();
 
         self.incoming_from_network(header, body, &log_id, prune_flag)
             .await
@@ -204,6 +197,12 @@ impl MeshActor {
             );
             return Ok(());
         }
+
+        let already_exists = self.store.has_operation(header.hash()).await?;
+        if already_exists {
+            return Ok(());
+        }
+
         let header_bytes = header.to_bytes();
         let result = ingest_operation(
             &mut self.store,
@@ -245,13 +244,13 @@ impl MeshActor {
         Ok(())
     }
 
-    fn update_log_id(&self, incoming_source: &PublicKey, incoming_log_id: &MeshLogId) -> bool {
+    fn update_log_id(&mut self, incoming_source: &PublicKey, incoming_log_id: &MeshLogId) -> bool {
         match self.topic_log_map.get_latest_log(incoming_source) {
             Some(latest) => match latest.0.start_time.cmp(&incoming_log_id.0.start_time) {
                 std::cmp::Ordering::Less => {
                     debug!("new log {} found from peer", incoming_log_id);
                     self.topic_log_map
-                        .update_new_log(incoming_source.to_owned(), incoming_log_id.to_owned());
+                        .update_log(incoming_source.to_owned(), incoming_log_id.to_owned());
                     false
                 }
                 std::cmp::Ordering::Equal => false,
@@ -260,7 +259,7 @@ impl MeshActor {
             None => {
                 debug!("new log {} found from peer", incoming_log_id);
                 self.topic_log_map
-                    .update_new_log(incoming_source.to_owned(), incoming_log_id.to_owned());
+                    .update_log(incoming_source.to_owned(), incoming_log_id.to_owned());
                 false
             }
         }
@@ -305,11 +304,35 @@ impl MeshActor {
             .as_secs()
             > self.snapshot_config.snapshot_interval_seconds;
         if truncate_size || truncate_time {
-            trace!("sending periodic snapshot");
-            let event = self.partition.mesh_snapshot(&self.instance_id.zone);
-            let operation = self.operations.next(event);
-            self.outgoing_to_network(operation).await?;
-            self.last_snapshot_time = SystemTime::now();
+            self.send_snapshot().await?;
+            self.truncate_obsolete_logs().await?;
+        }
+        Ok(())
+    }
+
+    async fn send_snapshot(&mut self) -> Result<()> {
+        trace!("Periodic snapshot");
+        let event = self.partition.mesh_snapshot(&self.instance_id.zone);
+        let operation = self.operations.next(event);
+        self.outgoing_to_network(operation).await?;
+        self.last_snapshot_time = SystemTime::now();
+        Ok(())
+    }
+
+    async fn truncate_obsolete_logs(&mut self) -> Result<()> {
+        for (source, log_ids) in self.topic_log_map.take_obsolete_log_ids() {
+            for log_id in log_ids {
+                if let Some((header, _)) = self.store.latest_operation(&source, &log_id).await? {
+                    trace!("Truncating log {log_id:?}");
+                    if let Err(err) = self
+                        .store
+                        .delete_operations(&source, &log_id, header.seq_num)
+                        .await
+                    {
+                        error!("Error while truncating log {log_id:?}: {err}");
+                    }
+                }
+            }
         }
         Ok(())
     }
