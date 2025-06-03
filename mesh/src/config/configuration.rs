@@ -267,6 +267,8 @@ mod tests {
                 http_bind_port: 2223
                 private_key_path: "/etc/dcp/mesh/private.key"
                 network_id: "default"
+                kubernetes: incluster
+
                 mesh:
                     zone: "test"
                     bootstrap: false
@@ -307,7 +309,7 @@ mod tests {
                             merge_strategy: MergeStrategyType::default()
                         }
                     },
-                    kubernetes: None,
+                    kubernetes: Some(KubeConfiguration::InCluster),
                     log_level: None,
                 }
             );

@@ -117,11 +117,10 @@ impl PandaActor {
     ) -> Result<Option<mpsc::Receiver<FromNetwork>>> {
         let topic_id = query.id();
 
-        let (tx, rx, joined) = self.network.subscribe(query).await?;
+        let (tx, rx, _) = self.network.subscribe(query).await?;
         if let hash_map::Entry::Vacant(entry) = self.topic_gossip_tx_map.entry(topic_id) {
             entry.insert(tx);
         }
-        joined.await.ok();
         Ok(Some(rx))
     }
 

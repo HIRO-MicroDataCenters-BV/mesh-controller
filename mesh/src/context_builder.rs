@@ -174,10 +174,8 @@ impl ContextBuilder {
         };
 
         let node = MeshNode::new(panda, mesh, peer_discovery, mesh_tx, options.clone()).await?;
-
         node.subscribe(MeshTopic::default()).await?;
         node.publish_operations(mesh_rx).await.ok();
-
         Ok(node)
     }
 
