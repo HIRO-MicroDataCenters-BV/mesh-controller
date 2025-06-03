@@ -23,6 +23,8 @@ pub trait AnyApplicationExt {
     }
 
     fn get_placement_zones(&self) -> HashSet<String>;
+
+    fn set_condition_version(&mut self, zone: &str, version: Version);
 }
 
 impl AnyApplicationExt for AnyApplication {
@@ -60,5 +62,15 @@ impl AnyApplicationExt for AnyApplication {
                     .unwrap_or_default()
             })
             .unwrap_or_default()
+    }
+
+    fn set_condition_version(&mut self, zone: &str, version: Version) {
+        if let Some(conditions) = self.status.as_mut().and_then(|s| s.conditions.as_mut()) {
+            for condition in conditions.iter_mut() {
+                if condition.zone_id == zone {
+                    condition.zone_version = version.to_string();
+                }
+            }
+        }
     }
 }

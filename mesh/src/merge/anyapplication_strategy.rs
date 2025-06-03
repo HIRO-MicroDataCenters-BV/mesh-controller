@@ -327,11 +327,14 @@ impl MergeStrategy for AnyApplicationMerge {
                 let owner_version = Version::max(incoming_version, current_version);
                 incoming.set_owner_version(owner_version);
             }
+            incoming.set_condition_version(incoming_zone, incoming_version);
 
             let object = incoming.to_object()?;
             Ok(UpdateResult::Update { object })
         } else {
             incoming.set_owner_version(incoming_version);
+            incoming.set_condition_version(incoming_zone, incoming_version);
+
             let object = incoming.to_object()?;
             Ok(UpdateResult::Create { object })
         }
@@ -676,6 +679,88 @@ pub mod tests {
             },
             AnyApplicationMerge::new()
                 .local_update(None, incoming, 2, &"zone1")
+                .unwrap()
+        );
+    }
+
+    #[test]
+    pub fn local_update_from_placement_zone() {
+        let current = make_anyapplication_with_conditions(
+            1,
+            "zone1",
+            1,
+            &vec![anycond(2, "zone1", "type"), anycond(3, "zone2", "type")],
+        );
+        let incoming = make_anyapplication_with_conditions(
+            1,
+            "zone1",
+            1,
+            &vec![anycond(2, "zone1", "type"), anycond(4, "zone2", "type")],
+        );
+
+        let expected = make_anyapplication_with_conditions(
+            1,
+            "zone1",
+            1,
+            &vec![anycond(2, "zone1", "type"), anycond(4, "zone2", "type")],
+        );
+
+        let strategy = AnyApplicationMerge::new();
+        assert_eq!(
+            UpdateResult::Update { object: expected },
+            strategy
+                .local_update(Some(current), incoming, 4, &"zone2")
+                .unwrap()
+        );
+    }
+
+    #[test]
+    pub fn local_create_from_placement_zone() {
+        let current =
+            make_anyapplication_with_conditions(1, "zone1", 0, &vec![anycond(2, "zone1", "type")]);
+        let incoming = make_anyapplication_with_conditions(
+            1,
+            "zone1",
+            1,
+            &vec![anycond(3, "zone1", "type"), anycond(4, "zone2", "type")],
+        );
+
+        let expected = make_anyapplication_with_conditions(
+            1,
+            "zone1",
+            1,
+            &vec![anycond(3, "zone1", "type"), anycond(5, "zone2", "type")],
+        );
+
+        let strategy = AnyApplicationMerge::new();
+        assert_eq!(
+            UpdateResult::Update { object: expected },
+            strategy
+                .local_update(Some(current), incoming, 5, &"zone2")
+                .unwrap()
+        );
+    }
+
+    #[test]
+    pub fn local_delete_from_placement_zone() {
+        let current = make_anyapplication_with_conditions(
+            1,
+            "zone1",
+            0,
+            &vec![anycond(2, "zone1", "type"), anycond(3, "zone2", "type")],
+        );
+
+        let incoming =
+            make_anyapplication_with_conditions(1, "zone1", 1, &vec![anycond(3, "zone1", "type")]);
+
+        let expected =
+            make_anyapplication_with_conditions(1, "zone1", 1, &vec![anycond(3, "zone1", "type")]);
+
+        let strategy = AnyApplicationMerge::new();
+        assert_eq!(
+            UpdateResult::Update { object: expected },
+            strategy
+                .local_update(Some(current), incoming, 4, &"zone2")
                 .unwrap()
         );
     }
