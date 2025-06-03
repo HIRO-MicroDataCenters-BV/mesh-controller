@@ -30,6 +30,20 @@ entries:
     - https://HIRO-MicroDataCenters-BV.github.io/mesh-controller/dev/mesh-controller-0.1.0-dev.0.build-fix.2fd951ce.tgz
     version: 0.1.0-dev.0.build-fix.2fd951ce
   - apiVersion: v2
+    appVersion: 0.0.1-dev.77.apply-log-store.4742eed1
+    created: "2025-06-03T08:58:59.572694807Z"
+    description: Mesh Controller for Decentralized Control Plane
+    digest: 860bcbb2a77e53ac3b28b0471d0640e05f59359d1e571a8988dc37998d0eac4e
+    home: https://github.com/HIRO-MicroDataCenters-BV/mesh-controller
+    maintainers:
+    - name: HIRO-Microdatacenters
+      url: https://hiro-microdatacenters.nl
+    name: mesh-controller
+    type: application
+    urls:
+    - https://HIRO-MicroDataCenters-BV.github.io/mesh-controller/dev/mesh-controller-0.0.1-dev.77.apply-log-store.4742eed1.tgz
+    version: 0.0.1-dev.77.apply-log-store.4742eed1
+  - apiVersion: v2
     appVersion: 0.0.1-dev.74.apply-log-store.6d4416eb
     created: "2025-06-02T14:12:02.398353801Z"
     description: Mesh Controller for Decentralized Control Plane
@@ -365,4 +379,4 @@ entries:
     urls:
     - https://HIRO-MicroDataCenters-BV.github.io/mesh-controller/dev/mesh-controller-0.0.1-dev.1.upgrade-libs.b3cd8265.tgz
     version: 0.0.1-dev.1.upgrade-libs.b3cd8265
-generated: "2025-06-02T14:12:02.39709098Z"
+generated: "2025-06-03T08:58:59.571346659Z"
