@@ -54,12 +54,13 @@ impl MeshTopicLogMap {
                 owner,
                 log_id,
                 peers: DashMap::new(),
+                obsolete_logs: DashMap::new(),
             }),
         }
     }
 
     pub fn add_peer(&self, peer: PublicKey) {
-        self.inner.peers.insert(peer, None);
+        self.inner.peers.entry(peer).or_default();
     }
 
     pub fn has_peer(&self, peer: &PublicKey) -> bool {
@@ -67,7 +68,13 @@ impl MeshTopicLogMap {
     }
 
     pub fn remove_peer(&self, peer: &PublicKey) {
-        self.inner.peers.remove(peer);
+        if let Some((peer, Some(log_id))) = self.inner.peers.remove(peer) {
+            self.inner
+                .obsolete_logs
+                .entry(peer)
+                .or_default()
+                .push(log_id);
+        }
     }
 
     pub fn get_latest_log(&self, peer: &PublicKey) -> Option<MeshLogId> {
@@ -78,8 +85,25 @@ impl MeshTopicLogMap {
             .unwrap_or(None)
     }
 
-    pub fn update_new_log(&self, peer: PublicKey, log_id: MeshLogId) {
-        self.inner.peers.insert(peer, Some(log_id));
+    pub fn update_log(&self, peer: PublicKey, log_id: MeshLogId) {
+        if let Some(Some(log_id)) = self.inner.peers.insert(peer, Some(log_id)) {
+            self.inner
+                .obsolete_logs
+                .entry(peer)
+                .or_default()
+                .push(log_id);
+        }
+    }
+
+    pub fn take_obsolete_log_ids(&self) -> Vec<(PublicKey, Vec<MeshLogId>)> {
+        self.inner
+            .obsolete_logs
+            .iter()
+            .map(|entry| entry.key().to_owned())
+            .collect::<Vec<_>>()
+            .into_iter()
+            .filter_map(|k| self.inner.obsolete_logs.remove(&k))
+            .collect()
     }
 }
 
@@ -88,6 +112,7 @@ struct MeshTopicLogMapInner {
     owner: PublicKey,
     log_id: MeshLogId,
     peers: DashMap<PublicKey, Option<MeshLogId>>,
+    obsolete_logs: DashMap<PublicKey, Vec<MeshLogId>>,
 }
 
 #[async_trait]
