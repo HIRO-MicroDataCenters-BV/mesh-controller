@@ -30,6 +30,20 @@ entries:
     - https://HIRO-MicroDataCenters-BV.github.io/mesh-controller/helm-charts/mesh-controller-0.0.1.tgz
     version: 0.0.1
   - apiVersion: v2
+    appVersion: 0.0.1-dev.80.main.b14067d1
+    created: "2025-06-04T08:45:23.338031673Z"
+    description: Mesh Controller for Decentralized Control Plane
+    digest: 74ddda1b3408662b03ec160eedf8535ae89f183b1866234d6958785eaae35833
+    home: https://github.com/HIRO-MicroDataCenters-BV/mesh-controller
+    maintainers:
+    - name: HIRO-Microdatacenters
+      url: https://hiro-microdatacenters.nl
+    name: mesh-controller
+    type: application
+    urls:
+    - https://HIRO-MicroDataCenters-BV.github.io/mesh-controller/helm-charts/mesh-controller-0.0.1-dev.80.main.b14067d1.tgz
+    version: 0.0.1-dev.80.main.b14067d1
+  - apiVersion: v2
     appVersion: 0.0.1-dev.75.main.1d030436
     created: "2025-06-02T15:51:55.82559828Z"
     description: Mesh Controller for Decentralized Control Plane
@@ -99,4 +113,4 @@ entries:
     urls:
     - https://HIRO-MicroDataCenters-BV.github.io/mesh-controller/helm-charts/mesh-controller-0.0.1-dev.2.main.3128facb.tgz
     version: 0.0.1-dev.2.main.3128facb
-generated: "2025-06-02T15:51:55.824968566Z"
+generated: "2025-06-04T08:45:23.336593771Z"
