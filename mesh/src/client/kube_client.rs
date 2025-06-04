@@ -101,12 +101,22 @@ impl KubeClient {
     pub async fn direct_patch_apply(&self, resource: DynamicObject) -> Result<()> {
         let gvk = resource.get_gvk()?;
         let name = resource.get_namespaced_name();
+        let status = resource.get_status();
 
         let patch_params = PatchParams::apply(&name.name).force();
-        self.get_or_resolve_namespaced_api(&gvk, &name.namespace)
-            .await?
-            .patch(&name.name, &patch_params, &Patch::Apply(resource))
+        let api = self
+            .get_or_resolve_namespaced_api(&gvk, &name.namespace)
             .await?;
+
+        api.patch(&name.name, &patch_params, &Patch::Apply(resource))
+            .await
+            .context(format!("{name}: Patching the spec"))?;
+
+        if let Some(status) = status {
+            api.patch_status(&name.name, &PatchParams::default(), &Patch::Merge(&status))
+                .await
+                .context(format!("{name}: Patching the status"))?;
+        }
 
         Ok(())
     }

@@ -1,6 +1,7 @@
 use anyhow::{Context, Result, anyhow};
 use kube::ResourceExt;
 use kube::api::{DynamicObject, GroupVersionKind};
+use serde_json::{Value, json};
 
 use super::pool::Version;
 use super::types::NamespacedName;
@@ -17,6 +18,7 @@ pub trait DynamicObjectExt {
     fn get_owner_zone(&self) -> Result<String>;
     fn set_owner_zone(&mut self, zone: String);
     fn normalize(&mut self, default_zone: &str);
+    fn get_status(&self) -> Option<Value>;
 }
 
 impl DynamicObjectExt for DynamicObject {
@@ -118,5 +120,11 @@ impl DynamicObjectExt for DynamicObject {
         if self.get_owner_zone().is_err() {
             self.set_owner_zone(default_zone.into());
         }
+    }
+
+    fn get_status(&self) -> Option<Value> {
+        self.data
+            .get("status")
+            .map(|status| json!({ "status": status }))
     }
 }

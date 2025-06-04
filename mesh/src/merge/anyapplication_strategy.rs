@@ -374,8 +374,8 @@ pub struct AnyApplicationOwnership {
 pub mod tests {
     use crate::kube::dynamic_object_ext::DynamicObjectExt;
     use crate::merge::anyapplication_strategy::AnyApplicationMerge;
+    use crate::merge::anyapplication_test_support::tests::anyapp;
     use crate::merge::anyapplication_test_support::tests::anycond;
-    use crate::merge::anyapplication_test_support::tests::make_anyapplication;
     use crate::merge::anyapplication_test_support::tests::make_anyapplication_with_conditions;
     use crate::merge::types::MergeResult;
     use crate::merge::types::MergeStrategy;
@@ -383,7 +383,7 @@ pub mod tests {
 
     #[test]
     pub fn mesh_update_create_non_existing() {
-        let incoming = make_anyapplication(1, "zone1", 0);
+        let incoming = anyapp(1, "zone1", 0);
 
         let strategy = AnyApplicationMerge::new();
         assert_eq!(
@@ -396,7 +396,7 @@ pub mod tests {
 
     #[test]
     pub fn mesh_update_non_existing_other_zone() {
-        let incoming = make_anyapplication(1, "zone1", 0);
+        let incoming = anyapp(1, "zone1", 0);
 
         let strategy = AnyApplicationMerge::new();
         assert_eq!(
@@ -407,8 +407,8 @@ pub mod tests {
 
     #[test]
     pub fn mesh_update_same_version() {
-        let current = make_anyapplication(1, "zone1", 0);
-        let incoming = make_anyapplication(1, "zone1", 1);
+        let current = anyapp(1, "zone1", 0);
+        let incoming = anyapp(1, "zone1", 1);
 
         let strategy = AnyApplicationMerge::new();
         assert_eq!(
@@ -421,8 +421,8 @@ pub mod tests {
 
     #[test]
     pub fn mesh_update_greater_version_spec() {
-        let current = make_anyapplication(1, "zone1", 0);
-        let incoming = make_anyapplication(2, "zone1", 1);
+        let current = anyapp(1, "zone1", 0);
+        let incoming = anyapp(2, "zone1", 1);
 
         let strategy = AnyApplicationMerge::new();
         assert_eq!(
@@ -445,8 +445,8 @@ pub mod tests {
 
     #[test]
     pub fn mesh_update_greater_version_status_ownership() {
-        let current = make_anyapplication(1, "zone1", 0);
-        let incoming = make_anyapplication(2, "zone1", 1);
+        let current = anyapp(1, "zone1", 0);
+        let incoming = anyapp(2, "zone1", 1);
 
         let strategy = AnyApplicationMerge::new();
         assert_eq!(
@@ -461,8 +461,8 @@ pub mod tests {
 
     #[test]
     pub fn mesh_update_greater_version_status_conditions() {
-        let current = make_anyapplication(1, "zone1", 0);
-        let incoming = make_anyapplication(2, "zone1", 1);
+        let current = anyapp(1, "zone1", 0);
+        let incoming = anyapp(2, "zone1", 1);
 
         let strategy = AnyApplicationMerge::new();
         assert_eq!(
@@ -477,8 +477,8 @@ pub mod tests {
 
     #[test]
     pub fn mesh_update_greater_version_unacceptable_zone() {
-        let current = make_anyapplication(1, "zone1", 0);
-        let incoming = make_anyapplication(2, "unacceptable", 1);
+        let current = anyapp(1, "zone1", 0);
+        let incoming = anyapp(2, "unacceptable", 1);
 
         let strategy = AnyApplicationMerge::new();
         assert_eq!(
@@ -491,7 +491,7 @@ pub mod tests {
 
     #[test]
     pub fn mesh_delete_non_existing_delete() {
-        let incoming = make_anyapplication(1, "zone1", 0);
+        let incoming = anyapp(1, "zone1", 0);
 
         let strategy = AnyApplicationMerge::new();
         assert_eq!(
@@ -502,8 +502,8 @@ pub mod tests {
 
     #[test]
     pub fn mesh_delete_the_same_version_delete() {
-        let current = make_anyapplication(1, "zone1", 0);
-        let incoming = make_anyapplication(1, "zone1", 1);
+        let current = anyapp(1, "zone1", 0);
+        let incoming = anyapp(1, "zone1", 1);
 
         let strategy = AnyApplicationMerge::new();
         assert_eq!(
@@ -516,8 +516,8 @@ pub mod tests {
 
     #[test]
     pub fn mesh_delete_greater_version_delete() {
-        let current = make_anyapplication(1, "zone1", 0);
-        let incoming = make_anyapplication(2, "zone1", 1);
+        let current = anyapp(1, "zone1", 0);
+        let incoming = anyapp(2, "zone1", 1);
 
         let strategy = AnyApplicationMerge::new();
         assert_eq!(
@@ -614,7 +614,7 @@ pub mod tests {
 
     #[test]
     pub fn local_update_create() {
-        let incoming = make_anyapplication(2, "zone1", 0);
+        let incoming = anyapp(2, "zone1", 0);
 
         assert_eq!(
             UpdateResult::Create {
@@ -628,8 +628,8 @@ pub mod tests {
 
     #[test]
     pub fn local_update_ignore_version() {
-        let incoming = make_anyapplication(1, "zone1", 1);
-        let existing = make_anyapplication(2, "zone1", 2);
+        let incoming = anyapp(1, "zone1", 1);
+        let existing = anyapp(2, "zone1", 2);
 
         let mut object = incoming.clone();
         object.set_owner_version(2);
@@ -644,8 +644,8 @@ pub mod tests {
 
     #[test]
     pub fn local_update() {
-        let incoming = make_anyapplication(2, "zone1", 2);
-        let existing = make_anyapplication(1, "zone1", 0);
+        let incoming = anyapp(2, "zone1", 2);
+        let existing = anyapp(1, "zone1", 0);
 
         assert_eq!(
             UpdateResult::Update {
@@ -659,7 +659,7 @@ pub mod tests {
 
     #[test]
     pub fn local_delete_skip() {
-        let incoming = make_anyapplication(2, "zone1", 2);
+        let incoming = anyapp(2, "zone1", 2);
 
         assert_eq!(
             UpdateResult::DoNothing,
@@ -671,7 +671,7 @@ pub mod tests {
 
     #[test]
     pub fn local_delete() {
-        let incoming = make_anyapplication(2, "zone1", 2);
+        let incoming = anyapp(2, "zone1", 2);
 
         assert_eq!(
             UpdateResult::Create {
