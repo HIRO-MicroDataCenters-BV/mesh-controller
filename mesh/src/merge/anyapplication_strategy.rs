@@ -129,13 +129,15 @@ impl AnyApplicationMerge {
         );
 
         if let Some(mut status) = maybe_status {
-            maybe_conditions.into_iter().for_each(|conditions| {
+            maybe_conditions.into_iter().for_each(|mut conditions| {
+                conditions.sort_by(|a, b| a.zone_id.cmp(&b.zone_id));
                 status.conditions = Some(conditions);
             });
             Some(status)
-        } else if let Some(conditions) = maybe_conditions {
+        } else if let Some(mut conditions) = maybe_conditions {
             if let Some(status) = current {
                 let mut status = status.clone();
+                conditions.sort_by(|a, b| a.zone_id.cmp(&b.zone_id));
                 status.conditions = Some(conditions);
                 Some(status)
             } else {
@@ -322,13 +324,17 @@ impl MergeStrategy for AnyApplicationMerge {
 
         if let Some(current) = current {
             let current: AnyApplication = current.clone().try_parse()?;
-            if incoming_zone == current.get_owner_zone() {
+            let current_ownerzone = current.get_owner_zone();
+            if incoming_zone == current_ownerzone || current_ownerzone == "unknown" {
                 let current_version = current.get_owner_version().unwrap_or(incoming_version);
                 let owner_version = Version::max(incoming_version, current_version);
                 incoming.set_owner_version(owner_version);
             }
+            println!("local_update current_ownerzone {:?}", current_ownerzone);
+            println!("local_update {:?} {:?}", incoming_zone, incoming_version);
             incoming.set_condition_version(incoming_zone, incoming_version);
 
+            println!("local_update {:?}", incoming);
             let object = incoming.to_object()?;
             Ok(UpdateResult::Update { object })
         } else {

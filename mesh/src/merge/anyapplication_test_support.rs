@@ -151,10 +151,10 @@ pub mod tests {
     pub fn anystatus(
         owner_zone: &str,
         placements: Vec<AnyApplicationStatusPlacements>,
-        conditions: Vec<AnyApplicationStatusConditions>,
+        conditions: Option<Vec<AnyApplicationStatusConditions>>,
     ) -> AnyApplicationStatus {
         AnyApplicationStatus {
-            conditions: Some(conditions),
+            conditions: conditions,
             owner: owner_zone.into(),
             placements: Some(placements),
             state: "New".into(),
