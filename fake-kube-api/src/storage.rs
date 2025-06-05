@@ -62,9 +62,9 @@ impl Storage {
 
         let ns_name = resource.get_namespaced_name();
 
-        self.update_internal(resource, resources.value(), &ns_name)
-            .await;
-        Ok(())
+        self.update_internal(resource, resources.value(), &ns_name, |_, new| Ok(new))
+            .await
+            .map(|_| ())
     }
 
     pub fn get_api_resources(&self, group: &str, version: &str) -> Vec<ApiResource> {
@@ -180,10 +180,59 @@ impl Storage {
 
             if let Some(entry) = self.resources.get_mut(&gvk) {
                 let named_resources = entry.value();
-                let updated = self
-                    .update_internal(resource, named_resources, ns_name)
-                    .await;
-                Ok(updated)
+                self.update_internal(resource, named_resources, ns_name, |_, new| Ok(new))
+                    .await
+            } else {
+                Err(anyhow!(
+                    "Group, Vesion, Kind ({group},{version},{kind_plural}) is not registered"
+                ))
+            }
+        } else {
+            Err(anyhow!("ApiResource is not registered"))
+        }
+    }
+
+    pub async fn patch_subresource(
+        &self,
+        group: &str,
+        version: &str,
+        kind_plural: &str,
+        subresource: &str,
+        ns_name: &NamespacedName,
+        object: DynamicObject,
+    ) -> Result<DynamicObject> {
+        if let Some(api_resource) = self.get_api_resource(group, version, kind_plural) {
+            let gvk = GroupVersionKind::gvk(
+                &api_resource.group,
+                &api_resource.version,
+                &api_resource.kind,
+            );
+
+            if let Some(entry) = self.resources.get_mut(&gvk) {
+                let named_resources = entry.value();
+                let update_fn = |current: Option<&DynamicObject>,
+                                 new: DynamicObject|
+                 -> Result<DynamicObject> {
+                    match current {
+                        Some(current) => {
+                            if let Some(status) = new.data.get(subresource) {
+                                let mut dst = current.clone();
+                                let obj = dst.data.as_object_mut().unwrap();
+                                obj.insert(subresource.to_string(), status.clone());
+                                Ok(dst)
+                            } else {
+                                Err(anyhow!(
+                                    "No subresource {subresource} in source DynamicObject"
+                                ))
+                            }
+                        }
+                        None => Err(anyhow!(
+                            "patching subresource {subresource} of non existing object"
+                        )),
+                    }
+                };
+                self.update_internal(object, named_resources, ns_name, update_fn)
+                    .await
             } else {
                 Err(anyhow!(
                     "Group, Vesion, Kind ({group},{version},{kind_plural}) is not registered"
@@ -222,12 +271,16 @@ impl Storage {
         }
     }
 
-    async fn update_internal(
+    async fn update_internal<F>(
         &self,
         mut resource: DynamicObject,
         resources: &DashMap<NamespacedName, ResourceEntry>,
         ns_name: &NamespacedName,
-    ) -> DynamicObject {
+        update_fn: F,
+    ) -> Result<DynamicObject>
+    where
+        F: Fn(Option<&DynamicObject>, DynamicObject) -> Result<DynamicObject>,
+    {
         let mut changelog = self.changelog.write().await;
         let new_version = self
             .resource_versions
@@ -242,39 +295,44 @@ impl Storage {
         if let Some(mut ns_entry) = resources.get_mut(ns_name) {
             let entry = ns_entry.value_mut();
             if entry.tombstone {
+                let updated = update_fn(None, resource)?;
                 entry.tombstone = false;
                 entry.version = new_version;
-                entry.resource = resource.clone();
-                let event = WatchEvent::Added(resource.clone());
+                entry.resource = updated.clone();
+                let event = WatchEvent::Added(updated.clone());
                 changelog.insert(new_version, event.clone());
                 self.event_tx
                     .send(event)
                     .unwrap_or_else(|e| error!("Failed to send event: {}", e));
+                Ok(updated)
             } else {
+                let updated = update_fn(Some(&entry.resource), resource)?;
                 entry.version = new_version;
-                entry.resource = resource.clone();
-                let event = WatchEvent::Modified(resource.clone());
+                entry.resource = updated.clone();
+                let event = WatchEvent::Modified(updated.clone());
                 changelog.insert(new_version, event.clone());
                 self.event_tx
                     .send(event)
                     .unwrap_or_else(|e| error!("Failed to send event: {}", e));
+                Ok(updated)
             }
         } else {
+            let updated = update_fn(None, resource)?;
             resources.insert(
                 ns_name.to_owned(),
                 ResourceEntry {
                     version: new_version,
-                    resource: resource.clone(),
+                    resource: updated.clone(),
                     tombstone: false,
                 },
             );
-            let event = WatchEvent::Added(resource.clone());
+            let event = WatchEvent::Added(updated.clone());
             changelog.insert(new_version, event.clone());
             self.event_tx
                 .send(event)
                 .unwrap_or_else(|e| error!("Failed to send event: {}", e));
+            Ok(updated)
         }
-        resource
     }
 
     async fn delete_internal(

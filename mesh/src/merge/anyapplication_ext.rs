@@ -2,6 +2,7 @@ use std::collections::HashSet;
 
 use super::anyapplication::AnyApplication;
 use crate::kube::pool::Version;
+use crate::merge::anyapplication::AnyApplicationStatusConditions;
 use anyhow::Context;
 use anyhow::{Result, anyhow};
 use kube::api::DynamicObject;
@@ -72,5 +73,34 @@ impl AnyApplicationExt for AnyApplication {
                 }
             }
         }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
+pub struct AnyApplicationStatusConditionId {
+    pub zone_id: String,
+    pub r#type: String,
+}
+
+pub trait AnyApplicationStatusConditionsExt {
+    fn identity(&self) -> AnyApplicationStatusConditionId;
+    fn is_equal(&self, other: &AnyApplicationStatusConditions) -> bool;
+}
+
+impl AnyApplicationStatusConditionsExt for AnyApplicationStatusConditions {
+    fn identity(&self) -> AnyApplicationStatusConditionId {
+        AnyApplicationStatusConditionId {
+            zone_id: self.zone_id.clone(),
+            r#type: self.r#type.clone(),
+        }
+    }
+
+    fn is_equal(&self, other: &AnyApplicationStatusConditions) -> bool {
+        self.zone_id == other.zone_id
+            && self.r#type == other.r#type
+            && self.status == other.status
+            && self.reason == other.reason
+            && self.msg == other.msg
+            && self.last_transition_time == other.last_transition_time
     }
 }

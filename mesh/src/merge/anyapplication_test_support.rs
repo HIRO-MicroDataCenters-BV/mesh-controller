@@ -17,11 +17,7 @@ pub mod tests {
         },
     };
 
-    pub fn make_anyapplication(
-        owner_version: Version,
-        owner_zone: &str,
-        zones: i64,
-    ) -> DynamicObject {
+    pub fn anyapp(owner_version: Version, owner_zone: &str, zones: i64) -> DynamicObject {
         let resource = AnyApplication {
             metadata: ObjectMeta {
                 name: Some("nginx-app".into()),
@@ -135,6 +131,68 @@ pub mod tests {
             r#type: cond_type.into(),
             zone_id: owner_zone.into(),
             zone_version: owner_version.to_string(),
+        }
+    }
+
+    pub fn anycond_status(
+        owner_version: Version,
+        owner_zone: &str,
+        cond_type: &str,
+        status: &str,
+    ) -> AnyApplicationStatusConditions {
+        AnyApplicationStatusConditions {
+            last_transition_time: "time".into(),
+            msg: None,
+            reason: None,
+            status: status.into(),
+            r#type: cond_type.into(),
+            zone_id: owner_zone.into(),
+            zone_version: owner_version.to_string(),
+        }
+    }
+
+    pub fn anyplacements(zone1: &str, zone2: Option<&str>) -> Vec<AnyApplicationStatusPlacements> {
+        let mut placements = vec![AnyApplicationStatusPlacements {
+            zone: zone1.into(),
+            node_affinity: None,
+        }];
+        if let Some(zone2) = zone2 {
+            placements.push(AnyApplicationStatusPlacements {
+                zone: zone2.into(),
+                node_affinity: None,
+            });
+        }
+        placements
+    }
+
+    pub fn anystatus(
+        owner_zone: &str,
+        placements: Vec<AnyApplicationStatusPlacements>,
+        conditions: Option<Vec<AnyApplicationStatusConditions>>,
+    ) -> AnyApplicationStatus {
+        AnyApplicationStatus {
+            conditions: conditions,
+            owner: owner_zone.into(),
+            placements: Some(placements),
+            state: "New".into(),
+        }
+    }
+
+    pub fn anyspec(zones: i64) -> AnyApplicationSpec {
+        AnyApplicationSpec {
+            application: AnyApplicationApplication {
+                helm: Some(AnyApplicationApplicationHelm {
+                    chart: "chart".into(),
+                    version: "1.0.0".into(),
+                    namespace: "namespace".into(),
+                    repository: "repo".into(),
+                    values: None,
+                }),
+                resource_selector: None,
+            },
+            placement_strategy: None,
+            recover_strategy: None,
+            zones: zones,
         }
     }
 }

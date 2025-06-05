@@ -33,6 +33,7 @@ pub struct ResourceArgs {
     pub group: String,
     pub version: String,
     pub kind_plural: String,
+    pub subresource: Option<String>,
     pub resource_name: Option<NamespacedName>,
     pub input: Bytes,
     pub params: BTreeMap<String, String>,
@@ -109,14 +110,21 @@ impl ApiHandler for ResourceHandler {
                 kind_plural,
                 input,
                 resource_name,
+                subresource,
                 ..
             } = request;
             let name = resource_name.ok_or(anyhow!("Resource name is not set"))?;
             let object: DynamicObject =
                 serde_json::from_slice(&input).context("Failed to deserialize input body")?;
-            let maybe_response = storage
-                .create_or_update(&group, &version, &kind_plural, &name, object)
-                .await;
+            let maybe_response = if let Some(subresource) = subresource {
+                storage
+                    .patch_subresource(&group, &version, &kind_plural, &subresource, &name, object)
+                    .await
+            } else {
+                storage
+                    .create_or_update(&group, &version, &kind_plural, &name, object)
+                    .await
+            };
 
             maybe_response.and_then(|response| ApiResponse::try_from(StatusCode::OK, response))
         })
