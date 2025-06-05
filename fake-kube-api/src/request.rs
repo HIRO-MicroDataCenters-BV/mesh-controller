@@ -94,16 +94,18 @@ impl ApiRequest {
         is_watch: bool,
     ) -> Option<Result<(Args, ApiServiceType, bool)>> {
         let path = path_and_query.path();
-        let re = Regex::new(r"^/apis/(?P<group>[^/]+)/(?P<version>[^/]+)/namespaces/(?P<namespace>[^/]+)/(?P<pluralkind>[^/]+)/(?P<name>[^/]+)").unwrap();
+        let re = Regex::new(r"^/apis/(?P<group>[^/]+)/(?P<version>[^/]+)/namespaces/(?P<namespace>[^/]+)/(?P<pluralkind>[^/]+)/(?P<name>[^/]+)(/(?P<subresource>[^/]+))?").unwrap();
         re.captures(path).map(|captures| {
             let extract_capture =
                 |name: &str| captures.name(name).map(|m| m.as_str()).unwrap_or("").into();
+            let extract_opt_capture = |name: &str| captures.name(name).map(|m| m.as_str().into());
 
             let group = extract_capture("group");
             let version = extract_capture("version");
             let kind_plural = extract_capture("pluralkind");
             let namespace = extract_capture("namespace");
             let name = extract_capture("name");
+            let subresource: Option<String> = extract_opt_capture("subresource");
 
             let resource_name = Some(NamespacedName::new(namespace, name));
             let service = ApiServiceType::Resource;
@@ -113,6 +115,7 @@ impl ApiRequest {
                     group,
                     version,
                     kind_plural,
+                    subresource,
                     input: input.clone(),
                     resource_name,
                     params: params.clone(),
@@ -148,6 +151,7 @@ impl ApiRequest {
                     kind_plural,
                     input: input.clone(),
                     resource_name: None,
+                    subresource: None,
                     params: params.clone(),
                 }),
                 service,

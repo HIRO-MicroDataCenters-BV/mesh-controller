@@ -107,7 +107,7 @@ pub struct AnyApplicationStatusConditions {
     pub zone_version: String,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
+#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema, PartialEq)]
 pub struct AnyApplicationStatusPlacements {
     #[serde(
         default,

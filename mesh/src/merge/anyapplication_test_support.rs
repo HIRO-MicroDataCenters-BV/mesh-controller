@@ -134,6 +134,23 @@ pub mod tests {
         }
     }
 
+    pub fn anycond_status(
+        owner_version: Version,
+        owner_zone: &str,
+        cond_type: &str,
+        status: &str,
+    ) -> AnyApplicationStatusConditions {
+        AnyApplicationStatusConditions {
+            last_transition_time: "time".into(),
+            msg: None,
+            reason: None,
+            status: status.into(),
+            r#type: cond_type.into(),
+            zone_id: owner_zone.into(),
+            zone_version: owner_version.to_string(),
+        }
+    }
+
     pub fn anyplacements(zone1: &str, zone2: Option<&str>) -> Vec<AnyApplicationStatusPlacements> {
         let mut placements = vec![AnyApplicationStatusPlacements {
             zone: zone1.into(),
