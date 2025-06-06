@@ -1,0 +1,23 @@
+[package]
+name = "anyapplication"
+description = ""
+version = "0.1.1"
+edition = "2024"
+publish = false
+
+[lints]
+workspace = true
+
+[lib]
+name = "anyapplication"
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+kube.workspace = true
+k8s-openapi.workspace=true
+
+[build-dependencies]
+built.workspace = true

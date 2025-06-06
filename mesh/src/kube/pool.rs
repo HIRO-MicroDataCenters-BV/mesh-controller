@@ -158,14 +158,8 @@ pub fn object_not_found(results: &Result<DynamicObject, Error>) -> bool {
 pub mod tests {
 
     use super::*;
-    use crate::kube::dynamic_object_ext::DynamicObjectExt;
-    use crate::{
-        merge::anyapplication::{
-            AnyApplication, AnyApplicationApplication, AnyApplicationApplicationHelm,
-            AnyApplicationSpec, AnyApplicationStatus,
-        },
-        tracing::setup_tracing,
-    };
+    use crate::{kube::dynamic_object_ext::DynamicObjectExt, tracing::setup_tracing};
+    use anyapplication::anyapplication::*;
     use anyhow::anyhow;
     use fake_kube_api::service::FakeKubeApiService;
     use kube::api::{ApiResource, ObjectMeta};

@@ -55,6 +55,7 @@ kube.workspace = true
 k8s-openapi.workspace=true
 either.workspace = true
 fake-kube-api.workspace = true
+anyapplication.workspace = true
 
 [dev-dependencies]
 figment = { workspace = true, features = ["test"] }

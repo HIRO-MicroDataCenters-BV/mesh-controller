@@ -1,14 +1,15 @@
 use std::collections::HashSet;
 
 use super::anyapplication::AnyApplication;
-use crate::kube::pool::Version;
-use crate::merge::anyapplication::AnyApplicationStatusConditions;
+use crate::anyapplication::AnyApplicationStatusConditions;
 use anyhow::Context;
 use anyhow::{Result, anyhow};
 use kube::api::DynamicObject;
 use serde::Serialize;
 
 pub const OWNER_VERSION: &str = "dcp.hiro.io/owner-version";
+
+pub type Version = u64;
 
 pub trait AnyApplicationExt {
     fn get_owner_version(&self) -> Result<Version>;
