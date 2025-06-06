@@ -7,23 +7,16 @@ use crate::kube::event::KubeEvent;
 use crate::kube::pool::ObjectPool;
 use crate::merge::types::MergeResult;
 use crate::mesh::event::MeshEvent;
+use crate::mesh::operation_log::OperationLog;
 use anyhow::Context;
 use anyhow::Result;
-use anyhow::anyhow;
 use futures::StreamExt;
 use loole::RecvStream;
-use p2panda_core::PublicKey;
-use p2panda_core::{Body, Header};
 use p2panda_core::{Operation, PrivateKey};
-use p2panda_store::LogStore;
 use p2panda_store::MemoryStore;
-use p2panda_store::OperationStore;
-use p2panda_stream::operation::{IngestResult, ingest_operation};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
-use tracing::debug;
-use tracing::{error, info};
-use tracing::{trace, warn};
+use tracing::{error, trace, warn};
 
 use super::operations::LinkedOperations;
 use super::partition::Partition;
@@ -31,21 +24,21 @@ use super::topic::InstanceId;
 use super::topic::MeshTopicLogMap;
 use super::{operations::Extensions, topic::MeshLogId};
 
-const DEFAULT_TICK_INTERVAL: Duration = Duration::from_secs(5);
+const DEFAULT_TICK_INTERVAL: Duration = Duration::from_secs(1);
 
 pub struct MeshActor {
     instance_id: InstanceId,
-    topic_log_map: MeshTopicLogMap,
     network_tx: mpsc::Sender<Operation<Extensions>>,
     network_rx: mpsc::Receiver<Operation<Extensions>>,
     event_rx: RecvStream<KubeEvent>,
     pool: ObjectPool,
-    store: MemoryStore<MeshLogId, Extensions>,
+    operation_log: OperationLog,
     operations: LinkedOperations,
     partition: Partition,
     cancelation: CancellationToken,
     snapshot_config: PeriodicSnapshotConfig,
     last_snapshot_time: SystemTime,
+    own_log_id: MeshLogId,
 }
 
 impl MeshActor {
@@ -63,19 +56,25 @@ impl MeshActor {
         pool: ObjectPool,
         store: MemoryStore<MeshLogId, Extensions>,
     ) -> MeshActor {
+        let own_log_id = MeshLogId(instance_id.clone());
         MeshActor {
-            operations: LinkedOperations::new(key, instance_id.clone()),
-            topic_log_map,
+            operations: LinkedOperations::new(key.clone(), instance_id.clone()),
+            operation_log: OperationLog::new(
+                own_log_id.clone(),
+                key.public_key(),
+                topic_log_map.clone(),
+                store.clone(),
+            ),
             instance_id,
             network_tx,
             network_rx,
             event_rx,
             pool,
-            store,
             partition,
             cancelation,
             snapshot_config,
             last_snapshot_time: SystemTime::now(),
+            own_log_id,
         }
     }
 
@@ -95,7 +94,7 @@ impl MeshActor {
                     }
                 }
                 Some(message) = self.network_rx.recv() => {
-                    if let Err(err) = self.on_incoming_from_network(message).await {
+                    if let Err(err) = self.on_apply(message).await {
                         error!("error while processing network event, {}", err);
                     }
                 }
@@ -110,159 +109,45 @@ impl MeshActor {
 
         if let Some(event) = event {
             let operation = self.operations.next(event);
-            self.outgoing_to_network(operation).await?;
+            self.on_apply(operation).await?;
         }
         Ok(())
     }
 
-    async fn outgoing_to_network(&mut self, operation: Operation<Extensions>) -> Result<()> {
-        let Operation {
-            hash: _,
-            header,
-            body,
-        } = operation;
-        let header_bytes = header.to_bytes();
-        let extensions = header
-            .extensions
-            .as_ref()
-            .ok_or(anyhow!("extensions are not set in header"))?;
-        let log_id = extensions.log_id.clone();
-        let prune_flag = extensions.prune_flag.is_set();
-
-        let result = ingest_operation(
-            &mut self.store,
-            header,
-            body,
-            header_bytes,
-            &log_id,
-            prune_flag,
-        )
-        .await
-        .inspect_err(|e| {
-            error!("Error during ingest operation {}", e);
-        })?;
-        match result {
-            IngestResult::Complete(op) => {
-                info!(
-                    "Outgoing Operation({}, {})",
-                    op.header.seq_num, log_id.0.zone
-                );
-                if let Err(err) = self.network_tx.send(op).await {
-                    warn!(
-                        "error sending outgoing operation, will be retried via sync {}",
-                        err
-                    );
-                }
-            }
-            IngestResult::Retry(h, _, _, ops_missing) => {
-                error!(
-                    "Outgoing Operation({}, {}), missing ops = {ops_missing}. This should never happen.",
-                    h.seq_num, log_id.0.zone
-                );
-            }
-        }
-        Ok(())
+    async fn on_apply(&mut self, operation: Operation<Extensions>) -> Result<()> {
+        self.operation_log.insert(operation.clone()).await?;
+        self.on_ready().await
     }
 
-    async fn on_incoming_from_network(&mut self, operation: Operation<Extensions>) -> Result<()> {
-        let Operation {
-            hash: _,
-            header,
-            body,
-        } = operation;
-
-        let extensions = header
-            .extensions
-            .as_ref()
-            .ok_or(anyhow!("extensions are not set in header"))?;
-        let log_id = extensions.log_id.clone();
-        let prune_flag = extensions.prune_flag.is_set();
-
-        self.incoming_from_network(header, body, &log_id, prune_flag)
-            .await
-    }
-
-    async fn incoming_from_network(
-        &mut self,
-        header: Header<Extensions>,
-        body: Option<Body>,
-        log_id: &MeshLogId,
-        prune_flag: bool,
-    ) -> Result<()> {
-        let is_obsolete = self.update_log_id(&header.public_key, log_id);
-        if is_obsolete {
-            debug!(
-                "skipping Operation({}, {}), for log {:?}",
-                log_id.0.zone, header.seq_num, log_id
-            );
-            return Ok(());
-        }
-
-        let already_exists = self.store.has_operation(header.hash()).await?;
-        if already_exists {
-            return Ok(());
-        }
-
-        let header_bytes = header.to_bytes();
-        let result = ingest_operation(
-            &mut self.store,
-            header,
-            body,
-            header_bytes,
-            log_id,
-            prune_flag,
-        )
-        .await
-        .inspect_err(|e| {
-            error!("Error during ingest operation {}", e);
-        })?;
-        match result {
-            IngestResult::Complete(op) => {
-                debug!(
-                    "Incoming Operation({},{})",
-                    log_id.0.zone, op.header.seq_num
-                );
-                if let Some(body) = op.body {
-                    let mesh_event = MeshEvent::try_from(body.to_bytes())?;
-                    let merge_results = self.partition.mesh_apply(mesh_event, &log_id.0.zone)?;
-                    for merge_result in merge_results.into_iter() {
-                        if let Err(err) = self.handle_result(merge_result).await {
-                            error!("error while merging {err}");
+    async fn on_ready(&mut self) -> Result<()> {
+        if let Some(mut ready) = self.operation_log.get_ready().await {
+            for (log_id, ops) in ready.take_incoming().into_iter() {
+                for operation in ops.into_iter() {
+                    let pointer = operation.header.seq_num;
+                    if let Some(body) = operation.body {
+                        let mesh_event = MeshEvent::try_from(body.to_bytes())?;
+                        let merge_results =
+                            self.partition.mesh_apply(mesh_event, &log_id.0.zone)?;
+                        for merge_result in merge_results.into_iter() {
+                            if let Err(err) = self.handle_result(merge_result).await {
+                                error!("error while merging {err}");
+                            }
                         }
+                        self.operation_log
+                            .advance_commit_pointer(&log_id, pointer + 1);
+                    } else {
+                        error!("event has no body");
                     }
-                } else {
-                    panic!("event has no body");
                 }
             }
-            IngestResult::Retry(h, _, _, ops_missing) => {
-                debug!(
-                    "Incoming Operation({},{}), missing ops = {:?}",
-                    log_id.0.zone, h.seq_num, ops_missing
-                );
+            for operation in ready.take_outgoing().into_iter() {
+                let pointer = operation.header.seq_num;
+                self.network_tx.send(operation).await.ok();
+                self.operation_log
+                    .advance_commit_pointer(&self.own_log_id, pointer + 1);
             }
         }
         Ok(())
-    }
-
-    fn update_log_id(&mut self, incoming_source: &PublicKey, incoming_log_id: &MeshLogId) -> bool {
-        match self.topic_log_map.get_latest_log(incoming_source) {
-            Some(latest) => match latest.0.start_time.cmp(&incoming_log_id.0.start_time) {
-                std::cmp::Ordering::Less => {
-                    debug!("new log {} found from peer", incoming_log_id);
-                    self.topic_log_map
-                        .update_log(incoming_source.to_owned(), incoming_log_id.to_owned());
-                    false
-                }
-                std::cmp::Ordering::Equal => false,
-                std::cmp::Ordering::Greater => true,
-            },
-            None => {
-                debug!("new log {} found from peer", incoming_log_id);
-                self.topic_log_map
-                    .update_log(incoming_source.to_owned(), incoming_log_id.to_owned());
-                false
-            }
-        }
     }
 
     pub async fn handle_result(&self, merge_result: MergeResult) -> Result<()> {
@@ -296,16 +181,17 @@ impl MeshActor {
     }
 
     async fn on_tick(&mut self) -> Result<()> {
+        self.on_ready().await?;
         let truncate_size =
             self.operations.count_since_snapshot() >= self.snapshot_config.snapshot_max_log;
-        let truncate_time = SystemTime::now()
+        let snapshot_time = SystemTime::now()
             .duration_since(self.last_snapshot_time)
             .context("compute duration since last snapshot time")?
             .as_secs()
             > self.snapshot_config.snapshot_interval_seconds;
-        if truncate_size || truncate_time {
+        if truncate_size || snapshot_time {
             self.send_snapshot().await?;
-            self.truncate_obsolete_logs().await?;
+            self.operation_log.truncate_obsolete_logs().await?;
         }
         Ok(())
     }
@@ -314,26 +200,8 @@ impl MeshActor {
         trace!("Periodic snapshot");
         let event = self.partition.mesh_snapshot(&self.instance_id.zone);
         let operation = self.operations.next(event);
-        self.outgoing_to_network(operation).await?;
+        self.on_apply(operation).await?;
         self.last_snapshot_time = SystemTime::now();
-        Ok(())
-    }
-
-    async fn truncate_obsolete_logs(&mut self) -> Result<()> {
-        for (source, log_ids) in self.topic_log_map.take_obsolete_log_ids() {
-            for log_id in log_ids {
-                if let Some((header, _)) = self.store.latest_operation(&source, &log_id).await? {
-                    trace!("Truncating log {log_id:?}");
-                    if let Err(err) = self
-                        .store
-                        .delete_operations(&source, &log_id, header.seq_num)
-                        .await
-                    {
-                        error!("Error while truncating log {log_id:?}: {err}");
-                    }
-                }
-            }
-        }
         Ok(())
     }
 }
