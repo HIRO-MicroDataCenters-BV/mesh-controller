@@ -137,7 +137,7 @@ impl OperationLog {
         for operation in batch {
             match self.insert_internal(operation).await? {
                 IngestResult::Complete(operation) => {
-                    let Some(pending) = self.incoming_pending.get_mut(&key) else {
+                    let Some(pending) = self.incoming_pending.get_mut(key) else {
                         break;
                     };
                     pending.remove(&operation.header.seq_num);
@@ -151,7 +151,7 @@ impl OperationLog {
     }
 
     async fn get_pending_batch(&self, key: &LogKey) -> Result<Vec<Operation<Extensions>>> {
-        let Some(pending) = self.incoming_pending.get(&key) else {
+        let Some(pending) = self.incoming_pending.get(key) else {
             return Ok(vec![]);
         };
 
@@ -159,10 +159,10 @@ impl OperationLog {
             return Ok(vec![]);
         };
 
-        let pointer = header.seq_num + 1;
+        let next_pointer = header.seq_num + 1;
 
         let pending_bulk = pending
-            .range(pointer..)
+            .range(next_pointer..)
             .take(MAX_PENDING_BATCH_SIZE)
             .map(|(_, v)| v.clone())
             .collect::<Vec<_>>();
@@ -243,10 +243,10 @@ impl OperationLog {
     }
 
     async fn get_ready_outgoing(&self) -> Vec<Operation<Extensions>> {
-        let own_pointer = self.pointers.get_current(&self.own_log_id).expect(&format!(
-            "No current pointer for own log {}",
-            self.own_log_id
-        ));
+        let own_pointer = self
+            .pointers
+            .get_current(&self.own_log_id)
+            .unwrap_or_else(|| panic!("No current pointer for own log {}", self.own_log_id));
         self.get_operations(&self.own_public_key, &self.own_log_id, own_pointer)
             .await
             .unwrap_or_default()
@@ -258,7 +258,7 @@ impl OperationLog {
         log_id: &MeshLogId,
         from: SeqNum,
     ) -> Option<Vec<Operation<Extensions>>> {
-        match self.store.get_log(&peer_id, &log_id, Some(from)).await {
+        match self.store.get_log(peer_id, log_id, Some(from)).await {
             Ok(log) => log
                 .unwrap_or_default()
                 .into_iter()
@@ -296,6 +296,12 @@ pub struct Ready {
     outgoing: Vec<Operation<Extensions>>,
 }
 
+impl Default for Ready {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Ready {
     pub fn new() -> Self {
         Self {
@@ -318,6 +324,12 @@ pub type SeqNum = u64;
 #[derive(Debug, Clone, PartialEq)]
 pub struct LogPointers {
     pointers: HashMap<MeshLogId, SeqNum>,
+}
+
+impl Default for LogPointers {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl LogPointers {

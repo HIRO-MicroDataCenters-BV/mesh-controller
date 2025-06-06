@@ -112,12 +112,10 @@ impl MeshTopicLogMap {
             .iter()
             .filter_map(|entry| {
                 let peer = entry.key().to_owned();
-                let log_id = entry.value().clone();
-                if log_id.is_some() {
-                    Some((peer, log_id.unwrap()))
-                } else {
-                    None
-                }
+                entry
+                    .value()
+                    .as_ref()
+                    .map(|log_id| (peer, log_id.to_owned()))
             })
             .collect()
     }
