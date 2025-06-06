@@ -121,6 +121,13 @@ impl MeshActor {
 
     async fn on_ready(&mut self) -> Result<()> {
         if let Some(mut ready) = self.operation_log.get_ready().await {
+            for operation in ready.take_outgoing().into_iter() {
+                let pointer = operation.header.seq_num;
+                self.network_tx.send(operation).await.ok();
+                self.operation_log
+                    .advance_log_pointer(&self.own_log_id, pointer + 1);
+            }
+
             for (log_id, ops) in ready.take_incoming().into_iter() {
                 for operation in ops.into_iter() {
                     let pointer = operation.header.seq_num;
@@ -133,18 +140,11 @@ impl MeshActor {
                                 error!("error while merging {err}");
                             }
                         }
-                        self.operation_log
-                            .advance_commit_pointer(&log_id, pointer + 1);
+                        self.operation_log.advance_log_pointer(&log_id, pointer + 1);
                     } else {
                         error!("event has no body");
                     }
                 }
-            }
-            for operation in ready.take_outgoing().into_iter() {
-                let pointer = operation.header.seq_num;
-                self.network_tx.send(operation).await.ok();
-                self.operation_log
-                    .advance_commit_pointer(&self.own_log_id, pointer + 1);
             }
         }
         Ok(())

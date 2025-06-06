@@ -279,14 +279,8 @@ impl OperationLog {
         }
     }
 
-    pub fn advance_commit_pointer(&mut self, log_id: &MeshLogId, seq_num: SeqNum) {
-        if let Some(current) = self.pointers.get_current(log_id) {
-            if seq_num > current {
-                self.pointers.pointers.insert(log_id.clone(), seq_num);
-            }
-        } else {
-            self.pointers.pointers.insert(log_id.clone(), seq_num);
-        }
+    pub fn advance_log_pointer(&mut self, log_id: &MeshLogId, seq_num: SeqNum) {
+        self.pointers.advance(log_id, seq_num);
     }
 }
 
@@ -350,7 +344,7 @@ impl LogPointers {
         self.pointers.get(log_id).cloned()
     }
 
-    pub fn advance_commit_pointer(&mut self, log_id: &MeshLogId, seq_num: SeqNum) {
+    pub fn advance(&mut self, log_id: &MeshLogId, seq_num: SeqNum) {
         if let Some(current) = self.get_current(log_id) {
             if seq_num > current {
                 self.pointers.insert(log_id.clone(), seq_num);
