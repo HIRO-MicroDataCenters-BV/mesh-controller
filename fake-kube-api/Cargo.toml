@@ -32,6 +32,7 @@ strum.workspace = true
 regex.workspace = true
 http-body.workspace = true
 http-body-util.workspace = true
+tokio-stream.workspace = true
 
 [build-dependencies]
 built.workspace = true

@@ -8,9 +8,9 @@ use futures::Stream;
 use futures::StreamExt;
 use kube::api::{ApiResource, DynamicObject, GroupVersionKind, WatchEvent};
 use kube::error::ErrorResponse;
-use loole::Receiver;
-use loole::Sender;
 use tokio::sync::RwLock;
+use tokio::sync::broadcast::{Receiver, Sender};
+use tokio_stream::wrappers::BroadcastStream;
 use tracing::error;
 
 pub type ResourceVersion = u64;
@@ -29,20 +29,21 @@ pub struct Storage {
     resource_uids: AtomicU64,
     changelog: RwLock<BTreeMap<ResourceVersion, WatchEvent<DynamicObject>>>,
     event_tx: Sender<WatchEvent<DynamicObject>>,
+    #[allow(dead_code)]
     event_rx: Receiver<WatchEvent<DynamicObject>>,
 }
 
 impl Storage {
     pub fn new() -> Storage {
-        let (event_tx, event_rx) = loole::unbounded();
+        let (event_tx, event_rx) = tokio::sync::broadcast::channel(256);
         Storage {
             metadata: DashMap::new(),
             resources: DashMap::new(),
             resource_versions: AtomicU64::new(1),
             resource_uids: AtomicU64::new(1),
             changelog: RwLock::new(BTreeMap::new()),
-            event_rx,
             event_tx,
+            event_rx,
         }
     }
 
@@ -146,21 +147,12 @@ impl Storage {
 
         let existing_events = futures::stream::iter(items);
 
-        let future_updates = futures::stream::unfold(
-            (self.event_rx.clone(), false),
-            move |(event_rx, is_terminated)| async move {
-                if is_terminated {
-                    None
-                } else {
-                    match event_rx.recv_async().await {
-                        Ok(event) => Some((event, (event_rx, false))),
-                        Err(e) => Some((watch_event_error(e), (event_rx, true))),
-                    }
-                }
-            },
-        );
-
-        Ok(existing_events.chain(future_updates).boxed())
+        let event_rx = self.event_tx.subscribe();
+        let events = BroadcastStream::new(event_rx).map(|result| match result {
+            Ok(event) => event,
+            Err(e) => watch_event_error(e),
+        });
+        Ok(existing_events.chain(events).boxed())
     }
 
     pub async fn create_or_update(
@@ -303,7 +295,8 @@ impl Storage {
                 changelog.insert(new_version, event.clone());
                 self.event_tx
                     .send(event)
-                    .unwrap_or_else(|e| error!("Failed to send event: {}", e));
+                    .inspect_err(|e| error!("Failed to send event: {}", e))
+                    .ok();
                 Ok(updated)
             } else {
                 let updated = update_fn(Some(&entry.resource), resource)?;
@@ -313,7 +306,8 @@ impl Storage {
                 changelog.insert(new_version, event.clone());
                 self.event_tx
                     .send(event)
-                    .unwrap_or_else(|e| error!("Failed to send event: {}", e));
+                    .inspect_err(|e| error!("Failed to send event: {}", e))
+                    .ok();
                 Ok(updated)
             }
         } else {
@@ -330,7 +324,8 @@ impl Storage {
             changelog.insert(new_version, event.clone());
             self.event_tx
                 .send(event)
-                .unwrap_or_else(|e| error!("Failed to send event: {}", e));
+                .inspect_err(|e| error!("Failed to send event: {}", e))
+                .ok();
             Ok(updated)
         }
     }
@@ -367,7 +362,8 @@ impl Storage {
                 changelog.insert(new_version, event.clone());
                 self.event_tx
                     .send(event)
-                    .unwrap_or_else(|e| error!("Failed to send event: {}", e));
+                    .inspect_err(|e| error!("Failed to send event: {}", e))
+                    .ok();
                 Some(resource.clone())
             }
         } else {
