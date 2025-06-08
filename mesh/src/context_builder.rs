@@ -6,7 +6,6 @@ use crate::context::Context;
 use crate::http::api::MeshApiImpl;
 
 use crate::api::server::MeshHTTPServer;
-use crate::kube::pool::ObjectPool;
 use crate::mesh::mesh::Mesh;
 use crate::mesh::operations::Extensions;
 use crate::mesh::peer_discovery::PeerDiscovery;
@@ -80,12 +79,11 @@ impl ContextBuilder {
         let cancellation = CancellationToken::new();
         let mesh_node = mesh_runtime.block_on(async {
             let client = ContextBuilder::build_kube_client(&self.config).await?;
-            let pool = ObjectPool::new(client);
 
             let node = ContextBuilder::init(
                 self.config.clone(),
                 self._private_key.clone(),
-                pool,
+                client,
                 cancellation.clone(),
             )
             .await
@@ -115,7 +113,7 @@ impl ContextBuilder {
     async fn init(
         config: Config,
         private_key: PrivateKey,
-        pool: ObjectPool,
+        client: KubeClient,
         cancelation: CancellationToken,
     ) -> Result<MeshNode> {
         let (node_config, p2p_network_config) = MeshNode::configure_p2p_network(&config).await?;
@@ -134,7 +132,7 @@ impl ContextBuilder {
             &config.mesh,
             instance_id,
             cancelation,
-            pool,
+            client,
             topic_log_map.clone(),
             log_store.clone(),
             network_tx,

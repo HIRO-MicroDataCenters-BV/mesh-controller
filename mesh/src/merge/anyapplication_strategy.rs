@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use super::types::{MergeResult, MergeStrategy, UpdateResult};
-use crate::kube::{dynamic_object_ext::DynamicObjectExt, pool::Version};
+use crate::kube::{dynamic_object_ext::DynamicObjectExt, subscriptions::Version};
 use anyapplication::{
     anyapplication::{
         AnyApplication, AnyApplicationSpec, AnyApplicationStatus, AnyApplicationStatusConditions,

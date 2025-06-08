@@ -283,7 +283,7 @@ pub mod tests {
     use kube::api::{DynamicObject, ObjectMeta};
 
     use crate::{
-        kube::{dynamic_object_ext::DynamicObjectExt, event::KubeEvent, pool::Version},
+        kube::{dynamic_object_ext::DynamicObjectExt, event::KubeEvent, subscriptions::Version},
         merge::{
             anyapplication_strategy::AnyApplicationMerge,
             anyapplication_test_support::tests::{anycond, anyplacements, anyspec},

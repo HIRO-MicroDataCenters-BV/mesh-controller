@@ -13,7 +13,7 @@ pub mod tests {
     };
     use kube::api::{DynamicObject, ObjectMeta};
 
-    use crate::kube::pool::Version;
+    use crate::kube::subscriptions::Version;
 
     pub fn anyapp(owner_version: Version, owner_zone: &str, zones: i64) -> DynamicObject {
         let resource = AnyApplication {

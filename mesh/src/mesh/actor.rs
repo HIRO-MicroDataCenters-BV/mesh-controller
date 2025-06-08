@@ -4,7 +4,7 @@ use std::time::SystemTime;
 use crate::config::configuration::PeriodicSnapshotConfig;
 use crate::kube::dynamic_object_ext::DynamicObjectExt;
 use crate::kube::event::KubeEvent;
-use crate::kube::pool::ObjectPool;
+use crate::kube::subscriptions::Subscriptions;
 use crate::merge::types::MergeResult;
 use crate::mesh::event::MeshEvent;
 use crate::mesh::operation_log::OperationLog;
@@ -31,7 +31,7 @@ pub struct MeshActor {
     network_tx: mpsc::Sender<Operation<Extensions>>,
     network_rx: mpsc::Receiver<Operation<Extensions>>,
     event_rx: RecvStream<KubeEvent>,
-    pool: ObjectPool,
+    subscriptions: Subscriptions,
     operation_log: OperationLog,
     operations: LinkedOperations,
     partition: Partition,
@@ -53,7 +53,7 @@ impl MeshActor {
         network_tx: mpsc::Sender<Operation<Extensions>>,
         network_rx: mpsc::Receiver<Operation<Extensions>>,
         event_rx: RecvStream<KubeEvent>,
-        pool: ObjectPool,
+        subscriptions: Subscriptions,
         store: MemoryStore<MeshLogId, Extensions>,
     ) -> MeshActor {
         let own_log_id = MeshLogId(instance_id.clone());
@@ -69,7 +69,7 @@ impl MeshActor {
             network_tx,
             network_rx,
             event_rx,
-            pool,
+            subscriptions,
             partition,
             cancelation,
             snapshot_config,
@@ -155,19 +155,34 @@ impl MeshActor {
             MergeResult::Create { mut object } | MergeResult::Update { mut object } => {
                 let gvk = object.get_gvk()?;
                 let name = object.get_namespaced_name();
-                if let Some(existing) = self.pool.client().direct_get(&gvk, &name).await? {
+                if let Some(existing) = self.subscriptions.client().direct_get(&gvk, &name).await? {
                     object.types = existing.types;
                     object.metadata.managed_fields = None;
                     object.metadata.uid = existing.metadata.uid;
                     object.metadata.resource_version = existing.metadata.resource_version;
-                    self.pool.client().direct_patch_apply(object).await?;
+                    self.subscriptions
+                        .client()
+                        .direct_patch_apply(object)
+                        .await?;
                 } else {
-                    self.pool.client().direct_patch_apply(object).await?;
+                    self.subscriptions
+                        .client()
+                        .direct_patch_apply(object)
+                        .await?;
                 }
             }
             MergeResult::Delete { gvk, name } => {
-                if self.pool.client().direct_get(&gvk, &name).await?.is_some() {
-                    self.pool.client().direct_delete(&gvk, &name).await?;
+                if self
+                    .subscriptions
+                    .client()
+                    .direct_get(&gvk, &name)
+                    .await?
+                    .is_some()
+                {
+                    self.subscriptions
+                        .client()
+                        .direct_delete(&gvk, &name)
+                        .await?;
                 } else {
                     warn!("Object not found {name} {gvk:?}. Skipping delete.");
                 }

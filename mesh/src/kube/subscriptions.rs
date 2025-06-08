@@ -1,6 +1,5 @@
 use crate::{JoinErrToStr, client::kube_client::KubeClient};
 
-use super::types::NamespacedName;
 use super::{event::KubeEvent, subscription::Subscription};
 use anyhow::Result;
 use dashmap::DashMap;
@@ -13,38 +12,30 @@ use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::AbortOnDropHandle;
 
-pub type UID = String;
 pub type Version = u64;
-pub type NamedObjects = DashMap<NamespacedName, DashMap<UID, ObjectEntry>>;
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct ObjectEntry {
-    pub version: Version,
-    pub resource: Arc<DynamicObject>,
-    pub tombstone: bool,
-}
+pub type SubscriberId = u64;
 
 #[derive(Debug, Clone)]
 pub struct SubscriptionEntry {
+    pub gvk: GroupVersionKind,
     pub pool_tx: loole::Sender<KubeEvent>,
-    pub subscriber_rx: loole::Receiver<KubeEvent>,
     pub cancellation: CancellationToken,
     #[allow(dead_code)]
     handle: Shared<MapErr<AbortOnDropHandle<()>, JoinErrToStr>>,
 }
 
 #[derive(Clone)]
-pub struct ObjectPool {
-    inner: Arc<RwLock<Subscriptions>>,
+pub struct Subscriptions {
+    inner: Arc<RwLock<SubscriptionsInner>>,
     client: KubeClient,
     root: CancellationToken,
 }
 
-impl ObjectPool {
+impl Subscriptions {
     pub fn new(client: KubeClient) -> Self {
         let root = CancellationToken::new();
         Self {
-            inner: Arc::new(RwLock::new(Subscriptions::new(
+            inner: Arc::new(RwLock::new(SubscriptionsInner::new(
                 client.clone(),
                 root.clone(),
             ))),
@@ -57,12 +48,12 @@ impl ObjectPool {
         &self,
         gvk: &GroupVersionKind,
         namespace: &Option<String>,
-    ) -> Result<loole::Receiver<KubeEvent>> {
+    ) -> Result<(loole::Receiver<KubeEvent>, SubscriberId)> {
         self.inner.write().await.subscribe(gvk, namespace).await
     }
 
-    pub async fn unsubscribe(&self, gvk: &GroupVersionKind) -> anyhow::Result<()> {
-        self.inner.write().await.unsubscribe(gvk).await
+    pub async fn unsubscribe(&self, subscriber_id: &SubscriberId) -> anyhow::Result<()> {
+        self.inner.write().await.unsubscribe(subscriber_id).await
     }
 
     pub fn shutdown(&self) -> Result<()> {
@@ -75,18 +66,18 @@ impl ObjectPool {
     }
 }
 
-pub struct Subscriptions {
-    resources: DashMap<GroupVersionKind, Arc<NamedObjects>>,
-    subscriptions: DashMap<GroupVersionKind, SubscriptionEntry>,
+pub struct SubscriptionsInner {
+    subscriptions: DashMap<SubscriberId, SubscriptionEntry>,
+    ids: SubscriberId,
     client: KubeClient,
     root: CancellationToken,
 }
 
-impl Subscriptions {
+impl SubscriptionsInner {
     pub fn new(client: KubeClient, root: CancellationToken) -> Self {
         Self {
-            resources: DashMap::new(),
             subscriptions: DashMap::new(),
+            ids: 0,
             root,
             client,
         }
@@ -96,52 +87,44 @@ impl Subscriptions {
         &self,
         gvk: &GroupVersionKind,
         namespace: &Option<String>,
-    ) -> Result<loole::Receiver<KubeEvent>> {
-        let entry = self
-            .subscriptions
-            .entry(gvk.clone())
-            .or_insert_with(|| self.new_subscription(gvk, namespace));
+    ) -> Result<(loole::Receiver<KubeEvent>, SubscriberId)> {
+        let (entry, subscriber_rx) = self.new_subscription(gvk, namespace);
 
-        let subscriber_rx = entry.value().subscriber_rx.clone();
-        Ok(subscriber_rx)
+        let id = self.ids + 1;
+        self.subscriptions.insert(id, entry);
+
+        Ok((subscriber_rx, id))
     }
 
     fn new_subscription(
         &self,
         gvk: &GroupVersionKind,
         namespace: &Option<String>,
-    ) -> SubscriptionEntry {
+    ) -> (SubscriptionEntry, loole::Receiver<KubeEvent>) {
         let (pool_tx, subscriber_rx) = loole::unbounded();
 
-        let resources = self
-            .resources
-            .entry(gvk.to_owned())
-            .or_insert_with(|| Arc::new(DashMap::new()))
-            .value()
-            .clone();
         let cancelation = self.root.child_token();
         let subscription = Subscription::new(
             self.client.to_owned(),
             gvk.to_owned(),
             pool_tx.to_owned(),
-            resources,
             cancelation.to_owned(),
             namespace.to_owned(),
         );
         let handle = subscription.run();
-        SubscriptionEntry {
+        let entry = SubscriptionEntry {
+            gvk: gvk.to_owned(),
             pool_tx,
-            subscriber_rx,
             cancellation: cancelation.to_owned(),
             handle,
-        }
+        };
+        (entry, subscriber_rx)
     }
 
-    pub async fn unsubscribe(&self, gvk: &GroupVersionKind) -> anyhow::Result<()> {
-        if let Some((_, subscription_entry)) = self.subscriptions.remove(gvk) {
+    pub async fn unsubscribe(&self, subscriber_id: &SubscriberId) -> anyhow::Result<()> {
+        if let Some((_, subscription_entry)) = self.subscriptions.remove(subscriber_id) {
             subscription_entry.cancellation.cancel();
             subscription_entry.pool_tx.close();
-            self.resources.remove(gvk);
         }
         Ok(())
     }
@@ -182,9 +165,9 @@ pub mod tests {
             .await
             .expect("saving kubernetes resource");
 
-        let cache = ObjectPool::new(KubeClient::build_fake(service));
+        let cache = Subscriptions::new(KubeClient::build_fake(service));
 
-        let subscriber = cache
+        let (subscriber, id) = cache
             .subscribe(&gvk, &None)
             .await
             .expect("cache subscription");
@@ -199,7 +182,7 @@ pub mod tests {
         }
 
         subscriber.close();
-        assert!(!cache.unsubscribe(&gvk).await.is_err());
+        assert!(!cache.unsubscribe(&id).await.is_err());
 
         cache.shutdown().expect("cache shutdown");
     }
@@ -215,7 +198,7 @@ pub mod tests {
         service.register(&ar);
 
         let client = KubeClient::build_fake(service);
-        let cache = ObjectPool::new(client.clone());
+        let cache = Subscriptions::new(client.clone());
 
         let resource = anyapplication();
 
@@ -254,7 +237,7 @@ pub mod tests {
             .expect("saving kubernetes resource");
 
         let client = KubeClient::build_fake(service);
-        let cache = ObjectPool::new(client.clone());
+        let cache = Subscriptions::new(client.clone());
 
         let mut to_update = client
             .direct_get(&gvk, &resource_name)
@@ -300,7 +283,7 @@ pub mod tests {
             .expect("saving kubernetes resource");
 
         let client = KubeClient::build_fake(service);
-        let cache = ObjectPool::new(client.clone());
+        let cache = Subscriptions::new(client.clone());
 
         let status = client
             .direct_delete(&gvk, &resource_name)
@@ -335,9 +318,9 @@ pub mod tests {
         service.register(&ar);
 
         let client = KubeClient::build_fake(service);
-        let cache = ObjectPool::new(client.clone());
+        let cache = Subscriptions::new(client.clone());
 
-        let subscriber = cache
+        let (subscriber, id) = cache
             .subscribe(&gvk, &None)
             .await
             .expect("cache subscription");
@@ -390,7 +373,7 @@ pub mod tests {
             KubeEvent::Delete { .. }
         ));
         subscriber.close();
-        assert!(!cache.unsubscribe(&gvk).await.is_err());
+        assert!(!cache.unsubscribe(&id).await.is_err());
 
         cache.shutdown().expect("cache shutdown");
     }

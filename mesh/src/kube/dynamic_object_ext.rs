@@ -3,7 +3,7 @@ use kube::ResourceExt;
 use kube::api::{DynamicObject, GroupVersionKind};
 use serde_json::{Value, json};
 
-use super::pool::Version;
+use super::subscriptions::Version;
 use super::types::NamespacedName;
 
 const OWNER_VERSION: &str = "dcp.hiro.io/owner-version";

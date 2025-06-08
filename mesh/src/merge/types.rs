@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use anyhow::Result;
 use kube::api::{DynamicObject, GroupVersionKind};
 
-use crate::kube::{pool::Version, types::NamespacedName};
+use crate::kube::{subscriptions::Version, types::NamespacedName};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum MergeResult {

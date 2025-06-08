@@ -1,5 +1,5 @@
 use super::types::{MergeResult, MergeStrategy, UpdateResult};
-use crate::kube::{dynamic_object_ext::DynamicObjectExt, pool::Version};
+use crate::kube::{dynamic_object_ext::DynamicObjectExt, subscriptions::Version};
 use anyhow::Result;
 use kube::api::{DynamicObject, GroupVersionKind, TypeMeta};
 
@@ -139,7 +139,7 @@ pub mod tests {
     use kube::api::DynamicObject;
 
     use super::*;
-    use crate::kube::{dynamic_object_ext::DynamicObjectExt, pool::Version};
+    use crate::kube::{dynamic_object_ext::DynamicObjectExt, subscriptions::Version};
 
     #[test]
     pub fn non_existing_create() {
