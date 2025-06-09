@@ -6,7 +6,6 @@ use crate::{
 use anyhow::{Context, Result, anyhow};
 use dashmap::DashMap;
 use either::Either;
-use fake_kube_api::service::FakeKubeApiService;
 use futures::Stream;
 use kube::Error;
 use kube::api::ApiResource;
@@ -33,7 +32,8 @@ impl KubeClient {
         })
     }
 
-    pub fn build_fake(svc: FakeKubeApiService) -> KubeClient {
+    #[cfg(test)]
+    pub fn build_fake(svc: fake_kube_api::service::FakeKubeApiService) -> KubeClient {
         let client = kube::Client::new(svc, "default");
         KubeClient {
             client,

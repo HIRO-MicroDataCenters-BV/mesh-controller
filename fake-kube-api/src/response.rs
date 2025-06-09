@@ -34,7 +34,7 @@ impl ApiResponse {
     ) -> Result<http::Response<UnifiedBody>> {
         let frames: EventBytesStream = Box::pin(stream.map(|e| {
             let event_str = serde_json::to_string(&e).context("cannot serialize event to json");
-            event_str.map(|e| Frame::data(Bytes::from(e)))
+            event_str.map(|e| Frame::data(Bytes::from(format!("{e}\n"))))
         }));
 
         let response = Response::builder()

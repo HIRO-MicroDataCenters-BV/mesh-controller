@@ -1,4 +1,5 @@
 use std::pin::Pin;
+use std::sync::Arc;
 use std::{collections::BTreeMap, sync::atomic::AtomicU64};
 
 use crate::dynamic_object_ext::{DynamicObjectExt, NamespacedName};
@@ -24,7 +25,7 @@ pub struct ResourceEntry {
 
 pub struct Storage {
     metadata: DashMap<GroupVersionKind, Vec<ApiResource>>,
-    resources: DashMap<GroupVersionKind, DashMap<NamespacedName, ResourceEntry>>,
+    resources: DashMap<GroupVersionKind, Arc<DashMap<NamespacedName, ResourceEntry>>>,
     resource_versions: AtomicU64,
     resource_uids: AtomicU64,
     changelog: RwLock<BTreeMap<ResourceVersion, WatchEvent<DynamicObject>>>,
@@ -42,8 +43,8 @@ impl Storage {
             resource_versions: AtomicU64::new(1),
             resource_uids: AtomicU64::new(1),
             changelog: RwLock::new(BTreeMap::new()),
-            event_tx,
             event_rx,
+            event_tx,
         }
     }
 
@@ -60,10 +61,10 @@ impl Storage {
             bail!("Resource {gvk:?} is not registred.");
         }
         let resources = self.resources.entry(gvk.to_owned()).or_default();
-
+        let resources = resources.value().clone();
         let ns_name = resource.get_namespaced_name();
 
-        self.update_internal(resource, resources.value(), &ns_name, |_, new| Ok(new))
+        self.update_internal(resource, resources, &ns_name, |_, new| Ok(new))
             .await
             .map(|_| ())
     }
@@ -95,31 +96,28 @@ impl Storage {
         version: &str,
         kind_plural: &str,
     ) -> Option<(ApiResource, Vec<DynamicObject>)> {
-        if let Some(api_resource) = self.get_api_resource(group, version, kind_plural) {
-            let gvk = GroupVersionKind::gvk(
-                &api_resource.group,
-                &api_resource.version,
-                &api_resource.kind,
-            );
+        let api_resource = self.get_api_resource(group, version, kind_plural)?;
+        let gvk = GroupVersionKind::gvk(
+            &api_resource.group,
+            &api_resource.version,
+            &api_resource.kind,
+        );
 
-            let resources = self
-                .resources
-                .get(&gvk)
-                .map(|v| {
-                    v.value()
-                        .iter()
-                        .filter(|v| !v.tombstone)
-                        .map(|v| v.value().resource.clone())
-                        .collect()
-                })
-                .unwrap_or_default();
-            Some((api_resource, resources))
-        } else {
-            None
-        }
+        let resources = self
+            .resources
+            .get(&gvk)
+            .map(|v| {
+                v.value()
+                    .iter()
+                    .filter(|v| !v.tombstone)
+                    .map(|v| v.value().resource.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        Some((api_resource, resources))
     }
 
-    pub async fn subscribe(
+    pub async fn watch_events(
         &self,
         group: &str,
         version: &str,
@@ -155,7 +153,7 @@ impl Storage {
         Ok(existing_events.chain(events).boxed())
     }
 
-    pub async fn create_or_update(
+    pub async fn patch(
         &self,
         group: &str,
         version: &str,
@@ -163,25 +161,27 @@ impl Storage {
         ns_name: &NamespacedName,
         resource: DynamicObject,
     ) -> Result<DynamicObject> {
-        if let Some(api_resource) = self.get_api_resource(group, version, kind_plural) {
-            let gvk = GroupVersionKind::gvk(
-                &api_resource.group,
-                &api_resource.version,
-                &api_resource.kind,
-            );
+        let Some(api_resource) = self.get_api_resource(group, version, kind_plural) else {
+            return Err(anyhow!("ApiResource is not registered"));
+        };
 
-            if let Some(entry) = self.resources.get_mut(&gvk) {
-                let named_resources = entry.value();
-                self.update_internal(resource, named_resources, ns_name, |_, new| Ok(new))
-                    .await
-            } else {
-                Err(anyhow!(
-                    "Group, Vesion, Kind ({group},{version},{kind_plural}) is not registered"
-                ))
-            }
-        } else {
-            Err(anyhow!("ApiResource is not registered"))
-        }
+        let gvk = GroupVersionKind::gvk(
+            &api_resource.group,
+            &api_resource.version,
+            &api_resource.kind,
+        );
+
+        let Some(entry) = self.resources.get(&gvk) else {
+            return Err(anyhow!(
+                "Group, Vesion, Kind ({group},{version},{kind_plural}) is not registered"
+            ));
+        };
+
+        let named_resources = entry.value().clone();
+        drop(entry); // Drop the lock before calling update_internal
+
+        self.update_internal(resource, named_resources, ns_name, |_, new| Ok(new))
+            .await
     }
 
     pub async fn patch_subresource(
@@ -193,46 +193,47 @@ impl Storage {
         ns_name: &NamespacedName,
         object: DynamicObject,
     ) -> Result<DynamicObject> {
-        if let Some(api_resource) = self.get_api_resource(group, version, kind_plural) {
-            let gvk = GroupVersionKind::gvk(
-                &api_resource.group,
-                &api_resource.version,
-                &api_resource.kind,
-            );
+        let Some(api_resource) = self.get_api_resource(group, version, kind_plural) else {
+            return Err(anyhow!("ApiResource is not registered"));
+        };
 
-            if let Some(entry) = self.resources.get_mut(&gvk) {
-                let named_resources = entry.value();
-                let update_fn = |current: Option<&DynamicObject>,
-                                 new: DynamicObject|
-                 -> Result<DynamicObject> {
-                    match current {
-                        Some(current) => {
-                            if let Some(status) = new.data.get(subresource) {
-                                let mut dst = current.clone();
-                                let obj = dst.data.as_object_mut().unwrap();
-                                obj.insert(subresource.to_string(), status.clone());
-                                Ok(dst)
-                            } else {
-                                Err(anyhow!(
-                                    "No subresource {subresource} in source DynamicObject"
-                                ))
-                            }
-                        }
-                        None => Err(anyhow!(
-                            "patching subresource {subresource} of non existing object"
-                        )),
+        let gvk = GroupVersionKind::gvk(
+            &api_resource.group,
+            &api_resource.version,
+            &api_resource.kind,
+        );
+
+        let Some(entry) = self.resources.get(&gvk) else {
+            return Err(anyhow!(
+                "Group, Vesion, Kind ({group},{version},{kind_plural}) is not registered"
+            ));
+        };
+
+        let named_resources = entry.value().clone();
+        drop(entry); // Drop the lock before calling update_internal
+
+        let update_fn =
+            |current: Option<&DynamicObject>, new: DynamicObject| -> Result<DynamicObject> {
+                match current {
+                    Some(current) => {
+                        let Some(status) = new.data.get(subresource) else {
+                            return Err(anyhow!(
+                                "No subresource {subresource} in source DynamicObject"
+                            ));
+                        };
+                        let mut dst = current.clone();
+                        let obj = dst.data.as_object_mut().unwrap();
+                        obj.insert(subresource.to_string(), status.clone());
+                        Ok(dst)
                     }
-                };
-                self.update_internal(object, named_resources, ns_name, update_fn)
-                    .await
-            } else {
-                Err(anyhow!(
-                    "Group, Vesion, Kind ({group},{version},{kind_plural}) is not registered"
-                ))
-            }
-        } else {
-            Err(anyhow!("ApiResource is not registered"))
-        }
+                    None => Err(anyhow!(
+                        "patching subresource {subresource} of non existing object"
+                    )),
+                }
+            };
+
+        self.update_internal(object, named_resources, ns_name, update_fn)
+            .await
     }
 
     pub async fn delete(
@@ -242,31 +243,33 @@ impl Storage {
         kind_plural: &str,
         ns_name: &NamespacedName,
     ) -> Result<DynamicObject> {
-        if let Some(api_resource) = self.get_api_resource(group, version, kind_plural) {
-            let gvk = GroupVersionKind::gvk(
-                &api_resource.group,
-                &api_resource.version,
-                &api_resource.kind,
-            );
+        let Some(api_resource) = self.get_api_resource(group, version, kind_plural) else {
+            return Err(anyhow!("ApiResource is not registered"));
+        };
 
-            if let Some(entry) = self.resources.get_mut(&gvk) {
-                let named_resources = entry.value();
-                let deleted = self.delete_internal(named_resources, ns_name).await;
-                deleted.ok_or(anyhow!("Object is not found"))
-            } else {
-                Err(anyhow!(
-                    "Group, Vesion, Kind ({group},{version},{kind_plural}) is not registered"
-                ))
-            }
-        } else {
-            Err(anyhow!("ApiResource is not registered"))
-        }
+        let gvk = GroupVersionKind::gvk(
+            &api_resource.group,
+            &api_resource.version,
+            &api_resource.kind,
+        );
+
+        let Some(entry) = self.resources.get(&gvk) else {
+            return Err(anyhow!(
+                "Group, Vesion, Kind ({group},{version},{kind_plural}) is not registered"
+            ));
+        };
+
+        let named_resources = entry.value().clone();
+        drop(entry); // Drop the lock before calling delete_internal
+
+        let deleted = self.delete_internal(named_resources, ns_name).await;
+        deleted.ok_or(anyhow!("Object is not found"))
     }
 
     async fn update_internal<F>(
         &self,
-        mut resource: DynamicObject,
-        resources: &DashMap<NamespacedName, ResourceEntry>,
+        resource: DynamicObject,
+        resources: Arc<DashMap<NamespacedName, ResourceEntry>>,
         ns_name: &NamespacedName,
         update_fn: F,
     ) -> Result<DynamicObject>
@@ -274,36 +277,31 @@ impl Storage {
         F: Fn(Option<&DynamicObject>, DynamicObject) -> Result<DynamicObject>,
     {
         let mut changelog = self.changelog.write().await;
-        let new_version = self
-            .resource_versions
-            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
-        resource.metadata.resource_version = Some(new_version.to_string());
-        if resource.metadata.uid.is_none() {
-            let uid = self
-                .resource_uids
-                .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
-            resource.metadata.uid = Some(uid.to_string());
-        }
+
         if let Some(mut ns_entry) = resources.get_mut(ns_name) {
             let entry = ns_entry.value_mut();
             if entry.tombstone {
-                let updated = update_fn(None, resource)?;
+                let mut updated = update_fn(None, resource)?;
                 entry.tombstone = false;
-                entry.version = new_version;
+                entry.version = self.update_version(&mut updated);
                 entry.resource = updated.clone();
                 let event = WatchEvent::Added(updated.clone());
-                changelog.insert(new_version, event.clone());
+                changelog.insert(entry.version, event.clone());
                 self.event_tx
                     .send(event)
                     .inspect_err(|e| error!("Failed to send event: {}", e))
                     .ok();
                 Ok(updated)
             } else {
-                let updated = update_fn(Some(&entry.resource), resource)?;
-                entry.version = new_version;
+                let mut updated = update_fn(Some(&entry.resource), resource)?;
+
+                entry.version = self.update_version(&mut updated);
                 entry.resource = updated.clone();
+
                 let event = WatchEvent::Modified(updated.clone());
-                changelog.insert(new_version, event.clone());
+
+                changelog.insert(entry.version, event.clone());
+
                 self.event_tx
                     .send(event)
                     .inspect_err(|e| error!("Failed to send event: {}", e))
@@ -311,7 +309,8 @@ impl Storage {
                 Ok(updated)
             }
         } else {
-            let updated = update_fn(None, resource)?;
+            let mut updated = update_fn(None, resource)?;
+            let new_version = self.update_version(&mut updated);
             resources.insert(
                 ns_name.to_owned(),
                 ResourceEntry {
@@ -332,43 +331,43 @@ impl Storage {
 
     async fn delete_internal(
         &self,
-        resources: &DashMap<NamespacedName, ResourceEntry>,
+        resources: Arc<DashMap<NamespacedName, ResourceEntry>>,
         ns_name: &NamespacedName,
     ) -> Option<DynamicObject> {
         let mut changelog = self.changelog.write().await;
 
-        if let Some(mut ns_entry) = resources.get_mut(ns_name) {
-            let entry = ns_entry.value_mut();
-            if entry.tombstone {
-                None
-            } else {
-                let resource = &mut entry.resource;
+        let mut ns_entry = resources.get_mut(ns_name)?;
 
-                let new_version = self
-                    .resource_versions
-                    .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
-                resource.metadata.resource_version = Some(new_version.to_string());
-                if resource.metadata.uid.is_none() {
-                    let uid = self
-                        .resource_uids
-                        .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
-                    resource.metadata.uid = Some(uid.to_string());
-                }
-
-                entry.version = new_version;
-                entry.tombstone = true;
-
-                let event = WatchEvent::Modified(resource.clone());
-                changelog.insert(new_version, event.clone());
-                self.event_tx
-                    .send(event)
-                    .inspect_err(|e| error!("Failed to send event: {}", e))
-                    .ok();
-                Some(resource.clone())
-            }
-        } else {
+        let entry = ns_entry.value_mut();
+        if entry.tombstone {
             None
+        } else {
+            let new_version = self.update_version(&mut entry.resource);
+            entry.version = new_version;
+            entry.tombstone = true;
+
+            let event = WatchEvent::Deleted(entry.resource.clone());
+            changelog.insert(new_version, event.clone());
+            self.event_tx
+                .send(event)
+                .inspect_err(|e| error!("Failed to send event: {}", e))
+                .ok();
+            Some(entry.resource.clone())
         }
+    }
+
+    fn update_version(&self, object: &mut DynamicObject) -> ResourceVersion {
+        let new_version = self
+            .resource_versions
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        object.metadata.resource_version = Some(new_version.to_string());
+        if object.metadata.uid.is_none() {
+            let uid = self
+                .resource_uids
+                .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+            object.metadata.uid = Some(uid.to_string());
+        }
+        new_version
     }
 }
 

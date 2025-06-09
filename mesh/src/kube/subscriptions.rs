@@ -302,7 +302,6 @@ pub mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    #[ignore]
     async fn test_lifecycle() {
         setup_tracing(Some("=TRACE".to_string()));
 
@@ -329,18 +328,25 @@ pub mod tests {
         if let KubeEvent::Snapshot { snapshot, .. } =
             subscriber.recv().expect("receive snapshot event")
         {
-            assert_eq!(snapshot.len(), 0);
+            assert_eq!(snapshot.len(), 0, "snapshot should be empty");
         }
-
         // Create
         client
             .direct_patch_apply(resource)
             .await
             .expect("resource is not updated");
-        assert!(matches!(
-            subscriber.recv().expect("receive create event"),
-            KubeEvent::Update { .. }
-        ));
+
+        let event = subscriber.recv().expect("receive create event");
+        assert!(
+            matches!(event, KubeEvent::Update { .. }),
+            "object should be created"
+        );
+
+        let event = subscriber.recv().expect("receive create event");
+        assert!(
+            matches!(event, KubeEvent::Update { .. }),
+            "status should be updated"
+        );
 
         // Update
         let mut to_update = client
@@ -357,8 +363,24 @@ pub mod tests {
             .await
             .expect("resource is not updated");
 
-        if let KubeEvent::Update { object, .. } = subscriber.recv().expect("receive update event") {
-            assert_eq!(object.metadata.labels.unwrap(), test_labels);
+        let event = subscriber.recv().expect("receive update event");
+        if let KubeEvent::Update { object, .. } = event {
+            assert_eq!(
+                object.metadata.labels.unwrap(),
+                test_labels,
+                "spec should be updated"
+            );
+        } else {
+            panic!("invalid event received");
+        }
+
+        let event = subscriber.recv().expect("receive update event");
+        if let KubeEvent::Update { object, .. } = event {
+            assert_eq!(
+                object.metadata.labels.unwrap(),
+                test_labels,
+                "status should be updated"
+            );
         } else {
             panic!("invalid event received");
         }
@@ -368,10 +390,13 @@ pub mod tests {
             .direct_delete(&gvk, &resource_name)
             .await
             .expect("resource is not deleted");
-        assert!(matches!(
-            subscriber.recv().unwrap(),
-            KubeEvent::Delete { .. }
-        ));
+
+        let event = subscriber.recv().expect("receive delete event");
+        assert!(
+            matches!(event, KubeEvent::Delete { .. }),
+            "object should be deleted"
+        );
+
         subscriber.close();
         assert!(!cache.unsubscribe(&id).await.is_err());
 

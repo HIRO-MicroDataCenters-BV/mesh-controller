@@ -6,7 +6,6 @@ use http_body_util::StreamBody;
 use std::pin::Pin;
 use std::pin::pin;
 use std::task::Poll;
-use tracing::info;
 
 use super::types::EventBytesStream;
 
@@ -38,7 +37,7 @@ enum Kind {
 }
 
 impl HttpBody for UnifiedBody {
-    type Data = Bytes;
+    type Data = bytes::Bytes;
     type Error = anyhow::Error;
 
     fn poll_frame(
@@ -47,11 +46,7 @@ impl HttpBody for UnifiedBody {
     ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
         match &mut self.kind {
             Kind::Once(val) => Poll::Ready(val.take().map(|bytes| Ok(Frame::data(bytes)))),
-            Kind::Wrap(body) => {
-                let frame = pin!(body).poll_frame(cx);
-                info!("poll frame {:?}", frame);
-                frame
-            }
+            Kind::Wrap(body) => pin!(body).poll_frame(cx),
         }
     }
 

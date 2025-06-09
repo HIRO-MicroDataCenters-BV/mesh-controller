@@ -95,7 +95,7 @@ impl ApiHandler for ResourceHandler {
                 .unwrap_or(0);
 
             storage
-                .subscribe(&group, &version, &kind_plural, resource_version)
+                .watch_events(&group, &version, &kind_plural, resource_version)
                 .await
         })
     }
@@ -122,7 +122,7 @@ impl ApiHandler for ResourceHandler {
                     .await
             } else {
                 storage
-                    .create_or_update(&group, &version, &kind_plural, &name, object)
+                    .patch(&group, &version, &kind_plural, &name, object)
                     .await
             };
 
@@ -168,6 +168,7 @@ fn to_object_list(ar: &ApiResource, objects: Vec<DynamicObject>) -> ObjectList<D
         },
         metadata: ListMeta {
             resource_version: Some(resource_version),
+            continue_: Some("".into()),
             ..Default::default()
         },
         items: objects,

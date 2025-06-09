@@ -33,6 +33,8 @@ regex.workspace = true
 http-body.workspace = true
 http-body-util.workspace = true
 tokio-stream.workspace = true
+# hyper = { version = "1.6.0", features = ["full"] }
+# tower = { version = "0.5.2" }
 
 [build-dependencies]
 built.workspace = true

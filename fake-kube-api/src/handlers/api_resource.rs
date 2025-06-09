@@ -35,12 +35,12 @@ impl ApiHandler for ApiResourceHandler {
     fn get(&self, request: ApiResourceArgs) -> ApiHandlerResponse {
         let storage = self.storage.clone();
         Box::pin(async move {
-            let ApiResourceArgs { group, version, .. } = request;
-            let resources = storage.get_api_resources(&group, &version);
+            let ApiResourceArgs { group, version, .. } = &request;
+            let resources = storage.get_api_resources(group, version);
 
             ApiResponse::try_from(
                 StatusCode::OK,
-                api_resource_list_to_response(&group, &version, &resources),
+                api_resource_list_to_response(group, version, &resources),
             )
         })
     }
