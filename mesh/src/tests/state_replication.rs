@@ -1,36 +1,107 @@
+use std::time::Duration;
+
+use crate::kube::dynamic_object_ext::DynamicObjectExt;
+use crate::tests::utils::wait_for_condition;
 use crate::{
-    tests::configuration::{configure_network, generate_config},
+    tests::{
+        configuration::{configure_network, generate_config, generate_kube_config},
+        fake_etcd_server::FakeEtcdServer,
+    },
     tracing::setup_tracing,
 };
+use anyapplication::anyapplication::{
+    AnyApplication, AnyApplicationApplication, AnyApplicationApplicationHelm, AnyApplicationSpec,
+    AnyApplicationStatus, AnyApplicationStatusPlacements,
+};
 use anyhow::{Context, Result};
+use kube::api::{ApiResource, DynamicObject, GroupVersionKind, ObjectMeta};
 use p2panda_core::PrivateKey;
+use tokio::runtime::Runtime;
 use tracing::info;
 
 use super::fake_mesh::FakeMeshServer;
 
 #[test]
-#[ignore] //TODO configurable fake etcd
 pub fn test_state_replication() -> Result<()> {
     setup_tracing(Some("=INFO".into()));
 
-    let TwoNodeMesh { server1, server2 } = create_two_node_mesh()?;
+    let TwoNodeMesh {
+        gvk,
+        server1,
+        server2,
+        etcd_service1,
+        etcd_service2,
+        test_runtime,
+    } = create_two_node_mesh()?;
     info!("environment started");
+
+    let (client1, client2) = test_runtime.block_on(async {
+        let client1 = etcd_service1.get_fake_client();
+        let client2 = etcd_service2.get_fake_client();
+        (client1, client2)
+    });
+
+    std::thread::sleep(Duration::from_secs(2));
+
+    let app1 = anyapplication("app1", "zone1");
+    let app2 = anyapplication("app2", "zone2");
+    let name1 = app1.get_namespaced_name();
+    let name2 = app2.get_namespaced_name();
+
+    test_runtime.block_on(async {
+        client1.direct_patch_apply(app1).await?;
+        client2.direct_patch_apply(app2).await
+    })?;
+
+    wait_for_condition(Duration::from_secs(10), || {
+        let result = test_runtime.block_on(async { client2.direct_get(&gvk, &name1).await })?;
+        Ok(result.is_some())
+    })?;
+
+    wait_for_condition(Duration::from_secs(10), || {
+        let result = test_runtime.block_on(async { client1.direct_get(&gvk, &name2).await })?;
+        Ok(result.is_some())
+    })?;
 
     server1.discard()?;
     server2.discard()?;
+    info!("exiting");
+
+    etcd_service1.shutdown();
+    etcd_service2.shutdown();
     Ok(())
 }
 
 pub struct TwoNodeMesh {
+    pub(crate) gvk: GroupVersionKind,
     pub(crate) server1: FakeMeshServer,
     pub(crate) server2: FakeMeshServer,
+    pub(crate) etcd_service1: FakeEtcdServer,
+    pub(crate) etcd_service2: FakeEtcdServer,
+    pub(crate) test_runtime: Runtime,
 }
 
 pub fn create_two_node_mesh() -> Result<TwoNodeMesh> {
-    let mut config1 = generate_config("zone1");
+    let gvk = GroupVersionKind::gvk("dcp.hiro.io", "v1", "AnyApplication");
+    let ar = ApiResource::from_gvk(&gvk);
+
+    let kube_config1 = generate_kube_config("context1");
+    let kube_config2 = generate_kube_config("context2");
+
+    let etcd_service1 = FakeEtcdServer::get_server(&kube_config1);
+    let etcd_service2 = FakeEtcdServer::get_server(&kube_config2);
+
+    let test_runtime = tokio::runtime::Builder::new_current_thread().build()?;
+
+    test_runtime.block_on(async {
+        etcd_service2.service.register(&ar).await;
+        etcd_service1.service.register(&ar).await;
+    });
+
+    let mut config1 = generate_config("zone1", &kube_config1, &gvk);
     let server1_private_key = PrivateKey::new();
 
-    let mut config2 = generate_config("zone2");
+    let mut config2 = generate_config("zone2", &kube_config2, &gvk);
     let server2_private_key = PrivateKey::new();
 
     configure_network(vec![
@@ -46,7 +117,57 @@ pub fn create_two_node_mesh() -> Result<TwoNodeMesh> {
     let server2 = FakeMeshServer::try_start(config2.clone(), server2_private_key.clone())
         .context("MeshServer2 start failed")?;
 
-    let mesh = TwoNodeMesh { server1, server2 };
+    Ok(TwoNodeMesh {
+        gvk,
+        server1,
+        server2,
+        etcd_service1,
+        etcd_service2,
+        test_runtime,
+    })
+}
 
-    Ok(mesh)
+fn anyapplication(name: &str, owner_zone: &str) -> DynamicObject {
+    let anyapp = AnyApplication {
+        metadata: ObjectMeta {
+            name: Some(name.into()),
+            namespace: Some("test".into()),
+            labels: None,
+            ..Default::default()
+        },
+        spec: AnyApplicationSpec {
+            application: AnyApplicationApplication {
+                helm: Some(AnyApplicationApplicationHelm {
+                    chart: "chart".into(),
+                    version: "1.0.0".into(),
+                    namespace: "namespace".into(),
+                    repository: "repo".into(),
+                    values: None,
+                }),
+                resource_selector: None,
+            },
+            placement_strategy: None,
+            recover_strategy: None,
+            zones: 2,
+        },
+        status: Some(AnyApplicationStatus {
+            conditions: None,
+            owner: owner_zone.into(),
+            placements: Some(vec![
+                AnyApplicationStatusPlacements {
+                    node_affinity: None,
+                    zone: "zone1".into(),
+                },
+                AnyApplicationStatusPlacements {
+                    node_affinity: None,
+                    zone: "zone2".into(),
+                },
+            ]),
+            state: "New".into(),
+        }),
+    };
+    let json_str = serde_json::to_value(&anyapp).expect("Resource is not serializable");
+    let object: DynamicObject =
+        serde_json::from_value(json_str).expect("Cannot parse dynamic object");
+    object
 }

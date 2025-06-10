@@ -1,6 +1,6 @@
 use super::dynamic_object_ext::DynamicObjectExt;
 use super::types::NamespacedName;
-use crate::kube::pool::Version;
+use crate::kube::subscriptions::Version;
 use kube::api::DynamicObject;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;

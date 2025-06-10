@@ -1,17 +1,14 @@
 use std::collections::HashMap;
 
-use super::{
+use super::types::{MergeResult, MergeStrategy, UpdateResult};
+use crate::kube::{dynamic_object_ext::DynamicObjectExt, subscriptions::Version};
+use anyapplication::{
     anyapplication::{
         AnyApplication, AnyApplicationSpec, AnyApplicationStatus, AnyApplicationStatusConditions,
         AnyApplicationStatusPlacements,
     },
-    anyapplication_ext::AnyApplicationExt,
-    types::{MergeResult, MergeStrategy, UpdateResult},
-};
-use crate::{
-    kube::{dynamic_object_ext::DynamicObjectExt, pool::Version},
-    merge::anyapplication_ext::{
-        AnyApplicationStatusConditionId, AnyApplicationStatusConditionsExt,
+    anyapplication_ext::{
+        AnyApplicationExt, AnyApplicationStatusConditionId, AnyApplicationStatusConditionsExt,
     },
 };
 use anyhow::Result;

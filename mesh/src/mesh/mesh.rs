@@ -3,11 +3,12 @@ use super::partition::Partition;
 use super::topic::InstanceId;
 use super::topic::MeshTopicLogMap;
 use super::{operations::Extensions, topic::MeshLogId};
+use crate::client::kube_client::KubeClient;
 use crate::config::configuration::MergeStrategyType;
 use crate::config::configuration::MeshConfig;
 use crate::merge::anyapplication_strategy::AnyApplicationMerge;
 use crate::merge::default_strategy::DefaultMerge;
-use crate::{JoinErrToStr, kube::pool::ObjectPool};
+use crate::{JoinErrToStr, kube::subscriptions::Subscriptions};
 use anyhow::Result;
 use futures::future::{MapErr, Shared};
 use futures::{FutureExt, TryFutureExt};
@@ -31,7 +32,7 @@ impl Mesh {
         config: &MeshConfig,
         instance_id: InstanceId,
         cancelation: CancellationToken,
-        pool: ObjectPool,
+        client: KubeClient,
         topic_log_map: MeshTopicLogMap,
         store: MemoryStore<MeshLogId, Extensions>,
         network_tx: mpsc::Sender<Operation<Extensions>>,
@@ -45,7 +46,9 @@ impl Mesh {
             MergeStrategyType::Default => Partition::new(DefaultMerge::new(gvk.to_owned())),
             MergeStrategyType::AnyApplication => Partition::new(AnyApplicationMerge::new()),
         };
-        let event_rx = pool.subscribe(&gvk, namespace).await?.into_stream();
+        let subscriptions = Subscriptions::new(client);
+        let (subscriber_rx, _) = subscriptions.subscribe(&gvk, namespace).await?;
+        let event_rx = subscriber_rx.into_stream();
         let actor = MeshActor::new(
             key,
             snapshot,
@@ -56,7 +59,7 @@ impl Mesh {
             network_tx,
             network_rx,
             event_rx,
-            pool,
+            subscriptions,
             store,
         );
         let handle = tokio::spawn(async {

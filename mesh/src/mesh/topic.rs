@@ -105,6 +105,20 @@ impl MeshTopicLogMap {
             .filter_map(|k| self.inner.obsolete_logs.remove(&k))
             .collect()
     }
+
+    pub fn get_peer_logs(&self) -> HashMap<PublicKey, MeshLogId> {
+        self.inner
+            .peers
+            .iter()
+            .filter_map(|entry| {
+                let peer = entry.key().to_owned();
+                entry
+                    .value()
+                    .as_ref()
+                    .map(|log_id| (peer, log_id.to_owned()))
+            })
+            .collect()
+    }
 }
 
 #[derive(Debug)]

@@ -3,19 +3,17 @@ pub mod tests {
 
     use std::collections::BTreeMap;
 
+    use anyapplication::{
+        anyapplication::{
+            AnyApplication, AnyApplicationApplication, AnyApplicationApplicationHelm,
+            AnyApplicationSpec, AnyApplicationStatus, AnyApplicationStatusConditions,
+            AnyApplicationStatusPlacements,
+        },
+        anyapplication_ext::OWNER_VERSION,
+    };
     use kube::api::{DynamicObject, ObjectMeta};
 
-    use crate::{
-        kube::pool::Version,
-        merge::{
-            anyapplication::{
-                AnyApplication, AnyApplicationApplication, AnyApplicationApplicationHelm,
-                AnyApplicationSpec, AnyApplicationStatus, AnyApplicationStatusConditions,
-                AnyApplicationStatusPlacements,
-            },
-            anyapplication_ext::OWNER_VERSION,
-        },
-    };
+    use crate::kube::subscriptions::Version;
 
     pub fn anyapp(owner_version: Version, owner_zone: &str, zones: i64) -> DynamicObject {
         let resource = AnyApplication {

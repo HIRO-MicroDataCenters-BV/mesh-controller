@@ -1,14 +1,11 @@
 use super::dynamic_object_ext::DynamicObjectExt;
 use super::event::KubeEvent;
-use super::pool::{ObjectEntry, UID};
 use super::types::NamespacedName;
 use crate::JoinErrToStr;
 use crate::client::kube_client::KubeClient;
-use crate::kube::pool::NamedObjects;
+use crate::kube::subscriptions::Version;
 use anyhow::Result;
 use anyhow::bail;
-use anyhow::{Context, anyhow};
-use dashmap::DashMap;
 use futures::FutureExt;
 use futures::StreamExt;
 use futures::TryFutureExt;
@@ -37,7 +34,6 @@ impl Subscription {
         client: KubeClient,
         gvk: GroupVersionKind,
         tx: loole::Sender<KubeEvent>,
-        resources: Arc<NamedObjects>,
         cancelation: CancellationToken,
         namespace: Option<String>,
     ) -> Subscription {
@@ -46,7 +42,6 @@ impl Subscription {
                 client,
                 gvk,
                 tx,
-                resources,
                 cancelation,
                 namespace,
             }),
@@ -77,8 +72,99 @@ pub struct SubscriptionInner {
     gvk: GroupVersionKind,
     namespace: Option<String>,
     tx: loole::Sender<KubeEvent>,
-    resources: Arc<NamedObjects>,
     cancelation: CancellationToken,
+}
+
+#[derive(Debug, Clone)]
+enum StreamState {
+    New,
+    SnapshotCollection {
+        snapshot: BTreeMap<NamespacedName, DynamicObject>,
+        max_version: Option<Version>,
+    },
+    Streaming,
+}
+
+impl StreamState {
+    pub fn new() -> Self {
+        StreamState::New
+    }
+
+    fn next_state(self, event: Event<DynamicObject>) -> Result<(StreamState, Option<KubeEvent>)> {
+        match (self, event) {
+            (StreamState::New | StreamState::Streaming, Event::Init) => Ok((
+                StreamState::SnapshotCollection {
+                    snapshot: BTreeMap::new(),
+                    max_version: None,
+                },
+                None,
+            )),
+            (
+                StreamState::SnapshotCollection {
+                    mut snapshot,
+                    max_version,
+                },
+                Event::InitApply(object),
+            ) => {
+                let name = object.get_namespaced_name();
+                let version = object
+                    .resource_version()
+                    .expect("resourceVersion is not set for dynamic object")
+                    .parse::<Version>()
+                    .expect("resourceVersion in dynamic object should be u64");
+                let max_version = max_version
+                    .map(|current| if version > current { version } else { current })
+                    .or(Some(version));
+
+                snapshot.insert(name, object);
+
+                Ok((
+                    StreamState::SnapshotCollection {
+                        snapshot,
+                        max_version,
+                    },
+                    None,
+                ))
+            }
+            (
+                StreamState::SnapshotCollection {
+                    snapshot,
+                    max_version,
+                },
+                Event::InitDone,
+            ) => {
+                let version = max_version.unwrap_or(0);
+                Ok((
+                    StreamState::Streaming,
+                    Some(KubeEvent::Snapshot { version, snapshot }),
+                ))
+            }
+
+            (StreamState::Streaming, Event::Apply(object)) => {
+                let version = object
+                    .resource_version()
+                    .expect("resourceVersion is not set for dynamic object")
+                    .parse::<Version>()
+                    .expect("resourceVersion in dynamic object should be u64");
+                Ok((
+                    StreamState::Streaming,
+                    Some(KubeEvent::Update { version, object }),
+                ))
+            }
+            (StreamState::Streaming, Event::Delete(object)) => {
+                let version = object
+                    .resource_version()
+                    .expect("resourceVersion is not set for dynamic object")
+                    .parse::<Version>()
+                    .expect("resourceVersion in dynamic object should be u64");
+                Ok((
+                    StreamState::Streaming,
+                    Some(KubeEvent::Delete { version, object }),
+                ))
+            }
+            (st, event) => bail!("Unexpected event {:?} in state {:?}", event, st),
+        }
+    }
 }
 
 impl SubscriptionInner {
@@ -88,14 +174,20 @@ impl SubscriptionInner {
             .event_stream_for(&self.gvk, &self.namespace)
             .await?;
         let mut events = event_stream.boxed();
+        let mut stream_state = StreamState::new();
         loop {
             tokio::select! {
                 _ = self.cancelation.cancelled() => break,
                 event = events.next() => {
                     match event {
                         Some(Ok(event)) => {
-                            SubscriptionInner::handle_event(event, &self.resources, &self.tx)
-                                .context("Subscription::handle_event failure")?;
+                            let (new_state, event) = stream_state.next_state(event)?;
+                            if let Some(event) = event {
+                                self.tx.send(event).inspect_err(|e| {
+                                    error!("Failed to send event: {}", e);
+                                }).ok();
+                            }
+                            stream_state = new_state;
                         },
                         Some(Err(e)) => bail!("Error in event stream {}", e),
                         None => break,
@@ -103,133 +195,6 @@ impl SubscriptionInner {
                 }
             }
         }
-        Ok(())
-    }
-
-    fn handle_event(
-        event: Event<DynamicObject>,
-        resources: &DashMap<NamespacedName, DashMap<UID, ObjectEntry>>,
-        tx: &loole::Sender<KubeEvent>,
-    ) -> Result<()> {
-        match event {
-            Event::Init => Ok(()),
-            Event::InitApply(obj) => SubscriptionInner::apply_resource(obj, resources, tx, false),
-            Event::InitDone => SubscriptionInner::send_snapshot(resources, tx),
-            Event::Apply(obj) => SubscriptionInner::apply_resource(obj, resources, tx, true),
-            Event::Delete(obj) => SubscriptionInner::delete_resource(obj, resources, tx),
-        }
-    }
-
-    fn apply_resource(
-        object: DynamicObject,
-        resources: &DashMap<NamespacedName, DashMap<UID, ObjectEntry>>,
-        tx: &loole::Sender<KubeEvent>,
-        must_distribute: bool,
-    ) -> Result<()> {
-        let ns_name = object.get_namespaced_name();
-        let uid = object
-            .uid()
-            .ok_or(anyhow!("UID is not set for dynamic object"))?;
-        let version = object
-            .resource_version()
-            .ok_or(anyhow!("resourceVersion is not set for dynamic object"))?
-            .parse::<u64>()
-            .context("unparsable resourceVersion in dynamic object")?;
-        let resource = Arc::new(object.clone());
-        let resource_entries = resources.entry(ns_name).or_default();
-
-        let updated = if let Some(mut existing) = resource_entries.get_mut(&uid) {
-            if version > existing.value().version {
-                *existing.value_mut() = ObjectEntry {
-                    version,
-                    resource,
-                    tombstone: false,
-                };
-                true
-            } else {
-                false
-            }
-        } else {
-            let entry = ObjectEntry {
-                version,
-                resource: resource.clone(),
-                tombstone: false,
-            };
-            resource_entries.insert(uid, entry);
-            true
-        };
-
-        if updated && must_distribute {
-            tx.send(KubeEvent::Update { version, object })
-                .unwrap_or_else(|e| error!("Failed to send update event: {}", e));
-        }
-        Ok(())
-    }
-
-    fn delete_resource(
-        object: DynamicObject,
-        resources: &DashMap<NamespacedName, DashMap<UID, ObjectEntry>>,
-        tx: &loole::Sender<KubeEvent>,
-    ) -> Result<()> {
-        let ns_name = object.get_namespaced_name();
-        let uid = object
-            .uid()
-            .ok_or(anyhow!("UID is not set for dynamic object"))?;
-        let version = object
-            .resource_version()
-            .ok_or(anyhow!("resourceVersion is not set for dynamic object"))?
-            .parse::<u64>()
-            .context("unparsable resourceVersion in dynamic object")?;
-        let resource = Arc::new(object.clone());
-
-        let resource_entries = resources.entry(ns_name).or_default();
-
-        let mut entry = resource_entries.entry(uid).or_insert_with(|| ObjectEntry {
-            version,
-            resource: resource.clone(),
-            tombstone: true,
-        });
-        if version > entry.value().version {
-            *entry.value_mut() = ObjectEntry {
-                version,
-                resource,
-                tombstone: true,
-            };
-            tx.send(KubeEvent::Delete { version, object })
-                .unwrap_or_else(|e| error!("Failed to send delete event: {}", e));
-        }
-        Ok(())
-    }
-
-    fn send_snapshot(
-        resources: &DashMap<NamespacedName, DashMap<UID, ObjectEntry>>,
-        tx: &loole::Sender<KubeEvent>,
-    ) -> Result<()> {
-        let snapshot = resources
-            .iter()
-            .flat_map(|entry| {
-                let maybe_object = entry
-                    .value()
-                    .iter()
-                    .max_by_key(|e| e.value().version)
-                    .and_then(|e| {
-                        if e.tombstone {
-                            None
-                        } else {
-                            Some(e.resource.to_owned())
-                        }
-                    });
-                maybe_object.map(|object| (entry.key().to_owned(), object.as_ref().to_owned()))
-            })
-            .collect::<BTreeMap<NamespacedName, DynamicObject>>();
-        let version = resources
-            .iter()
-            .flat_map(|entry| entry.value().iter().map(|e| e.value().version).max())
-            .max()
-            .unwrap_or(0);
-        tx.send(KubeEvent::Snapshot { version, snapshot })
-            .unwrap_or_else(|e| error!("Failed to send snapshot event: {}", e));
-
         Ok(())
     }
 }

@@ -32,7 +32,7 @@ pub struct Config {
     #[serde(flatten)]
     pub node: NodeConfig,
     pub mesh: MeshConfig,
-    pub kubernetes: Option<KubeConfiguration>,
+    pub kubernetes: KubeConfiguration,
     pub log_level: Option<String>,
 }
 
@@ -153,9 +153,10 @@ pub enum MergeStrategyType {
     AnyApplication,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Hash)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Hash, Default)]
 pub enum KubeConfiguration {
     #[serde(rename = "incluster")]
+    #[default]
     InCluster,
     #[serde(rename = "external")]
     External(KubeConfigurationExternal),
@@ -309,7 +310,7 @@ mod tests {
                             merge_strategy: MergeStrategyType::default()
                         }
                     },
-                    kubernetes: Some(KubeConfiguration::InCluster),
+                    kubernetes: KubeConfiguration::InCluster,
                     log_level: None,
                 }
             );
@@ -388,9 +389,9 @@ kubernetes:
                         protocol: Some(ProtocolConfig::default()),
                         discovery: Some(DiscoveryOptions::default()),
                     },
-                    kubernetes: Some(KubeConfiguration::External(KubeConfigurationExternal {
+                    kubernetes: KubeConfiguration::External(KubeConfigurationExternal {
                         kube_context: Some("default".into()),
-                    })),
+                    }),
                     mesh: MeshConfig {
                         zone: "test".into(),
                         bootstrap: false,

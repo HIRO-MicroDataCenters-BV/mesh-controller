@@ -279,16 +279,12 @@ impl Partition {
 pub mod tests {
     use std::collections::BTreeMap;
 
+    use anyapplication::{anyapplication::*, anyapplication_ext::*};
     use kube::api::{DynamicObject, ObjectMeta};
 
     use crate::{
-        kube::{dynamic_object_ext::DynamicObjectExt, event::KubeEvent, pool::Version},
+        kube::{dynamic_object_ext::DynamicObjectExt, event::KubeEvent, subscriptions::Version},
         merge::{
-            anyapplication::{
-                AnyApplication, AnyApplicationSpec, AnyApplicationStatus,
-                AnyApplicationStatusConditions, AnyApplicationStatusPlacements,
-            },
-            anyapplication_ext::{AnyApplicationExt, OWNER_VERSION},
             anyapplication_strategy::AnyApplicationMerge,
             anyapplication_test_support::tests::{anycond, anyplacements, anyspec},
             types::MergeResult,

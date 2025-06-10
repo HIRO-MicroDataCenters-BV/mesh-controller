@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use bytes::Bytes;
 use http::StatusCode;
@@ -29,18 +29,37 @@ pub struct ApiResourceArgs {
     pub input: Bytes,
 }
 
+impl ApiResourceArgs {
+    pub fn try_new(params: HashMap<&str, &str>, input: Bytes) -> Result<Self, anyhow::Error> {
+        let group = params
+            .get("group")
+            .ok_or_else(|| anyhow::anyhow!("Missing 'group' path parameters"))?
+            .to_string();
+        let version = params
+            .get("version")
+            .ok_or_else(|| anyhow::anyhow!("Missing 'version' path parameter"))?
+            .to_string();
+
+        Ok(ApiResourceArgs {
+            group,
+            version,
+            input,
+        })
+    }
+}
+
 impl ApiHandler for ApiResourceHandler {
     type Req = ApiResourceArgs;
 
     fn get(&self, request: ApiResourceArgs) -> ApiHandlerResponse {
         let storage = self.storage.clone();
         Box::pin(async move {
-            let ApiResourceArgs { group, version, .. } = request;
-            let resources = storage.get_api_resources(&group, &version);
+            let ApiResourceArgs { group, version, .. } = &request;
+            let resources = storage.get_api_resources(group, version);
 
             ApiResponse::try_from(
                 StatusCode::OK,
-                api_resource_list_to_response(&group, &version, &resources),
+                api_resource_list_to_response(group, version, &resources),
             )
         })
     }

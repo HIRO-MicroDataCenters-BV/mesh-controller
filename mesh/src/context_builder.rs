@@ -6,7 +6,6 @@ use crate::context::Context;
 use crate::http::api::MeshApiImpl;
 
 use crate::api::server::MeshHTTPServer;
-use crate::kube::pool::ObjectPool;
 use crate::mesh::mesh::Mesh;
 use crate::mesh::operations::Extensions;
 use crate::mesh::peer_discovery::PeerDiscovery;
@@ -34,7 +33,7 @@ use figment::providers::Env;
 #[derive(Debug)]
 pub struct ContextBuilder {
     config: Config,
-    _private_key: PrivateKey,
+    private_key: PrivateKey,
     public_key: PublicKey,
 }
 
@@ -44,7 +43,7 @@ impl ContextBuilder {
         ContextBuilder {
             public_key: private_key.public_key(),
             config,
-            _private_key: private_key,
+            private_key,
         }
     }
     /// Load the configuration from the environment and initializes context builder
@@ -65,7 +64,7 @@ impl ContextBuilder {
         let public_key = private_key.public_key();
         Ok(ContextBuilder {
             config,
-            _private_key: private_key,
+            private_key,
             public_key,
         })
     }
@@ -80,12 +79,11 @@ impl ContextBuilder {
         let cancellation = CancellationToken::new();
         let mesh_node = mesh_runtime.block_on(async {
             let client = ContextBuilder::build_kube_client(&self.config).await?;
-            let pool = ObjectPool::new(client);
 
             let node = ContextBuilder::init(
                 self.config.clone(),
-                self._private_key.clone(),
-                pool,
+                self.private_key.clone(),
+                client,
                 cancellation.clone(),
             )
             .await
@@ -115,7 +113,7 @@ impl ContextBuilder {
     async fn init(
         config: Config,
         private_key: PrivateKey,
-        pool: ObjectPool,
+        client: KubeClient,
         cancelation: CancellationToken,
     ) -> Result<MeshNode> {
         let (node_config, p2p_network_config) = MeshNode::configure_p2p_network(&config).await?;
@@ -134,7 +132,7 @@ impl ContextBuilder {
             &config.mesh,
             instance_id,
             cancelation,
-            pool,
+            client,
             topic_log_map.clone(),
             log_store.clone(),
             network_tx,
@@ -200,16 +198,16 @@ impl ContextBuilder {
         }))
     }
 
-    async fn build_kube_client(_config: &Config) -> Result<KubeClient> {
+    async fn build_kube_client(config: &Config) -> Result<KubeClient> {
         #[cfg(not(test))]
         {
-            let client = KubeClient::build(_config).await?;
+            let client = KubeClient::build(&config.kubernetes).await?;
             Ok(client)
         }
         #[cfg(test)]
         {
-            let svc = fake_kube_api::service::FakeKubeApiService::new();
-            let client = KubeClient::build_fake(svc);
+            use crate::tests::fake_etcd_server::FakeEtcdServer;
+            let client = FakeEtcdServer::get_client(&config.kubernetes);
             Ok(client)
         }
     }

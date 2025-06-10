@@ -1,19 +1,17 @@
 use std::collections::BTreeMap;
-
-use crate::dynamic_object_ext::NamespacedName;
+use std::collections::HashMap;
+use std::collections::LinkedList;
 
 use super::handlers::api_resource::ApiResourceArgs;
 use super::handlers::resource::ResourceArgs;
 use super::types::ApiServiceType;
 use anyhow::Result;
 use anyhow::bail;
-use bytes::Bytes;
 use http::Method;
 use http::Request;
 use http::request::Parts;
 use http::uri::PathAndQuery;
 use kube::client::Body;
-use regex::Regex;
 use strum::Display;
 use url::form_urlencoded;
 
@@ -60,134 +58,102 @@ impl ApiRequest {
         let input = body.collect_bytes().await?;
 
         let query = path_and_query.query().unwrap_or("");
-        let params = form_urlencoded::parse(query.as_bytes())
+
+        let query_params = form_urlencoded::parse(query.as_bytes())
             .into_owned()
             .collect::<BTreeMap<String, String>>();
 
-        let is_watch = params
+        let is_watch = query_params
             .get("watch")
             .map(|v| v.parse::<bool>().unwrap_or(false))
             .unwrap_or(false);
 
-        if let Some(result) = ApiRequest::parse_resource(path_and_query, &input, &params, is_watch)
-        {
-            return result;
-        }
-
-        if let Some(result) =
-            ApiRequest::parse_resource_list(path_and_query, &input, &params, is_watch)
-        {
-            return result;
-        }
-
-        if let Some(result) = ApiRequest::parse_api_resources(path_and_query, &input, is_watch) {
-            return result;
-        }
-
-        bail!("unknown path {}", path_and_query.path())
-    }
-
-    fn parse_resource(
-        path_and_query: &PathAndQuery,
-        input: &Bytes,
-        params: &BTreeMap<String, String>,
-        is_watch: bool,
-    ) -> Option<Result<(Args, ApiServiceType, bool)>> {
-        let path = path_and_query.path();
-        let re = Regex::new(r"^/apis/(?P<group>[^/]+)/(?P<version>[^/]+)/namespaces/(?P<namespace>[^/]+)/(?P<pluralkind>[^/]+)/(?P<name>[^/]+)(/(?P<subresource>[^/]+))?").unwrap();
-        re.captures(path).map(|captures| {
-            let extract_capture =
-                |name: &str| captures.name(name).map(|m| m.as_str()).unwrap_or("").into();
-            let extract_opt_capture = |name: &str| captures.name(name).map(|m| m.as_str().into());
-
-            let group = extract_capture("group");
-            let version = extract_capture("version");
-            let kind_plural = extract_capture("pluralkind");
-            let namespace = extract_capture("namespace");
-            let name = extract_capture("name");
-            let subresource: Option<String> = extract_opt_capture("subresource");
-
-            let resource_name = Some(NamespacedName::new(namespace, name));
-            let service = ApiServiceType::Resource;
-
-            Ok((
-                Args::Resource(ResourceArgs {
-                    group,
-                    version,
-                    kind_plural,
-                    subresource,
-                    input: input.clone(),
-                    resource_name,
-                    params: params.clone(),
-                }),
-                service,
+        match PathParser::new(path_and_query.path()).parse()? {
+            (ApiServiceType::ApiResources, path_params) => Ok((
+                Args::ApiResource(ApiResourceArgs::try_new(path_params, input)?),
+                ApiServiceType::ApiResources,
                 is_watch,
-            ))
-        })
-    }
-
-    fn parse_resource_list(
-        path_and_query: &PathAndQuery,
-        input: &Bytes,
-        params: &BTreeMap<String, String>,
-        is_watch: bool,
-    ) -> Option<Result<(Args, ApiServiceType, bool)>> {
-        let path = path_and_query.path();
-        let re = Regex::new(r"^/apis/(?P<group>[^/]+)/(?P<version>[^/]+)/(?P<pluralkind>[^/]+)")
-            .unwrap();
-        re.captures(path).map(|captures| {
-            let extract_capture =
-                |name: &str| captures.name(name).map(|m| m.as_str()).unwrap_or("").into();
-            let group = extract_capture("group");
-            let version = extract_capture("version");
-            let kind_plural = extract_capture("pluralkind");
-
-            let service = ApiServiceType::Resource;
-
-            Ok((
-                Args::Resource(ResourceArgs {
-                    group,
-                    version,
-                    kind_plural,
-                    input: input.clone(),
-                    resource_name: None,
-                    subresource: None,
-                    params: params.clone(),
-                }),
-                service,
+            )),
+            (ApiServiceType::Resource, path_params) => Ok((
+                Args::Resource(ResourceArgs::try_new(path_params, query_params, input)?),
+                ApiServiceType::Resource,
                 is_watch,
-            ))
-        })
-    }
-
-    fn parse_api_resources(
-        path_and_query: &PathAndQuery,
-        input: &Bytes,
-        is_watch: bool,
-    ) -> Option<Result<(Args, ApiServiceType, bool)>> {
-        let path = path_and_query.path();
-        let re = Regex::new(r"^/apis/(?P<group>[^/]+)/(?P<version>[^/|?]+)").unwrap();
-        re.captures(path).map(|captures| {
-            let extract_capture =
-                |name: &str| captures.name(name).map(|m| m.as_str()).unwrap_or("").into();
-            let group = extract_capture("group");
-            let version = extract_capture("version");
-
-            let service = ApiServiceType::ApiResources;
-
-            Ok((
-                Args::ApiResource(ApiResourceArgs {
-                    group,
-                    version,
-                    input: input.clone(),
-                }),
-                service,
-                is_watch,
-            ))
-        })
+            )),
+        }
     }
 
     pub fn method(&self) -> &Method {
         &self.parts.method
+    }
+}
+
+struct PathParser<'a> {
+    segments: LinkedList<&'a str>,
+}
+
+impl<'a> PathParser<'a> {
+    pub fn new(path: &'a str) -> PathParser<'a> {
+        PathParser {
+            segments: path.split("/").filter(|s| !s.is_empty()).collect(),
+        }
+    }
+
+    pub fn parse(mut self) -> Result<(ApiServiceType, HashMap<&'static str, &'a str>)> {
+        let mut params = HashMap::new();
+        Self::expected(&mut self.segments, "apis")?;
+        params.insert("group", Self::segment(&mut self.segments)?);
+        params.insert("version", Self::segment(&mut self.segments)?);
+        if self.segments.is_empty() {
+            return Ok((ApiServiceType::ApiResources, params));
+        }
+        let has_namespace = Self::opt_expected(&mut self.segments, "namespaces").is_some();
+        if has_namespace {
+            params.insert("namespace", Self::segment(&mut self.segments)?);
+        }
+        params.insert("pluralkind", Self::segment(&mut self.segments)?);
+        if let Some(name) = Self::opt_segment(&mut self.segments) {
+            params.insert("name", name);
+        }
+        if let Some(subresource) = Self::opt_segment(&mut self.segments) {
+            params.insert("subresource", subresource);
+        }
+
+        Ok((ApiServiceType::Resource, params))
+    }
+
+    fn expected(segments: &mut LinkedList<&'a str>, expected: &'static str) -> Result<&'a str> {
+        let Some(segment) = segments.pop_front() else {
+            bail!("expected segment '{}', but no segments left", expected)
+        };
+        if segment != expected {
+            bail!(
+                "expected segment '{}', but actual '{:?}'",
+                expected,
+                segments.front()
+            )
+        } else {
+            Ok(segment)
+        }
+    }
+
+    fn opt_expected(segments: &mut LinkedList<&'a str>, expected: &'static str) -> Option<&'a str> {
+        let segment = segments.pop_front()?;
+        if segment == expected {
+            Some(segment)
+        } else {
+            segments.push_front(segment);
+            None
+        }
+    }
+
+    fn segment(segments: &mut LinkedList<&'a str>) -> Result<&'a str> {
+        let Some(segment) = segments.pop_front() else {
+            bail!("expected segment, but no segments left");
+        };
+        Ok(segment)
+    }
+
+    fn opt_segment(segments: &mut LinkedList<&'a str>) -> Option<&'a str> {
+        segments.pop_front()
     }
 }
