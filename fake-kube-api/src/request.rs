@@ -118,7 +118,7 @@ impl<'a> PathParser<'a> {
             params.insert("subresource", subresource);
         }
 
-        return Ok((ApiServiceType::Resource, params));
+        Ok((ApiServiceType::Resource, params))
     }
 
     fn expected(segments: &mut LinkedList<&'a str>, expected: &'static str) -> Result<&'a str> {
