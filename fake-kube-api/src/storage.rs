@@ -282,9 +282,11 @@ impl Storage {
             let entry = ns_entry.value_mut();
             if entry.tombstone {
                 let mut updated = update_fn(None, resource)?;
+
                 entry.tombstone = false;
                 entry.version = self.update_version(&mut updated);
                 entry.resource = updated.clone();
+
                 let event = WatchEvent::Added(updated.clone());
                 changelog.insert(entry.version, event.clone());
                 self.event_tx

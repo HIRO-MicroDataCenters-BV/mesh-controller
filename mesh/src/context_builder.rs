@@ -33,7 +33,7 @@ use figment::providers::Env;
 #[derive(Debug)]
 pub struct ContextBuilder {
     config: Config,
-    _private_key: PrivateKey,
+    private_key: PrivateKey,
     public_key: PublicKey,
 }
 
@@ -43,7 +43,7 @@ impl ContextBuilder {
         ContextBuilder {
             public_key: private_key.public_key(),
             config,
-            _private_key: private_key,
+            private_key,
         }
     }
     /// Load the configuration from the environment and initializes context builder
@@ -64,7 +64,7 @@ impl ContextBuilder {
         let public_key = private_key.public_key();
         Ok(ContextBuilder {
             config,
-            _private_key: private_key,
+            private_key,
             public_key,
         })
     }
@@ -82,7 +82,7 @@ impl ContextBuilder {
 
             let node = ContextBuilder::init(
                 self.config.clone(),
-                self._private_key.clone(),
+                self.private_key.clone(),
                 client,
                 cancellation.clone(),
             )
@@ -198,16 +198,16 @@ impl ContextBuilder {
         }))
     }
 
-    async fn build_kube_client(_config: &Config) -> Result<KubeClient> {
+    async fn build_kube_client(config: &Config) -> Result<KubeClient> {
         #[cfg(not(test))]
         {
-            let client = KubeClient::build(_config).await?;
+            let client = KubeClient::build(&config.kubernetes).await?;
             Ok(client)
         }
         #[cfg(test)]
         {
-            let svc = fake_kube_api::service::FakeKubeApiService::new();
-            let client = KubeClient::build_fake(svc);
+            use crate::tests::fake_etcd_server::FakeEtcdServer;
+            let client = FakeEtcdServer::get_client(&config.kubernetes);
             Ok(client)
         }
     }

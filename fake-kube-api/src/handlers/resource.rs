@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::{collections::BTreeMap, sync::Arc};
 
 use anyhow::Context;
@@ -9,6 +10,7 @@ use kube::client::Status;
 use kube::core::ErrorResponse;
 use kube::core::response::StatusDetails;
 use kube::core::response::StatusSummary;
+use tracing::info;
 
 use crate::dynamic_object_ext::DynamicObjectExt;
 use crate::dynamic_object_ext::NamespacedName;
@@ -39,6 +41,48 @@ pub struct ResourceArgs {
     pub params: BTreeMap<String, String>,
 }
 
+impl ResourceArgs {
+    pub fn try_new(
+        path_params: HashMap<&str, &str>,
+        query_params: BTreeMap<String, String>,
+        input: Bytes,
+    ) -> Result<Self, anyhow::Error> {
+        let group = path_params
+            .get("group")
+            .ok_or_else(|| anyhow::anyhow!("Missing 'group' path parameter"))?
+            .to_string();
+        let version = path_params
+            .get("version")
+            .ok_or_else(|| anyhow::anyhow!("Missing 'version' path parameter"))?
+            .to_string();
+        let kind_plural = path_params
+            .get("pluralkind")
+            .ok_or_else(|| anyhow::anyhow!("Missing 'pluralkind' path parameter"))?
+            .to_string();
+        let subresource = path_params.get("subresource").cloned().map(|s| s.into());
+
+        let resource_name = path_params.get("name").map(|n| {
+            NamespacedName::new(
+                path_params
+                    .get("namespace")
+                    .cloned()
+                    .map(|s| s.into())
+                    .unwrap_or_default(),
+                (*n).into(),
+            )
+        });
+        Ok(ResourceArgs {
+            group,
+            version,
+            kind_plural,
+            input,
+            resource_name,
+            subresource,
+            params: query_params,
+        })
+    }
+}
+
 impl ApiHandler for ResourceHandler {
     type Req = ResourceArgs;
 
@@ -52,7 +96,9 @@ impl ApiHandler for ResourceHandler {
                 resource_name,
                 ..
             } = request;
-
+            info!(
+                "ApiHandler: Fetching resource: {group} {version} {kind_plural} {resource_name:?}"
+            );
             if let Some((ar, objects)) = storage.find_objects(&group, &version, &kind_plural) {
                 if let Some(resource_name) = resource_name {
                     let resource = objects

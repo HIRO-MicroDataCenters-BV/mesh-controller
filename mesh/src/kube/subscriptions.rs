@@ -144,7 +144,7 @@ pub mod tests {
     use crate::{kube::dynamic_object_ext::DynamicObjectExt, tracing::setup_tracing};
     use anyapplication::anyapplication::*;
     use anyhow::anyhow;
-    use fake_kube_api::service::FakeKubeApiService;
+    use fake_kube_api::service::FakeEtcdServiceWrapper;
     use kube::api::{ApiResource, ObjectMeta};
     pub use serde::{Deserialize, Serialize};
     use std::collections::BTreeMap;
@@ -154,12 +154,12 @@ pub mod tests {
     async fn test_receive_snapshot() {
         setup_tracing(Some("=TRACE".to_string()));
 
-        let service = FakeKubeApiService::new();
+        let service = FakeEtcdServiceWrapper::new();
 
         let gvk = GroupVersionKind::gvk("dcp.hiro.io", "v1", "AnyApplication");
         let ar = ApiResource::from_gvk(&gvk);
 
-        service.register(&ar);
+        service.register(&ar).await;
         service
             .store(anyapplication())
             .await
@@ -191,11 +191,11 @@ pub mod tests {
     async fn test_create() {
         setup_tracing(Some("=TRACE".to_string()));
 
-        let service = FakeKubeApiService::new();
+        let service = FakeEtcdServiceWrapper::new();
 
         let gvk = GroupVersionKind::gvk("dcp.hiro.io", "v1", "AnyApplication");
         let ar = ApiResource::from_gvk(&gvk);
-        service.register(&ar);
+        service.register(&ar).await;
 
         let client = KubeClient::build_fake(service);
         let cache = Subscriptions::new(client.clone());
@@ -221,7 +221,7 @@ pub mod tests {
     async fn test_update() {
         setup_tracing(Some("=TRACE".to_string()));
 
-        let service = FakeKubeApiService::new();
+        let service = FakeEtcdServiceWrapper::new();
         let resource = anyapplication();
         let resource_name = resource.get_namespaced_name();
         let test_labels: BTreeMap<String, String> =
@@ -229,7 +229,7 @@ pub mod tests {
 
         let gvk = GroupVersionKind::gvk("dcp.hiro.io", "v1", "AnyApplication");
         let ar = ApiResource::from_gvk(&gvk);
-        service.register(&ar);
+        service.register(&ar).await;
 
         service
             .store(resource.clone())
@@ -269,13 +269,13 @@ pub mod tests {
     async fn test_delete() {
         setup_tracing(Some("=TRACE".to_string()));
 
-        let service = FakeKubeApiService::new();
+        let service = FakeEtcdServiceWrapper::new();
         let resource = anyapplication();
         let resource_name = resource.get_namespaced_name();
 
         let gvk = GroupVersionKind::gvk("dcp.hiro.io", "v1", "AnyApplication");
         let ar = ApiResource::from_gvk(&gvk);
-        service.register(&ar);
+        service.register(&ar).await;
 
         service
             .store(resource.clone())
@@ -305,7 +305,7 @@ pub mod tests {
     async fn test_lifecycle() {
         setup_tracing(Some("=TRACE".to_string()));
 
-        let service = FakeKubeApiService::new();
+        let service = FakeEtcdServiceWrapper::new();
 
         let test_labels: BTreeMap<String, String> =
             BTreeMap::from([("test".into(), "test".into())]);
@@ -314,7 +314,7 @@ pub mod tests {
         let resource = anyapplication();
         let resource_name = resource.get_namespaced_name();
 
-        service.register(&ar);
+        service.register(&ar).await;
 
         let client = KubeClient::build_fake(service);
         let cache = Subscriptions::new(client.clone());

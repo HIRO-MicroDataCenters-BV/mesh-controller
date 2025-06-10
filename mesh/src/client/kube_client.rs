@@ -1,6 +1,6 @@
 use crate::client::kube_client::watcher::Event;
 use crate::{
-    config::configuration::{Config, KubeConfiguration},
+    config::configuration::KubeConfiguration,
     kube::{dynamic_object_ext::DynamicObjectExt, types::NamespacedName},
 };
 use anyhow::{Context, Result, anyhow};
@@ -23,7 +23,7 @@ pub struct KubeClient {
 }
 
 impl KubeClient {
-    pub async fn build(config: &Config) -> Result<KubeClient> {
+    pub async fn build(config: &KubeConfiguration) -> Result<KubeClient> {
         let kube_config = KubeClient::to_kube_config(config).await?;
         let client = kube::Client::try_from(kube_config).context("failed to create kube client")?;
         Ok(KubeClient {
@@ -33,7 +33,7 @@ impl KubeClient {
     }
 
     #[cfg(test)]
-    pub fn build_fake(svc: fake_kube_api::service::FakeKubeApiService) -> KubeClient {
+    pub fn build_fake(svc: fake_kube_api::service::FakeEtcdServiceWrapper) -> KubeClient {
         let client = kube::Client::new(svc, "default");
         KubeClient {
             client,
@@ -41,29 +41,24 @@ impl KubeClient {
         }
     }
 
-    async fn to_kube_config(config: &Config) -> Result<kube::config::Config> {
-        match config.kubernetes.as_ref() {
-            Some(kube_config) => match kube_config {
-                KubeConfiguration::InCluster => kube::config::Config::infer()
-                    .await
-                    .context("failed to infer kube config"),
-                KubeConfiguration::External(external_config) => {
-                    let kube_context = external_config
-                        .kube_context
-                        .to_owned()
-                        .unwrap_or("default".into());
-                    let options = kube::config::KubeConfigOptions {
-                        context: Some(kube_context),
-                        ..Default::default()
-                    };
-                    kube::config::Config::from_kubeconfig(&options)
-                        .await
-                        .context("failed to create kube config from path")
-                }
-            },
-            None => kube::config::Config::infer()
+    async fn to_kube_config(config: &KubeConfiguration) -> Result<kube::config::Config> {
+        match &config {
+            KubeConfiguration::InCluster => kube::config::Config::infer()
                 .await
                 .context("failed to infer kube config"),
+            KubeConfiguration::External(external_config) => {
+                let kube_context = external_config
+                    .kube_context
+                    .to_owned()
+                    .unwrap_or("default".into());
+                let options = kube::config::KubeConfigOptions {
+                    context: Some(kube_context),
+                    ..Default::default()
+                };
+                kube::config::Config::from_kubeconfig(&options)
+                    .await
+                    .context("failed to create kube config from path")
+            }
         }
     }
 

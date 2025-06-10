@@ -88,7 +88,7 @@ impl MeshNode {
     pub async fn configure_p2p_network(
         config: &Config,
     ) -> Result<(NodeConfig, NetworkConfig), anyhow::Error> {
-        let topic: String = match config.kubernetes.as_ref().unwrap() {
+        let topic: String = match &config.kubernetes {
             crate::config::configuration::KubeConfiguration::InCluster => String::from("unknown"),
             crate::config::configuration::KubeConfiguration::External(
                 kube_configuration_external,

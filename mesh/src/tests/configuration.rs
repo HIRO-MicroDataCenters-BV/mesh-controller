@@ -1,3 +1,4 @@
+use kube::api::GroupVersionKind;
 use once_cell::sync::Lazy;
 use p2panda_core::PrivateKey;
 use std::{
@@ -6,14 +7,18 @@ use std::{
 };
 
 use crate::config::configuration::{
-    Config, KnownNode, KubeConfiguration, MergeStrategyType, MeshConfig, PeriodicSnapshotConfig,
-    ResourceConfig,
+    Config, KnownNode, KubeConfiguration, KubeConfigurationExternal, MergeStrategyType, MeshConfig,
+    PeriodicSnapshotConfig, ResourceConfig,
 };
 
 static TEST_INSTANCE_HTTP_PORT: Lazy<AtomicU16> = Lazy::new(|| AtomicU16::new(8080));
 static TEST_INSTANCE_MESH_PORT: Lazy<AtomicU16> = Lazy::new(|| AtomicU16::new(31000));
 
-pub fn generate_config(zone: &str) -> Config {
+pub fn generate_config(
+    zone: &str,
+    kube_config: &KubeConfiguration,
+    gvk: &GroupVersionKind,
+) -> Config {
     let http_port = TEST_INSTANCE_HTTP_PORT.fetch_add(1, Ordering::SeqCst);
     let mesh_port = TEST_INSTANCE_MESH_PORT.fetch_add(1, Ordering::SeqCst);
 
@@ -22,8 +27,8 @@ pub fn generate_config(zone: &str) -> Config {
     config.node.http_bind_port = http_port;
     config.node.known_nodes = vec![];
     config.node.private_key_path = PathBuf::from("/tmp/private_key");
-    config.node.network_id = "test".to_string();
-    config.kubernetes = Some(KubeConfiguration::InCluster);
+    config.node.network_id = "test_network".to_string();
+    config.kubernetes = kube_config.clone();
     config.mesh = MeshConfig {
         zone: zone.into(),
         bootstrap: true,
@@ -32,11 +37,11 @@ pub fn generate_config(zone: &str) -> Config {
             snapshot_max_log: 10,
         },
         resource: ResourceConfig {
-            group: "dcp.hiro.io".into(),
-            version: "v1".into(),
-            kind: "AnyApplication".into(),
+            group: gvk.group.to_owned(),
+            version: gvk.version.to_owned(),
+            kind: gvk.kind.to_owned(),
             namespace: Some("test".into()),
-            merge_strategy: MergeStrategyType::Default,
+            merge_strategy: MergeStrategyType::AnyApplication,
         },
         // resource: ResourceConfig {
         //     group: "".into(),
@@ -65,4 +70,10 @@ pub fn configure_network(nodes: Vec<(&mut Config, &PrivateKey)>) {
         }
         nodes[i].0.node.known_nodes = known_nodes;
     }
+}
+
+pub fn generate_kube_config(context: &str) -> KubeConfiguration {
+    KubeConfiguration::External(KubeConfigurationExternal {
+        kube_context: Some(context.into()),
+    })
 }

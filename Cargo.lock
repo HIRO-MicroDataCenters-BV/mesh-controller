@@ -1236,6 +1236,7 @@ dependencies = [
  "k8s-openapi",
  "kube",
  "loole",
+ "once_cell",
  "regex",
  "serde",
  "serde_json",
