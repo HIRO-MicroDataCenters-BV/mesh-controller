@@ -65,11 +65,12 @@ pub mod tests {
 
     pub fn make_anyapplication_with_conditions(
         owner_version: Version,
+        resource_version: Version,
         owner_zone: &str,
         zones: i64,
         conditions: &[AnyApplicationStatusConditions],
     ) -> DynamicObject {
-        let resource = AnyApplication {
+        let mut object = AnyApplication {
             metadata: ObjectMeta {
                 name: Some("nginx-app".into()),
                 namespace: Some("default".into()),
@@ -110,7 +111,10 @@ pub mod tests {
                 state: "New".into(),
             }),
         };
-        let resource_str = serde_json::to_value(&resource).expect("Resource is not serializable");
+
+        object.metadata.resource_version = Some(resource_version.to_string());
+
+        let resource_str = serde_json::to_value(&object).expect("Resource is not serializable");
         let object: DynamicObject =
             serde_json::from_value(resource_str).expect("Cannot parse dynamic object");
         object

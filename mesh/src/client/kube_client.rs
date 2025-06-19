@@ -1,4 +1,5 @@
 use crate::client::kube_client::watcher::Event;
+use crate::kube::subscriptions::Version;
 use crate::{
     config::configuration::KubeConfiguration,
     kube::{dynamic_object_ext::DynamicObjectExt, types::NamespacedName},
@@ -9,12 +10,45 @@ use either::Either;
 use futures::Stream;
 use kube::Error;
 use kube::api::ApiResource;
+use kube::config::{InferConfigError, KubeconfigError};
 use kube::{
     Api,
     api::{DeleteParams, DynamicObject, GroupVersionKind, Patch, PatchParams},
     core::Status,
     runtime::watcher,
 };
+
+use serde_json::json;
+use tracing::error;
+
+pub type BoxedError = Box<dyn std::error::Error + Send + Sync>;
+
+#[derive(thiserror::Error, Debug)]
+pub enum ClientError {
+    #[error("Configuration Error: {0}")]
+    Configuration(#[from] BoxedError),
+
+    #[error("Kube Error: {0}")]
+    Kube(#[from] kube::Error),
+
+    #[error("Invariant Error: {0}")]
+    Invariant(#[from] anyhow::Error),
+
+    #[error("Version conflict")]
+    VersionConflict,
+}
+
+impl From<InferConfigError> for ClientError {
+    fn from(value: InferConfigError) -> Self {
+        ClientError::Configuration(Box::new(value))
+    }
+}
+
+impl From<KubeconfigError> for ClientError {
+    fn from(value: KubeconfigError) -> Self {
+        ClientError::Configuration(Box::new(value))
+    }
+}
 
 #[derive(Clone)]
 pub struct KubeClient {
@@ -23,7 +57,7 @@ pub struct KubeClient {
 }
 
 impl KubeClient {
-    pub async fn build(config: &KubeConfiguration) -> Result<KubeClient> {
+    pub async fn build(config: &KubeConfiguration) -> Result<KubeClient, ClientError> {
         let kube_config = KubeClient::to_kube_config(config).await?;
         let client = kube::Client::try_from(kube_config).context("failed to create kube client")?;
         Ok(KubeClient {
@@ -41,11 +75,13 @@ impl KubeClient {
         }
     }
 
-    async fn to_kube_config(config: &KubeConfiguration) -> Result<kube::config::Config> {
+    async fn to_kube_config(
+        config: &KubeConfiguration,
+    ) -> Result<kube::config::Config, ClientError> {
         match &config {
-            KubeConfiguration::InCluster => kube::config::Config::infer()
-                .await
-                .context("failed to infer kube config"),
+            KubeConfiguration::InCluster => {
+                kube::config::Config::infer().await.map_err(|e| e.into())
+            }
             KubeConfiguration::External(external_config) => {
                 let kube_context = external_config
                     .kube_context
@@ -57,7 +93,7 @@ impl KubeClient {
                 };
                 kube::config::Config::from_kubeconfig(&options)
                     .await
-                    .context("failed to create kube config from path")
+                    .map_err(|e| e.into())
             }
         }
     }
@@ -93,44 +129,70 @@ impl KubeClient {
         Ok(status)
     }
 
-    pub async fn direct_patch_apply(&self, resource: DynamicObject) -> Result<()> {
+    pub async fn direct_patch_apply(
+        &self,
+        resource: DynamicObject,
+    ) -> Result<Version, ClientError> {
         let gvk = resource.get_gvk()?;
         let name = resource.get_namespaced_name();
         let status = resource.get_status();
 
-        let patch_params = PatchParams::apply(&name.name).force();
         let api = self
             .get_or_resolve_namespaced_api(&gvk, &name.namespace)
             .await?;
 
-        api.patch(&name.name, &patch_params, &Patch::Apply(resource))
+        let mut result_version = api
+            .patch(
+                &name.name,
+                &PatchParams::apply(&name.name),
+                &Patch::Apply(resource),
+            )
             .await
-            .context(format!("{name}: Patching the spec"))?;
+            .map(|obj| obj.get_resource_version())
+            .map_err(|err| {
+                if is_conflict(&err) {
+                    ClientError::VersionConflict
+                } else {
+                    error!("patch spec error {err:?}");
+                    err.into()
+                }
+            })?;
 
-        if let Some(status) = status {
-            api.patch_status(&name.name, &PatchParams::default(), &Patch::Merge(&status))
+        if let Some(mut status) = status {
+            status["metadata"] = json!({ "resourceVersion": Some(result_version.to_string()) });
+
+            result_version = api
+                .patch_status(&name.name, &PatchParams::default(), &Patch::Merge(&status))
                 .await
-                .context(format!("{name}: Patching the status"))?;
+                .map(|obj| obj.get_resource_version())
+                .map_err(|err| {
+                    if is_conflict(&err) {
+                        ClientError::VersionConflict
+                    } else {
+                        error!("patch spec error {err:?}");
+                        err.into()
+                    }
+                })?;
         }
 
-        Ok(())
+        Ok(result_version)
     }
 
     async fn get_or_resolve_namespaced_api(
         &self,
         gvk: &GroupVersionKind,
         namespace: &str,
-    ) -> Result<Api<DynamicObject>> {
+    ) -> Result<Api<DynamicObject>, ClientError> {
         if !self.resources.contains_key(gvk) {
             let (ar, _) = kube::discovery::pinned_kind(&self.client, gvk).await?;
             self.resources.insert(gvk.clone(), ar);
         }
         self.resources
             .get(gvk)
-            .ok_or(anyhow!(
+            .ok_or(ClientError::Invariant(anyhow!(
                 "Should not happend, resource not found in cache: {:?}",
                 gvk
-            ))
+            )))
             .map(|resource| {
                 Api::<DynamicObject>::namespaced_with(
                     self.client.clone(),
@@ -144,7 +206,8 @@ impl KubeClient {
         &self,
         gvk: &GroupVersionKind,
         namespace: &Option<String>,
-    ) -> Result<impl Stream<Item = Result<Event<DynamicObject>, watcher::Error>> + Send> {
+    ) -> Result<impl Stream<Item = Result<Event<DynamicObject>, watcher::Error>> + Send, ClientError>
+    {
         let api = match namespace {
             Some(namespace) => self.get_or_resolve_namespaced_api(gvk, namespace).await?,
             None => self.get_or_resolve_all_api(gvk).await?,
@@ -154,17 +217,20 @@ impl KubeClient {
         Ok(watcher::watcher(api, wc))
     }
 
-    async fn get_or_resolve_all_api(&self, gvk: &GroupVersionKind) -> Result<Api<DynamicObject>> {
+    async fn get_or_resolve_all_api(
+        &self,
+        gvk: &GroupVersionKind,
+    ) -> Result<Api<DynamicObject>, ClientError> {
         if !self.resources.contains_key(gvk) {
             let (ar, _) = kube::discovery::pinned_kind(&self.client, gvk).await?;
             self.resources.insert(gvk.clone(), ar);
         }
         self.resources
             .get(gvk)
-            .ok_or(anyhow!(
+            .ok_or(ClientError::Invariant(anyhow!(
                 "Should not happend, resource not found in cache: {:?}",
                 gvk
-            ))
+            )))
             .map(|resource| Api::<DynamicObject>::all_with(self.client.clone(), resource.value()))
     }
 }
@@ -173,5 +239,13 @@ pub fn object_not_found(results: &Result<DynamicObject, Error>) -> bool {
     match results {
         Err(Error::Api(response)) => response.reason == "NotFound",
         _ => false,
+    }
+}
+
+fn is_conflict(error: &Error) -> bool {
+    if let Error::Api(response) = error {
+        response.code == 409
+    } else {
+        false
     }
 }

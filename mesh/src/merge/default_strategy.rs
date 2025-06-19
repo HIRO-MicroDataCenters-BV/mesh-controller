@@ -34,6 +34,7 @@ impl MergeStrategy for DefaultMerge {
                 let mut object = incoming.clone();
                 object.metadata.managed_fields = None;
                 object.metadata.uid = None;
+                object.metadata.resource_version = current.metadata.resource_version;
                 object.types = Some(TypeMeta {
                     api_version: self.gvk.api_version(),
                     kind: self.gvk.kind.to_owned(),
@@ -102,8 +103,10 @@ impl MergeStrategy for DefaultMerge {
             }
 
             incoming.set_owner_version(incoming_version);
+            incoming.unset_resource_version();
             Ok(UpdateResult::Update { object: incoming })
         } else {
+            incoming.unset_resource_version();
             incoming.set_owner_version(incoming_version);
             Ok(UpdateResult::Create { object: incoming })
         }
@@ -123,6 +126,7 @@ impl MergeStrategy for DefaultMerge {
         }
         if current.is_some() {
             incoming.set_owner_version(incoming_version);
+            incoming.unset_resource_version();
             Ok(UpdateResult::Delete { object: incoming })
         } else {
             Ok(UpdateResult::DoNothing)
