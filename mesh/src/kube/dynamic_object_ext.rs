@@ -19,6 +19,9 @@ pub trait DynamicObjectExt {
     fn set_owner_zone(&mut self, zone: String);
     fn normalize(&mut self, default_zone: &str);
     fn get_status(&self) -> Option<Value>;
+    fn unset_resource_version(&mut self);
+    fn get_resource_version(&self) -> Version;
+    fn set_resource_version(&mut self, version: Version);
 }
 
 impl DynamicObjectExt for DynamicObject {
@@ -126,5 +129,24 @@ impl DynamicObjectExt for DynamicObject {
         self.data
             .get("status")
             .map(|status| json!({ "status": status }))
+    }
+
+    fn unset_resource_version(&mut self) {
+        self.metadata.resource_version = None;
+    }
+
+    fn get_resource_version(&self) -> Version {
+        let resource_version = &self
+            .metadata
+            .resource_version
+            .as_ref()
+            .expect("resource version is not set");
+        resource_version
+            .parse()
+            .expect("resource version must be numberic")
+    }
+
+    fn set_resource_version(&mut self, version: Version) {
+        self.metadata.resource_version = Some(version.to_string());
     }
 }

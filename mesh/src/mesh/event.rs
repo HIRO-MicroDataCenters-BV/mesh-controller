@@ -56,11 +56,20 @@ impl Display for MeshEvent {
 impl From<UpdateResult> for Option<MeshEvent> {
     fn from(update_result: UpdateResult) -> Option<MeshEvent> {
         match update_result {
-            UpdateResult::Create { object } | UpdateResult::Update { object } => {
+            UpdateResult::Create { mut object } | UpdateResult::Update { mut object } => {
+                object.unset_resource_version();
                 Some(MeshEvent::Update { object })
             }
-            UpdateResult::Delete { object } => Some(MeshEvent::Delete { object }),
-            UpdateResult::Snapshot { snapshot } => Some(MeshEvent::Snapshot { snapshot }),
+            UpdateResult::Delete { mut object } => {
+                object.unset_resource_version();
+                Some(MeshEvent::Delete { object })
+            }
+            UpdateResult::Snapshot { mut snapshot } => {
+                snapshot.iter_mut().for_each(|(_, object)| {
+                    object.unset_resource_version();
+                });
+                Some(MeshEvent::Snapshot { snapshot })
+            }
             UpdateResult::DoNothing => None,
         }
     }

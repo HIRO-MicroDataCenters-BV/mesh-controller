@@ -429,13 +429,16 @@ impl MergeStrategy for AnyApplicationMerge {
         }
 
         if let Some(current) = current {
+            let current_version = current.get_resource_version();
             let mut current: AnyApplication = current.clone().try_parse()?;
             let mut updated = false;
-            if is_owned_zone && current.spec != incoming.spec {
+            if is_owned_zone && current.spec != incoming.spec && current_version < incoming_version
+            {
                 current.spec = incoming.spec.clone();
                 updated = true;
             }
 
+            // TODO merge by version of owning zone state
             if let Some(status) =
                 self.local_update_status(&current.status, &incoming.status, is_owned_zone)
             {
@@ -449,7 +452,10 @@ impl MergeStrategy for AnyApplicationMerge {
                 }
                 current.set_condition_version(incoming_zone, incoming_version);
 
-                let object = current.to_object()?;
+                let mut object = current.to_object()?;
+                if incoming_version > current_version {
+                    object.set_resource_version(incoming_version);
+                }
                 Ok(UpdateResult::Update { object })
             } else {
                 Ok(UpdateResult::DoNothing)
@@ -459,7 +465,8 @@ impl MergeStrategy for AnyApplicationMerge {
                 incoming.set_owner_version(incoming_version);
             }
             incoming.set_condition_version(incoming_zone, incoming_version);
-            let object = incoming.to_object()?;
+            let mut object = incoming.to_object()?;
+            object.metadata.resource_version = Some(incoming_version.to_string());
             Ok(UpdateResult::Create { object })
         }
     }
@@ -480,18 +487,14 @@ impl MergeStrategy for AnyApplicationMerge {
 
         if current.is_some() {
             incoming.set_owner_version(incoming_version);
-            let object = incoming.to_object()?;
+            let mut object = incoming.to_object()?;
+            // object.unset_resource_version();
+            object.set_resource_version(incoming_version);
             Ok(UpdateResult::Delete { object })
         } else {
             Ok(UpdateResult::DoNothing)
         }
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AnyApplicationOwnership {
-    pub owner: String,
-    pub placements: Vec<String>,
 }
 
 #[cfg(test)]
@@ -660,11 +663,13 @@ pub mod tests {
     pub fn mesh_update_condition_from_replica_zone() {
         let current = make_anyapplication_with_conditions(
             1,
+            1,
             "zone1",
             0,
             &vec![anycond(2, "zone1", "type"), anycond(3, "zone2", "type")],
         );
         let incoming = make_anyapplication_with_conditions(
+            1,
             1,
             "zone1",
             1,
@@ -672,6 +677,7 @@ pub mod tests {
         );
 
         let expected = make_anyapplication_with_conditions(
+            1,
             1,
             "zone1",
             0,
@@ -689,9 +695,15 @@ pub mod tests {
 
     #[test]
     pub fn mesh_create_condition_from_replica_zone() {
-        let current =
-            make_anyapplication_with_conditions(1, "zone1", 0, &vec![anycond(2, "zone1", "type")]);
+        let current = make_anyapplication_with_conditions(
+            1,
+            1,
+            "zone1",
+            0,
+            &vec![anycond(2, "zone1", "type")],
+        );
         let incoming = make_anyapplication_with_conditions(
+            1,
             1,
             "zone1",
             1,
@@ -699,6 +711,7 @@ pub mod tests {
         );
 
         let expected = make_anyapplication_with_conditions(
+            1,
             1,
             "zone1",
             0,
@@ -718,15 +731,26 @@ pub mod tests {
     pub fn mesh_delete_condition_from_replica_zone() {
         let current = make_anyapplication_with_conditions(
             1,
+            1,
             "zone1",
             0,
             &vec![anycond(2, "zone1", "type"), anycond(4, "zone2", "type")],
         );
-        let incoming =
-            make_anyapplication_with_conditions(1, "zone1", 1, &vec![anycond(3, "zone1", "type")]);
+        let incoming = make_anyapplication_with_conditions(
+            1,
+            1,
+            "zone1",
+            1,
+            &vec![anycond(3, "zone1", "type")],
+        );
 
-        let expected =
-            make_anyapplication_with_conditions(1, "zone1", 0, &vec![anycond(2, "zone1", "type")]);
+        let expected = make_anyapplication_with_conditions(
+            1,
+            1,
+            "zone1",
+            0,
+            &vec![anycond(2, "zone1", "type")],
+        );
 
         let strategy = AnyApplicationMerge::new();
         assert_eq!(
@@ -739,26 +763,26 @@ pub mod tests {
 
     #[test]
     pub fn local_update_create() {
-        let incoming = anyapp(2, "zone1", 0);
+        let incoming = make_anyapplication_with_conditions(1, 1, "zone1", 0, &vec![]);
 
         assert_eq!(
             UpdateResult::Create {
                 object: incoming.clone()
             },
             AnyApplicationMerge::new()
-                .local_update(None, incoming, 2, &"zone1")
+                .local_update(None, incoming, 1, &"zone1")
                 .unwrap()
         );
     }
 
     #[test]
     pub fn local_update_ignore_version() {
-        let incoming = anyapp(1, "zone1", 1);
-        let existing = anyapp(2, "zone1", 2);
+        let incoming = make_anyapplication_with_conditions(1, 1, "zone1", 0, &vec![]);
 
-        let object = incoming.clone();
+        let existing = make_anyapplication_with_conditions(2, 2, "zone1", 0, &vec![]);
+
         assert_eq!(
-            UpdateResult::Update { object },
+            UpdateResult::DoNothing,
             AnyApplicationMerge::new()
                 .local_update(Some(existing), incoming, 1, &"zone1")
                 .unwrap()
@@ -767,8 +791,9 @@ pub mod tests {
 
     #[test]
     pub fn local_update() {
-        let incoming = anyapp(2, "zone1", 2);
-        let existing = anyapp(1, "zone1", 0);
+        let incoming = make_anyapplication_with_conditions(2, 2, "zone1", 2, &vec![]);
+
+        let existing = make_anyapplication_with_conditions(1, 1, "zone1", 0, &vec![]);
 
         assert_eq!(
             UpdateResult::Update {
@@ -794,14 +819,16 @@ pub mod tests {
 
     #[test]
     pub fn local_delete() {
-        let incoming = anyapp(2, "zone1", 2);
+        let current = make_anyapplication_with_conditions(1, 1, "zone1", 1, &vec![]);
+
+        let incoming = make_anyapplication_with_conditions(2, 2, "zone1", 1, &vec![]);
 
         assert_eq!(
-            UpdateResult::Create {
+            UpdateResult::Delete {
                 object: incoming.clone()
             },
             AnyApplicationMerge::new()
-                .local_update(None, incoming, 2, &"zone1")
+                .local_delete(Some(current), incoming, 2, &"zone1")
                 .unwrap()
         );
     }
@@ -810,11 +837,13 @@ pub mod tests {
     pub fn local_update_from_placement_zone() {
         let current = make_anyapplication_with_conditions(
             1,
+            1,
             "zone1",
             1,
             &vec![anycond(2, "zone1", "type"), anycond(3, "zone2", "type")],
         );
         let incoming = make_anyapplication_with_conditions(
+            1,
             1,
             "zone1",
             1,
@@ -826,6 +855,7 @@ pub mod tests {
 
         let expected = make_anyapplication_with_conditions(
             1,
+            4,
             "zone1",
             1,
             &vec![
@@ -845,9 +875,15 @@ pub mod tests {
 
     #[test]
     pub fn local_create_from_placement_zone() {
-        let current =
-            make_anyapplication_with_conditions(1, "zone1", 0, &vec![anycond(2, "zone1", "type")]);
+        let current = make_anyapplication_with_conditions(
+            1,
+            1,
+            "zone1",
+            0,
+            &vec![anycond(2, "zone1", "type")],
+        );
         let incoming = make_anyapplication_with_conditions(
+            1,
             1,
             "zone1",
             1,
@@ -856,6 +892,7 @@ pub mod tests {
 
         let expected = make_anyapplication_with_conditions(
             1,
+            5,
             "zone1",
             0,
             &vec![anycond(3, "zone1", "type"), anycond(5, "zone2", "type")],
@@ -874,16 +911,27 @@ pub mod tests {
     pub fn local_delete_from_placement_zone() {
         let current = make_anyapplication_with_conditions(
             1,
+            1,
             "zone1",
             0,
             &vec![anycond(2, "zone1", "type"), anycond(3, "zone2", "type")],
         );
 
-        let incoming =
-            make_anyapplication_with_conditions(1, "zone1", 1, &vec![anycond(3, "zone1", "type")]);
+        let incoming = make_anyapplication_with_conditions(
+            1,
+            1,
+            "zone1",
+            1,
+            &vec![anycond(3, "zone1", "type")],
+        );
 
-        let expected =
-            make_anyapplication_with_conditions(1, "zone1", 0, &vec![anycond(3, "zone1", "type")]);
+        let expected = make_anyapplication_with_conditions(
+            1,
+            4,
+            "zone1",
+            0,
+            &vec![anycond(3, "zone1", "type")],
+        );
 
         let strategy = AnyApplicationMerge::new();
         assert_eq!(

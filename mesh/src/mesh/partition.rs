@@ -4,13 +4,14 @@ use std::{
 };
 
 use super::event::MeshEvent;
+use crate::kube::subscriptions::Version;
 use crate::{
     kube::{dynamic_object_ext::DynamicObjectExt, event::KubeEvent, types::NamespacedName},
     merge::types::{MergeResult, MergeStrategy, UpdateResult},
 };
 use anyhow::Result;
 use kube::api::DynamicObject;
-use tracing::error;
+use tracing::{debug, error};
 
 pub struct Partition {
     resources: BTreeMap<NamespacedName, DynamicObject>,
@@ -243,7 +244,19 @@ impl Partition {
 
     fn kube_update_partition(&mut self, result: &UpdateResult, current_zone: &str) -> Result<()> {
         match result {
-            UpdateResult::Create { object } | UpdateResult::Update { object } => {
+            UpdateResult::Create { object } => {
+                debug!(
+                    "kube_update_partition: create: version set to {:?}",
+                    object.metadata.resource_version
+                );
+                self.resources
+                    .insert(object.get_namespaced_name(), object.clone());
+            }
+            UpdateResult::Update { object } => {
+                debug!(
+                    "kube_update_partition: update: version set to {:?}",
+                    object.metadata.resource_version
+                );
                 self.resources
                     .insert(object.get_namespaced_name(), object.clone());
             }
@@ -261,6 +274,10 @@ impl Partition {
                 for name in existing {
                     match snapshot.get(&name) {
                         Some(snapshot_object) => {
+                            debug!(
+                                "kube_update_partition: snapshot: version set to {:?}",
+                                snapshot_object.metadata.resource_version
+                            );
                             self.resources.insert(name, snapshot_object.clone());
                         }
                         None => {
@@ -272,6 +289,16 @@ impl Partition {
             UpdateResult::DoNothing => {}
         }
         Ok(())
+    }
+
+    pub fn update_version(&mut self, name: &NamespacedName, version: Version) {
+        if let Some(object) = self.resources.get_mut(name) {
+            object.set_resource_version(version);
+        }
+    }
+
+    pub fn get(&self, name: &NamespacedName) -> Option<DynamicObject> {
+        self.resources.get(name).cloned()
     }
 }
 
@@ -295,17 +322,20 @@ pub mod tests {
     #[test]
     fn single_source_replication() {
         let mut runner = ReplicationTestRunner::new_anyapp("A", "B");
-        let mut anyapp_a = AnyApplicationTestController::new("A");
+        let mut anyapp_a = AnyApplicationStore::new("A");
 
-        // Do not replicate object that has no status (new resource)
+        // 1.1 Do not replicate object that has no status (new resource)
         runner.kube_partition_a(
             &anyapp_a.kube_snap(),
             &mesh_snap(vec![]),
             Vec::<MergeResult>::new(),
         );
 
-        // Replicate object update with status set
+        // 1.2 persistence step and update of partition
         anyapp_a.inc_version();
+        runner.post_merge_update_version_a(&anyapp_a);
+
+        // 2.1 Replicate object update with status set
         anyapp_a.with_initial_state("A", "New");
         let mut anyapp_a_with_version = anyapp_a.with_updated_owner_version();
 
@@ -315,8 +345,11 @@ pub mod tests {
             vec![anyapp_a_with_version.merge_cre()],
         );
 
-        // Replicate object update with placements
+        // 2.2 persistence step and update of partition
         anyapp_a = anyapp_a_with_version.with_incremented_version();
+        runner.post_merge_update_version_a(&anyapp_a);
+
+        // 3.1 Replicate object update with placements
         anyapp_a.set_placements(anyplacements("A", None));
         let mut anyapp_a_with_version = anyapp_a.with_updated_owner_version();
 
@@ -326,8 +359,11 @@ pub mod tests {
             vec![anyapp_a_with_version.merge_upd()],
         );
 
-        // Replicate object update with placements and new condition
+        // 3.2 persistence step and update of partition
         anyapp_a = anyapp_a_with_version.with_incremented_version();
+        runner.post_merge_update_version_a(&anyapp_a);
+
+        // 3.1 Replicate object update with placements and new condition
         anyapp_a.set_conditions(Some(vec![anycond(0, "A", "type")]));
 
         let anyapp_a_updated = anyapp_a
@@ -340,8 +376,11 @@ pub mod tests {
             vec![anyapp_a_updated.merge_upd()],
         );
 
-        // Replicate object - condition update
+        // 3.2 persistence step and update of partition
         anyapp_a = anyapp_a_with_version.with_incremented_version();
+        runner.post_merge_update_version_a(&anyapp_a);
+
+        // 4.1 Replicate object - condition update
         anyapp_a.set_conditions(Some(vec![anycond(0, "A", "type2")]));
 
         let anyapp_a_updated = anyapp_a
@@ -354,8 +393,11 @@ pub mod tests {
             vec![anyapp_a_updated.merge_upd()],
         );
 
-        // Replicate object - condition delete
+        // 4.2 persistence step and update of partition
         anyapp_a = anyapp_a_with_version.with_incremented_version();
+        runner.post_merge_update_version_a(&anyapp_a);
+
+        // 4.1 Replicate object - condition delete
         anyapp_a.set_conditions(Some(vec![]));
 
         let mut anyapp_a_updated = anyapp_a
@@ -368,9 +410,11 @@ pub mod tests {
             vec![anyapp_a_updated.merge_upd()],
         );
 
-        // Replicate object delete
+        // 4.2 persistence step and update of partition
         anyapp_a = anyapp_a_updated.with_incremented_version();
+        runner.post_merge_update_version_a(&anyapp_a);
 
+        // 5 Replicate object delete
         let anyapp_a_updated = anyapp_a.with_updated_owner_version();
 
         runner.kube_partition_a(
@@ -383,18 +427,20 @@ pub mod tests {
     #[test]
     fn two_zones_interaction() {
         let mut runner = ReplicationTestRunner::new_anyapp("A", "B");
-        let mut anyapp_a = AnyApplicationTestController::new("A");
-        // let mut anyapp_b = AnyApplicationTestController::new("B");
+        let mut anyapp_a = AnyApplicationStore::new("A");
 
-        // Do not replicate object that has no status (new resource)
+        // 1.1 Do not replicate object that has no status (new resource)
         runner.kube_partition_a(
             &anyapp_a.kube_snap(),
             &mesh_snap(vec![]),
             Vec::<MergeResult>::new(),
         );
 
-        // Replicate object update with status set
+        // 1.2 persistence step and update of partition
         anyapp_a.inc_version();
+        runner.post_merge_update_version_a(&anyapp_a);
+
+        // 2.1 Replicate object update with status set
         anyapp_a.with_initial_state("A", "New");
         let mut anyapp_a_with_version = anyapp_a.with_updated_owner_version();
 
@@ -404,8 +450,11 @@ pub mod tests {
             vec![anyapp_a_with_version.merge_cre()],
         );
 
-        // Replicate object to zone B update with placements
+        // 2.2 persistence step and update of partition
         anyapp_a = anyapp_a_with_version.with_incremented_version();
+        runner.post_merge_update_version_a(&anyapp_a);
+
+        // 3.1 Replicate object to zone B update with placements
         anyapp_a.set_placements(anyplacements("A", Some("B")));
         let mut anyapp_a_with_version = anyapp_a.with_updated_owner_version();
 
@@ -415,11 +464,14 @@ pub mod tests {
             vec![anyapp_a_with_version.merge_upd()],
         );
 
-        // conditions of A replicate to B
+        // 3.2 persistence step and update of partition
         anyapp_a = anyapp_a_with_version.with_incremented_version();
+        runner.post_merge_update_version_a(&anyapp_a);
+
+        // 4.1 conditions of A replicate to B
         anyapp_a.add_condition(anycond(0, "A", "type"));
 
-        let anyapp_a_updated = anyapp_a
+        let mut anyapp_a_updated = anyapp_a
             .with_updated_owner_version()
             .with_updated_zone_conditions();
 
@@ -428,71 +480,119 @@ pub mod tests {
             &anyapp_a_updated.mesh_upd(),
             vec![anyapp_a_updated.merge_upd()],
         );
+
+        // 4.2 persistence step and update of partition
         let mut anyapp_b = anyapp_a_updated.as_zone("B", 1);
+        runner.post_merge_update_version_b(&anyapp_b);
 
-        // conditions of B replicate to A
+        // 5.1 conditions of B replicate to A
         anyapp_b.add_condition(anycond(0, "B", "type"));
-
-        let anyapp_b_updated = anyapp_b.with_updated_zone_conditions();
-
-        runner.kube_partition_b(
-            &anyapp_b.kube_upd(),
-            &anyapp_b_updated.mesh_upd(),
-            vec![anyapp_b_updated.merge_upd()],
-        );
-
-        // update of condition of A replicate to B
-        anyapp_a = anyapp_b_updated.as_zone("A", anyapp_a_updated.incoming_version);
-        anyapp_a.inc_version();
-        anyapp_a.update_condition("type", "A", anycond(0, "A", "type2"));
-
-        let anyapp_a_updated = anyapp_a
-            .with_updated_zone_conditions()
-            .with_updated_owner_version();
-
-        runner.kube_partition_a(
-            &anyapp_a.kube_upd(),
-            &anyapp_a_updated.mesh_upd(),
-            vec![anyapp_a_updated.merge_upd()],
-        );
-
-        // update of condition of B replicate to A
-        let mut anyapp_b = anyapp_a_updated.as_zone("B", anyapp_b_updated.incoming_version);
         anyapp_b.inc_version();
-        anyapp_b.update_condition("type", "B", anycond(0, "B", "type3"));
+        anyapp_b = anyapp_b.with_update_resource_version();
 
-        let anyapp_b_updated = anyapp_b.with_updated_zone_conditions();
+        let mut anyapp_b_updated = anyapp_b.with_updated_zone_conditions();
+        anyapp_a_updated = anyapp_b_updated
+            .as_zone("A", anyapp_a_updated.incoming_version)
+            .with_update_resource_version();
+
         runner.kube_partition_b(
             &anyapp_b.kube_upd(),
             &anyapp_b_updated.mesh_upd(),
-            vec![anyapp_b_updated.merge_upd()],
+            vec![anyapp_a_updated.merge_upd()],
         );
 
-        // delete of condition of A replicate to B
-        anyapp_a = anyapp_b_updated.as_zone("A", anyapp_a_updated.incoming_version);
-        anyapp_a.inc_version();
-        anyapp_a.delete_condition("type2", "A");
+        // 5.2 persistence step and update of partition
+        runner.post_merge_update_version_a(&anyapp_a_updated);
+        runner.post_merge_update_version_b(&anyapp_b_updated);
+        anyapp_a = anyapp_a_updated;
 
-        let anyapp_a_updated = anyapp_a
+        // 6.1 update of condition of A replicate to B
+        anyapp_a.update_condition("type", "A", anycond(0, "A", "type2"));
+        anyapp_a.inc_version();
+        anyapp_a = anyapp_a.with_update_resource_version();
+
+        anyapp_a_updated = anyapp_a
             .with_updated_zone_conditions()
             .with_updated_owner_version();
+
+        anyapp_b_updated = anyapp_a_updated
+            .as_zone("B", anyapp_b_updated.incoming_version)
+            .with_update_resource_version();
 
         runner.kube_partition_a(
             &anyapp_a.kube_upd(),
             &anyapp_a_updated.mesh_upd(),
+            vec![anyapp_b_updated.merge_upd()],
+        );
+
+        // 6.2 persistence step and update of partition
+        runner.post_merge_update_version_b(&anyapp_b_updated);
+        runner.post_merge_update_version_a(&anyapp_a_updated);
+        anyapp_b = anyapp_b_updated.clone();
+
+        // 7.1 update of condition of B replicate to A
+        anyapp_b.update_condition("type", "B", anycond(0, "B", "type3"));
+        anyapp_b.inc_version();
+        anyapp_b = anyapp_b.with_update_resource_version();
+
+        anyapp_b_updated = anyapp_b.with_updated_zone_conditions();
+
+        anyapp_a_updated = anyapp_b_updated
+            .as_zone("A", anyapp_a_updated.incoming_version)
+            .with_update_resource_version()
+            .with_updated_owner_version();
+
+        runner.kube_partition_b(
+            &anyapp_b.kube_upd(),
+            &anyapp_b_updated.mesh_upd(),
             vec![anyapp_a_updated.merge_upd()],
         );
+
+        // 7.2 persistence step and update of partition
+        runner.post_merge_update_version_a(&anyapp_a_updated);
+        runner.post_merge_update_version_b(&anyapp_b_updated);
+        anyapp_a = anyapp_a_updated;
+
+        // 8.1 delete of condition of A replicate to B
+        anyapp_a.delete_condition("type2", "A");
+        anyapp_a.inc_version();
+        anyapp_a = anyapp_a.with_update_resource_version();
+
+        anyapp_a_updated = anyapp_a
+            .with_updated_zone_conditions()
+            .with_updated_owner_version();
+
+        anyapp_b_updated = anyapp_a_updated
+            .as_zone("B", anyapp_b_updated.incoming_version)
+            .with_update_resource_version();
+
+        runner.kube_partition_a(
+            &anyapp_a.kube_upd(),
+            &anyapp_a_updated.mesh_upd(),
+            vec![anyapp_b_updated.merge_upd()],
+        );
+
+        // 8.2 persistence step and update of partition
+        runner.post_merge_update_version_a(&anyapp_a_updated);
+        runner.post_merge_update_version_b(&anyapp_b_updated);
+        anyapp_b = anyapp_b_updated.clone();
 
         // delete of condition of B replicate to A
-        let mut anyapp_b = anyapp_a_updated.as_zone("B", anyapp_b_updated.incoming_version);
-        anyapp_b.inc_version();
         anyapp_b.delete_condition("type3", "B");
+        anyapp_b.inc_version();
+        anyapp_b = anyapp_b.with_update_resource_version();
 
-        let anyapp_b_updated = anyapp_b.with_updated_zone_conditions();
+        anyapp_b_updated = anyapp_b.with_updated_zone_conditions();
+
+        anyapp_a_updated = anyapp_b_updated
+            .as_zone("A", anyapp_a_updated.incoming_version)
+            .with_update_resource_version()
+            .with_updated_owner_version();
+
         runner.kube_partition_b(
             &anyapp_b.kube_upd(),
             &anyapp_b_updated.mesh_upd(),
-            vec![anyapp_b_updated.merge_upd()],
+            vec![anyapp_a_updated.merge_upd()],
         );
     }
 
@@ -593,17 +693,29 @@ pub mod tests {
                 .unwrap();
             assert_eq!(actual_merge_result, merge_result_a, "merge result");
         }
+
+        pub fn post_merge_update_version_a(&mut self, controller: &AnyApplicationStore) {
+            let version = controller.incoming_version;
+            let name = controller.object().get_namespaced_name();
+            self.partition_a.update_version(&name, version);
+        }
+
+        pub fn post_merge_update_version_b(&mut self, controller: &AnyApplicationStore) {
+            let version = controller.incoming_version;
+            let name = controller.object().get_namespaced_name();
+            self.partition_b.update_version(&name, version);
+        }
     }
 
     #[derive(Clone)]
-    struct AnyApplicationTestController {
+    struct AnyApplicationStore {
         object: AnyApplication,
         zone: String,
         incoming_version: Version,
     }
 
-    impl AnyApplicationTestController {
-        pub fn new(zone: &str) -> AnyApplicationTestController {
+    impl AnyApplicationStore {
+        pub fn new(zone: &str) -> AnyApplicationStore {
             let incoming_version = 1;
             let object = AnyApplication {
                 metadata: ObjectMeta {
@@ -616,7 +728,7 @@ pub mod tests {
                 status: None,
             };
 
-            AnyApplicationTestController {
+            AnyApplicationStore {
                 object,
                 zone: zone.into(),
                 incoming_version,
@@ -695,7 +807,9 @@ pub mod tests {
             let mut updated = false;
             for existing in status.conditions.get_or_insert(vec![]).iter_mut() {
                 if existing.r#type == cond_type && existing.zone_id == zone {
+                    let existing_version = existing.zone_version.clone();
                     *existing = cond;
+                    existing.zone_version = existing_version;
                     updated = true;
                     break;
                 }
@@ -737,7 +851,8 @@ pub mod tests {
         }
 
         pub fn kube_snap(&self) -> KubeEvent {
-            let object = self.object();
+            let mut object = self.object();
+            object.set_resource_version(self.incoming_version);
             let mut snapshot = BTreeMap::new();
             let name = object.get_namespaced_name();
             snapshot.insert(name, object.clone());
@@ -748,7 +863,8 @@ pub mod tests {
         }
 
         fn kube_upd(&self) -> KubeEvent {
-            let object = self.object();
+            let mut object = self.object();
+            object.set_resource_version(self.incoming_version);
             KubeEvent::Update {
                 version: self.incoming_version,
                 object,
@@ -756,7 +872,8 @@ pub mod tests {
         }
 
         fn kube_del(&self) -> KubeEvent {
-            let object = self.object();
+            let mut object = self.object();
+            object.set_resource_version(self.incoming_version);
             KubeEvent::Delete {
                 version: self.incoming_version,
                 object,
@@ -764,12 +881,14 @@ pub mod tests {
         }
 
         fn mesh_upd(&self) -> MeshEvent {
-            let object = self.object();
+            let mut object = self.object();
+            object.unset_resource_version();
             MeshEvent::Update { object }
         }
 
         fn mesh_del(&self) -> MeshEvent {
-            let object = self.object();
+            let mut object = self.object();
+            object.unset_resource_version();
             MeshEvent::Delete { object }
         }
 
@@ -793,8 +912,9 @@ pub mod tests {
             }
         }
 
-        fn inc_version(&mut self) {
+        fn inc_version(&mut self) -> Version {
             self.incoming_version += 1;
+            return self.incoming_version;
         }
 
         pub fn as_zone(&self, zone: &str, version: Version) -> Self {
@@ -813,6 +933,12 @@ pub mod tests {
         fn with_incremented_version(&mut self) -> Self {
             let mut copy = self.clone();
             copy.inc_version();
+            copy
+        }
+
+        fn with_update_resource_version(&mut self) -> Self {
+            let mut copy = self.clone();
+            copy.object.set_resource_version(self.incoming_version);
             copy
         }
 
