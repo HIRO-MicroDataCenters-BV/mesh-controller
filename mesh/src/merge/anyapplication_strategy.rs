@@ -450,7 +450,6 @@ impl MergeStrategy for AnyApplicationMerge {
                 if is_owned_zone {
                     current.set_owner_version(incoming_version);
                 }
-                current.set_condition_version(incoming_zone, incoming_version);
 
                 let mut object = current.to_object()?;
                 if incoming_version > current_version {
@@ -464,7 +463,6 @@ impl MergeStrategy for AnyApplicationMerge {
             if is_owned_zone {
                 incoming.set_owner_version(incoming_version);
             }
-            incoming.set_condition_version(incoming_zone, incoming_version);
             let mut object = incoming.to_object()?;
             object.metadata.resource_version = Some(incoming_version.to_string());
             Ok(UpdateResult::Create { object })
@@ -488,7 +486,7 @@ impl MergeStrategy for AnyApplicationMerge {
         if current.is_some() {
             incoming.set_owner_version(incoming_version);
             let mut object = incoming.to_object()?;
-            // object.unset_resource_version();
+
             object.set_resource_version(incoming_version);
             Ok(UpdateResult::Delete { object })
         } else {
@@ -849,13 +847,13 @@ pub mod tests {
             1,
             &vec![
                 anycond(2, "zone1", "type"),
-                anycond_status(3, "zone2", "type", "updated"),
+                anycond_status(4, "zone2", "type", "updated"),
             ],
         );
 
         let expected = make_anyapplication_with_conditions(
             1,
-            4,
+            5,
             "zone1",
             1,
             &vec![
@@ -868,7 +866,7 @@ pub mod tests {
         assert_eq!(
             UpdateResult::Update { object: expected },
             strategy
-                .local_update(Some(current), incoming, 4, &"zone2")
+                .local_update(Some(current), incoming, 5, &"zone2")
                 .unwrap()
         );
     }
@@ -895,7 +893,7 @@ pub mod tests {
             5,
             "zone1",
             0,
-            &vec![anycond(3, "zone1", "type"), anycond(5, "zone2", "type")],
+            &vec![anycond(3, "zone1", "type"), anycond(4, "zone2", "type")],
         );
 
         let strategy = AnyApplicationMerge::new();

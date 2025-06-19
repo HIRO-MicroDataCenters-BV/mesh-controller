@@ -11,7 +11,7 @@ use crate::{
 };
 use anyhow::Result;
 use kube::api::DynamicObject;
-use tracing::{debug, error};
+use tracing::debug;
 
 pub struct Partition {
     resources: BTreeMap<NamespacedName, DynamicObject>,
@@ -107,9 +107,6 @@ impl Partition {
                 self.resources.remove(name);
             }
             MergeResult::DoNothing => {}
-            MergeResult::Conflict { msg } => {
-                error!("conflict while merging update from network {msg}")
-            }
         }
     }
 
@@ -364,11 +361,9 @@ pub mod tests {
         runner.post_merge_update_version_a(&anyapp_a);
 
         // 3.1 Replicate object update with placements and new condition
-        anyapp_a.set_conditions(Some(vec![anycond(0, "A", "type")]));
+        anyapp_a.set_conditions(Some(vec![anycond(1, "A", "type")]));
 
-        let anyapp_a_updated = anyapp_a
-            .with_updated_owner_version()
-            .with_updated_zone_conditions();
+        let anyapp_a_updated = anyapp_a.with_updated_owner_version();
 
         runner.kube_partition_a(
             &anyapp_a.kube_upd(),
@@ -383,9 +378,7 @@ pub mod tests {
         // 4.1 Replicate object - condition update
         anyapp_a.set_conditions(Some(vec![anycond(0, "A", "type2")]));
 
-        let anyapp_a_updated = anyapp_a
-            .with_updated_owner_version()
-            .with_updated_zone_conditions();
+        let anyapp_a_updated = anyapp_a.with_updated_owner_version();
 
         runner.kube_partition_a(
             &anyapp_a.kube_upd(),
@@ -400,9 +393,7 @@ pub mod tests {
         // 4.1 Replicate object - condition delete
         anyapp_a.set_conditions(Some(vec![]));
 
-        let mut anyapp_a_updated = anyapp_a
-            .with_updated_owner_version()
-            .with_updated_zone_conditions();
+        let mut anyapp_a_updated = anyapp_a.with_updated_owner_version();
 
         runner.kube_partition_a(
             &anyapp_a.kube_upd(),
@@ -469,11 +460,9 @@ pub mod tests {
         runner.post_merge_update_version_a(&anyapp_a);
 
         // 4.1 conditions of A replicate to B
-        anyapp_a.add_condition(anycond(0, "A", "type"));
+        anyapp_a.add_condition(anycond(1, "A", "type"));
 
-        let mut anyapp_a_updated = anyapp_a
-            .with_updated_owner_version()
-            .with_updated_zone_conditions();
+        let mut anyapp_a_updated = anyapp_a.with_updated_owner_version();
 
         runner.kube_partition_a(
             &anyapp_a.kube_upd(),
@@ -486,11 +475,11 @@ pub mod tests {
         runner.post_merge_update_version_b(&anyapp_b);
 
         // 5.1 conditions of B replicate to A
-        anyapp_b.add_condition(anycond(0, "B", "type"));
+        anyapp_b.add_condition(anycond(1, "B", "type"));
         anyapp_b.inc_version();
         anyapp_b = anyapp_b.with_update_resource_version();
 
-        let mut anyapp_b_updated = anyapp_b.with_updated_zone_conditions();
+        let mut anyapp_b_updated = anyapp_b.clone();
         anyapp_a_updated = anyapp_b_updated
             .as_zone("A", anyapp_a_updated.incoming_version)
             .with_update_resource_version();
@@ -507,13 +496,11 @@ pub mod tests {
         anyapp_a = anyapp_a_updated;
 
         // 6.1 update of condition of A replicate to B
-        anyapp_a.update_condition("type", "A", anycond(0, "A", "type2"));
+        anyapp_a.update_condition("type", "A", anycond(2, "A", "type2"));
         anyapp_a.inc_version();
         anyapp_a = anyapp_a.with_update_resource_version();
 
-        anyapp_a_updated = anyapp_a
-            .with_updated_zone_conditions()
-            .with_updated_owner_version();
+        anyapp_a_updated = anyapp_a.with_updated_owner_version();
 
         anyapp_b_updated = anyapp_a_updated
             .as_zone("B", anyapp_b_updated.incoming_version)
@@ -531,11 +518,11 @@ pub mod tests {
         anyapp_b = anyapp_b_updated.clone();
 
         // 7.1 update of condition of B replicate to A
-        anyapp_b.update_condition("type", "B", anycond(0, "B", "type3"));
+        anyapp_b.update_condition("type", "B", anycond(3, "B", "type3"));
         anyapp_b.inc_version();
         anyapp_b = anyapp_b.with_update_resource_version();
 
-        anyapp_b_updated = anyapp_b.with_updated_zone_conditions();
+        anyapp_b_updated = anyapp_b.clone();
 
         anyapp_a_updated = anyapp_b_updated
             .as_zone("A", anyapp_a_updated.incoming_version)
@@ -558,9 +545,7 @@ pub mod tests {
         anyapp_a.inc_version();
         anyapp_a = anyapp_a.with_update_resource_version();
 
-        anyapp_a_updated = anyapp_a
-            .with_updated_zone_conditions()
-            .with_updated_owner_version();
+        anyapp_a_updated = anyapp_a.with_updated_owner_version();
 
         anyapp_b_updated = anyapp_a_updated
             .as_zone("B", anyapp_b_updated.incoming_version)
@@ -582,7 +567,7 @@ pub mod tests {
         anyapp_b.inc_version();
         anyapp_b = anyapp_b.with_update_resource_version();
 
-        anyapp_b_updated = anyapp_b.with_updated_zone_conditions();
+        anyapp_b_updated = anyapp_b.clone();
 
         anyapp_a_updated = anyapp_b_updated
             .as_zone("A", anyapp_a_updated.incoming_version)
@@ -939,13 +924,6 @@ pub mod tests {
         fn with_update_resource_version(&mut self) -> Self {
             let mut copy = self.clone();
             copy.object.set_resource_version(self.incoming_version);
-            copy
-        }
-
-        fn with_updated_zone_conditions(&mut self) -> Self {
-            let mut copy = self.clone();
-            copy.object
-                .set_condition_version(&self.zone, self.incoming_version);
             copy
         }
     }
