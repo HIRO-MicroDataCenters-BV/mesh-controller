@@ -198,9 +198,6 @@ impl MeshActor {
                     warn!("Object not found {name} {gvk:?}. Skipping delete.");
                 }
             }
-            MergeResult::Conflict { msg } => {
-                tracing::warn!("Conflict detected: {}", msg);
-            }
             MergeResult::DoNothing => (),
         }
         Ok(PersistenceResult::Persisted)

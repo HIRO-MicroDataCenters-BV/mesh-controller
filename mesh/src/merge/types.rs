@@ -18,10 +18,6 @@ pub enum MergeResult {
         name: NamespacedName,
     },
     DoNothing,
-    // TODO remove
-    Conflict {
-        msg: String,
-    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
