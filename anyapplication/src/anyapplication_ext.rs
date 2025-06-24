@@ -1,7 +1,8 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+
+use crate::anyapplication::{AnyApplicationStatusZones, AnyApplicationStatusZonesConditions};
 
 use super::anyapplication::AnyApplication;
-use crate::anyapplication::AnyApplicationStatusConditions;
 use anyhow::Context;
 use anyhow::{Result, anyhow};
 use kube::api::DynamicObject;
@@ -26,8 +27,9 @@ pub trait AnyApplicationExt {
 
     fn get_placement_zones(&self) -> HashSet<String>;
 
-    fn set_condition_version(&mut self, zone: &str, version: Version);
     fn set_resource_version(&mut self, version: Version);
+
+    fn get_status_zone_ids(&self) -> HashSet<String>;
 }
 
 impl AnyApplicationExt for AnyApplication {
@@ -67,46 +69,86 @@ impl AnyApplicationExt for AnyApplication {
             .unwrap_or_default()
     }
 
-    fn set_condition_version(&mut self, zone: &str, version: Version) {
-        if let Some(conditions) = self.status.as_mut().and_then(|s| s.conditions.as_mut()) {
-            for condition in conditions.iter_mut() {
-                if condition.zone_id == zone {
-                    condition.zone_version = version.to_string();
-                }
-            }
-        }
-    }
-
     fn set_resource_version(&mut self, version: Version) {
         self.metadata.resource_version = Some(version.to_string());
+    }
+
+    fn get_status_zone_ids(&self) -> HashSet<String> {
+        self.status
+            .as_ref()
+            .and_then(|s| s.zones.as_ref())
+            .map(|zones| {
+                zones
+                    .iter()
+                    .map(|zone| zone.zone_id.to_owned())
+                    .collect::<HashSet<String>>()
+            })
+            .unwrap_or_default()
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
-pub struct AnyApplicationStatusConditionId {
+pub struct AnyApplicationStatusZonesConditionsId {
     pub zone_id: String,
     pub r#type: String,
 }
 
-pub trait AnyApplicationStatusConditionsExt {
-    fn identity(&self) -> AnyApplicationStatusConditionId;
-    fn is_equal(&self, other: &AnyApplicationStatusConditions) -> bool;
+pub trait AnyApplicationStatusZonesConditionsExt {
+    fn identity(&self) -> AnyApplicationStatusZonesConditionsId;
+    fn is_equal(&self, other: &AnyApplicationStatusZonesConditions) -> bool;
 }
 
-impl AnyApplicationStatusConditionsExt for AnyApplicationStatusConditions {
-    fn identity(&self) -> AnyApplicationStatusConditionId {
-        AnyApplicationStatusConditionId {
+impl AnyApplicationStatusZonesConditionsExt for AnyApplicationStatusZonesConditions {
+    fn identity(&self) -> AnyApplicationStatusZonesConditionsId {
+        AnyApplicationStatusZonesConditionsId {
             zone_id: self.zone_id.clone(),
             r#type: self.r#type.clone(),
         }
     }
 
-    fn is_equal(&self, other: &AnyApplicationStatusConditions) -> bool {
+    fn is_equal(&self, other: &AnyApplicationStatusZonesConditions) -> bool {
         self.zone_id == other.zone_id
             && self.r#type == other.r#type
             && self.status == other.status
             && self.reason == other.reason
             && self.msg == other.msg
             && self.last_transition_time == other.last_transition_time
+    }
+}
+
+pub trait AnyApplicationStatusZonesExt {
+    fn is_equal(&self, other: &AnyApplicationStatusZones) -> bool;
+}
+
+impl AnyApplicationStatusZonesExt for AnyApplicationStatusZones {
+    fn is_equal(&self, other: &AnyApplicationStatusZones) -> bool {
+        self.zone_id == other.zone_id
+            && conditions_equal(
+                self.conditions.as_ref().unwrap_or(&vec![]),
+                other.conditions.as_ref().unwrap_or(&vec![]),
+            )
+    }
+}
+
+fn conditions_equal(
+    current: &[AnyApplicationStatusZonesConditions],
+    incoming: &[AnyApplicationStatusZonesConditions],
+) -> bool {
+    if current.len() != incoming.len() {
+        false
+    } else {
+        let current_map: HashMap<
+            AnyApplicationStatusZonesConditionsId,
+            &AnyApplicationStatusZonesConditions,
+        > = current.iter().map(|v| (v.identity(), v)).collect();
+        let incoming_map: HashMap<
+            AnyApplicationStatusZonesConditionsId,
+            &AnyApplicationStatusZonesConditions,
+        > = incoming.iter().map(|v| (v.identity(), v)).collect();
+
+        incoming_map
+            .iter()
+            .map(|(id, new_item)| (current_map.get(id), new_item))
+            .all(|(old_item, new_item)| old_item.is_some() && new_item.is_equal(old_item.unwrap()))
     }
 }

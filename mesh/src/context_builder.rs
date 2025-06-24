@@ -191,8 +191,8 @@ impl ContextBuilder {
             let result = http_server
                 .run()
                 .await
-                .context("failed to start mesh http server")
-                .inspect_err(|e| error!("http result {}", e));
+                .inspect_err(|e| error!("http result {}", e))
+                .context("failed to start mesh http server");
             cancellation_token.cancel();
             result
         }))

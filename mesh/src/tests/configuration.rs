@@ -11,7 +11,7 @@ use crate::config::configuration::{
     PeriodicSnapshotConfig, ResourceConfig,
 };
 
-static TEST_INSTANCE_HTTP_PORT: Lazy<AtomicU16> = Lazy::new(|| AtomicU16::new(8080));
+static TEST_INSTANCE_HTTP_PORT: Lazy<AtomicU16> = Lazy::new(|| AtomicU16::new(18080));
 static TEST_INSTANCE_MESH_PORT: Lazy<AtomicU16> = Lazy::new(|| AtomicU16::new(31000));
 
 pub fn generate_config(
@@ -43,13 +43,6 @@ pub fn generate_config(
             namespace: Some("test".into()),
             merge_strategy: MergeStrategyType::AnyApplication,
         },
-        // resource: ResourceConfig {
-        //     group: "".into(),
-        //     version: "v1".into(),
-        //     kind: "Secret".into(),
-        //     namespace: Some("test".into()),
-        //     merge_strategy: MergeStrategyType::Default,
-        // },
     };
     config.log_level = Some("=INFO".to_string());
     config

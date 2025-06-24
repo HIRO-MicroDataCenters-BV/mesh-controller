@@ -144,7 +144,11 @@ impl MeshActor {
                 let pointer = operation.header.seq_num;
                 if let Some(body) = operation.body {
                     let mesh_event = MeshEvent::try_from(body.to_bytes())?;
-                    let merge_results = self.partition.mesh_apply(mesh_event, &log_id.0.zone)?;
+                    let merge_results = self.partition.mesh_apply(
+                        mesh_event,
+                        &log_id.0.zone,
+                        &self.instance_id.zone,
+                    )?;
                     for merge_result in merge_results.into_iter() {
                         match self.on_merge_result(merge_result).await {
                             Ok(PersistenceResult::Persisted) => (),

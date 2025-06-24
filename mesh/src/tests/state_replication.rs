@@ -151,7 +151,6 @@ fn anyapplication(name: &str, owner_zone: &str) -> DynamicObject {
             zones: 2,
         },
         status: Some(AnyApplicationStatus {
-            conditions: None,
             owner: owner_zone.into(),
             placements: Some(vec![
                 AnyApplicationStatusPlacements {
@@ -164,6 +163,7 @@ fn anyapplication(name: &str, owner_zone: &str) -> DynamicObject {
                 },
             ]),
             state: "New".into(),
+            zones: None,
         }),
     };
     let json_str = serde_json::to_value(&anyapp).expect("Resource is not serializable");

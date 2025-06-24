@@ -82,29 +82,12 @@ pub struct AnyApplicationRecoverStrategy {
 /// AnyApplicationStatus defines the observed state of AnyApplication.
 #[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
 pub struct AnyApplicationStatus {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub conditions: Option<Vec<AnyApplicationStatusConditions>>,
     pub owner: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub placements: Option<Vec<AnyApplicationStatusPlacements>>,
     pub state: String,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
-pub struct AnyApplicationStatusConditions {
-    #[serde(rename = "lastTransitionTime")]
-    pub last_transition_time: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub msg: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
-    pub status: String,
-    #[serde(rename = "type")]
-    pub r#type: String,
-    #[serde(rename = "zoneId")]
-    pub zone_id: String,
-    #[serde(rename = "zoneVersion")]
-    pub zone_version: String,
+    pub zones: Option<Vec<AnyApplicationStatusZones>>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, JsonSchema, PartialEq)]
@@ -116,4 +99,28 @@ pub struct AnyApplicationStatusPlacements {
     )]
     pub node_affinity: Option<Vec<String>>,
     pub zone: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
+pub struct AnyApplicationStatusZones {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conditions: Option<Vec<AnyApplicationStatusZonesConditions>>,
+    pub version: i64,
+    #[serde(rename = "zoneId")]
+    pub zone_id: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema, PartialEq)]
+pub struct AnyApplicationStatusZonesConditions {
+    #[serde(rename = "lastTransitionTime")]
+    pub last_transition_time: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub msg: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    pub status: String,
+    #[serde(rename = "type")]
+    pub r#type: String,
+    #[serde(rename = "zoneId")]
+    pub zone_id: String,
 }

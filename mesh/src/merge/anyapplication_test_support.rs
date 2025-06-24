@@ -6,8 +6,8 @@ pub mod tests {
     use anyapplication::{
         anyapplication::{
             AnyApplication, AnyApplicationApplication, AnyApplicationApplicationHelm,
-            AnyApplicationSpec, AnyApplicationStatus, AnyApplicationStatusConditions,
-            AnyApplicationStatusPlacements,
+            AnyApplicationSpec, AnyApplicationStatus, AnyApplicationStatusPlacements,
+            AnyApplicationStatusZones, AnyApplicationStatusZonesConditions,
         },
         anyapplication_ext::OWNER_VERSION,
     };
@@ -42,7 +42,7 @@ pub mod tests {
                 zones: zones,
             },
             status: Some(AnyApplicationStatus {
-                conditions: None,
+                zones: None,
                 owner: owner_zone.into(),
                 placements: Some(vec![
                     AnyApplicationStatusPlacements {
@@ -68,7 +68,7 @@ pub mod tests {
         resource_version: Version,
         owner_zone: &str,
         zones: i64,
-        conditions: &[AnyApplicationStatusConditions],
+        zones_statuses: &[AnyApplicationStatusZones],
     ) -> DynamicObject {
         let mut object = AnyApplication {
             metadata: ObjectMeta {
@@ -96,7 +96,7 @@ pub mod tests {
                 zones: zones,
             },
             status: Some(AnyApplicationStatus {
-                conditions: Some(conditions.into()),
+                zones: Some(zones_statuses.into()),
                 owner: owner_zone.into(),
                 placements: Some(vec![
                     AnyApplicationStatusPlacements {
@@ -120,36 +120,41 @@ pub mod tests {
         object
     }
 
-    pub fn anycond(
-        owner_version: Version,
-        owner_zone: &str,
-        cond_type: &str,
-    ) -> AnyApplicationStatusConditions {
-        AnyApplicationStatusConditions {
+    pub fn anyzone(
+        zone_id: &str,
+        version: i64,
+        conditions: &[AnyApplicationStatusZonesConditions],
+    ) -> AnyApplicationStatusZones {
+        AnyApplicationStatusZones {
+            zone_id: zone_id.into(),
+            version,
+            conditions: Some(conditions.into()),
+        }
+    }
+
+    pub fn anycond(owner_zone: &str, cond_type: &str) -> AnyApplicationStatusZonesConditions {
+        AnyApplicationStatusZonesConditions {
             last_transition_time: "time".into(),
             msg: None,
             reason: None,
             status: "status".into(),
             r#type: cond_type.into(),
             zone_id: owner_zone.into(),
-            zone_version: owner_version.to_string(),
         }
     }
 
     pub fn anycond_status(
-        owner_version: Version,
         owner_zone: &str,
         cond_type: &str,
         status: &str,
-    ) -> AnyApplicationStatusConditions {
-        AnyApplicationStatusConditions {
+    ) -> AnyApplicationStatusZonesConditions {
+        AnyApplicationStatusZonesConditions {
             last_transition_time: "time".into(),
             msg: None,
             reason: None,
             status: status.into(),
             r#type: cond_type.into(),
             zone_id: owner_zone.into(),
-            zone_version: owner_version.to_string(),
         }
     }
 
@@ -170,10 +175,10 @@ pub mod tests {
     pub fn anystatus(
         owner_zone: &str,
         placements: Vec<AnyApplicationStatusPlacements>,
-        conditions: Option<Vec<AnyApplicationStatusConditions>>,
+        zones: Option<Vec<AnyApplicationStatusZones>>,
     ) -> AnyApplicationStatus {
         AnyApplicationStatus {
-            conditions: conditions,
+            zones: zones,
             owner: owner_zone.into(),
             placements: Some(placements),
             state: "New".into(),

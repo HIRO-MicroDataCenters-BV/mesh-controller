@@ -35,14 +35,18 @@ impl Partition {
         &mut self,
         incoming: MeshEvent,
         incoming_zone: &str,
+        current_zone: &str,
     ) -> Result<Vec<MergeResult>> {
         match incoming {
             MeshEvent::Update { object } => {
                 let name = object.get_namespaced_name();
                 let current = self.resources.get(&name).cloned();
-                let result = self
-                    .merge_strategy
-                    .mesh_update(current, &object, incoming_zone)?;
+                let result = self.merge_strategy.mesh_update(
+                    current,
+                    &object,
+                    incoming_zone,
+                    current_zone,
+                )?;
                 self.mesh_update_partition(&result);
                 Ok(vec![result])
             }
@@ -86,9 +90,12 @@ impl Partition {
                 for name in to_update {
                     let current = self.resources.get(&name).cloned();
                     let object = snapshot.get(&name).unwrap();
-                    let result = self
-                        .merge_strategy
-                        .mesh_update(current, object, incoming_zone)?;
+                    let result = self.merge_strategy.mesh_update(
+                        current,
+                        object,
+                        incoming_zone,
+                        current_zone,
+                    )?;
                     self.mesh_update_partition(&result);
                     results.push(result);
                 }
@@ -333,6 +340,7 @@ pub mod tests {
         runner.post_merge_update_version_a(&anyapp_a);
 
         // 2.1 Replicate object update with status set
+        anyapp_a.inc_version();
         anyapp_a.with_initial_state("A", "New");
         let mut anyapp_a_with_version = anyapp_a.with_updated_owner_version();
 
@@ -347,6 +355,7 @@ pub mod tests {
         runner.post_merge_update_version_a(&anyapp_a);
 
         // 3.1 Replicate object update with placements
+        anyapp_a.inc_version();
         anyapp_a.set_placements(anyplacements("A", None));
         let mut anyapp_a_with_version = anyapp_a.with_updated_owner_version();
 
@@ -361,7 +370,8 @@ pub mod tests {
         runner.post_merge_update_version_a(&anyapp_a);
 
         // 3.1 Replicate object update with placements and new condition
-        anyapp_a.set_conditions(Some(vec![anycond(1, "A", "type")]));
+        anyapp_a.inc_version();
+        anyapp_a.set_conditions(1, "A", vec![anycond("A", "type")]);
 
         let anyapp_a_updated = anyapp_a.with_updated_owner_version();
 
@@ -376,7 +386,8 @@ pub mod tests {
         runner.post_merge_update_version_a(&anyapp_a);
 
         // 4.1 Replicate object - condition update
-        anyapp_a.set_conditions(Some(vec![anycond(0, "A", "type2")]));
+        anyapp_a.inc_version();
+        anyapp_a.set_conditions(2, "A", vec![anycond("A", "type2")]);
 
         let anyapp_a_updated = anyapp_a.with_updated_owner_version();
 
@@ -391,7 +402,8 @@ pub mod tests {
         runner.post_merge_update_version_a(&anyapp_a);
 
         // 4.1 Replicate object - condition delete
-        anyapp_a.set_conditions(Some(vec![]));
+        anyapp_a.inc_version();
+        anyapp_a.set_conditions(3, "A", vec![]);
 
         let mut anyapp_a_updated = anyapp_a.with_updated_owner_version();
 
@@ -432,6 +444,7 @@ pub mod tests {
         runner.post_merge_update_version_a(&anyapp_a);
 
         // 2.1 Replicate object update with status set
+        anyapp_a.inc_version();
         anyapp_a.with_initial_state("A", "New");
         let mut anyapp_a_with_version = anyapp_a.with_updated_owner_version();
 
@@ -446,6 +459,7 @@ pub mod tests {
         runner.post_merge_update_version_a(&anyapp_a);
 
         // 3.1 Replicate object to zone B update with placements
+        anyapp_a.inc_version();
         anyapp_a.set_placements(anyplacements("A", Some("B")));
         let mut anyapp_a_with_version = anyapp_a.with_updated_owner_version();
 
@@ -460,7 +474,8 @@ pub mod tests {
         runner.post_merge_update_version_a(&anyapp_a);
 
         // 4.1 conditions of A replicate to B
-        anyapp_a.add_condition(anycond(1, "A", "type"));
+        anyapp_a.inc_version();
+        anyapp_a.add_condition(1, anycond("A", "type"));
 
         let mut anyapp_a_updated = anyapp_a.with_updated_owner_version();
 
@@ -475,7 +490,7 @@ pub mod tests {
         runner.post_merge_update_version_b(&anyapp_b);
 
         // 5.1 conditions of B replicate to A
-        anyapp_b.add_condition(anycond(1, "B", "type"));
+        anyapp_b.add_condition(1, anycond("B", "type"));
         anyapp_b.inc_version();
         anyapp_b = anyapp_b.with_update_resource_version();
 
@@ -496,7 +511,7 @@ pub mod tests {
         anyapp_a = anyapp_a_updated;
 
         // 6.1 update of condition of A replicate to B
-        anyapp_a.update_condition("type", "A", anycond(2, "A", "type2"));
+        anyapp_a.update_condition(2, "type", "A", anycond("A", "type2"));
         anyapp_a.inc_version();
         anyapp_a = anyapp_a.with_update_resource_version();
 
@@ -518,7 +533,7 @@ pub mod tests {
         anyapp_b = anyapp_b_updated.clone();
 
         // 7.1 update of condition of B replicate to A
-        anyapp_b.update_condition("type", "B", anycond(3, "B", "type3"));
+        anyapp_b.update_condition(3, "type", "B", anycond("B", "type3"));
         anyapp_b.inc_version();
         anyapp_b = anyapp_b.with_update_resource_version();
 
@@ -541,14 +556,15 @@ pub mod tests {
         anyapp_a = anyapp_a_updated;
 
         // 8.1 delete of condition of A replicate to B
-        anyapp_a.delete_condition("type2", "A");
         anyapp_a.inc_version();
+        anyapp_a.delete_condition(4, "type2", "A");
         anyapp_a = anyapp_a.with_update_resource_version();
 
         anyapp_a_updated = anyapp_a.with_updated_owner_version();
 
         anyapp_b_updated = anyapp_a_updated
             .as_zone("B", anyapp_b_updated.incoming_version)
+            // .with_incremented_version()
             .with_update_resource_version();
 
         runner.kube_partition_a(
@@ -563,7 +579,7 @@ pub mod tests {
         anyapp_b = anyapp_b_updated.clone();
 
         // delete of condition of B replicate to A
-        anyapp_b.delete_condition("type3", "B");
+        anyapp_b.delete_condition(5, "type3", "B");
         anyapp_b.inc_version();
         anyapp_b = anyapp_b.with_update_resource_version();
 
@@ -650,7 +666,7 @@ pub mod tests {
 
             let actual_merge_result = self
                 .partition_b
-                .mesh_apply(actual_mesh_event.unwrap(), &self.zone_a)
+                .mesh_apply(actual_mesh_event.unwrap(), &self.zone_a, &self.zone_b)
                 .unwrap();
             assert_eq!(actual_merge_result, merge_result_b, "merge result");
         }
@@ -674,7 +690,7 @@ pub mod tests {
 
             let actual_merge_result = self
                 .partition_a
-                .mesh_apply(actual_mesh_event.unwrap(), &self.zone_b)
+                .mesh_apply(actual_mesh_event.unwrap(), &self.zone_b, &self.zone_a)
                 .unwrap();
             assert_eq!(actual_merge_result, merge_result_a, "merge result");
         }
@@ -730,7 +746,7 @@ pub mod tests {
                     self.object.status = Some(AnyApplicationStatus {
                         owner: owner.into(),
                         state: state.into(),
-                        conditions: None,
+                        zones: None,
                         placements: None,
                     })
                 }
@@ -746,80 +762,129 @@ pub mod tests {
                     self.object.status = Some(AnyApplicationStatus {
                         owner: "".into(),
                         state: "".into(),
-                        conditions: None,
+                        zones: None,
                         placements: Some(placements),
                     })
                 }
             }
         }
 
-        pub fn set_conditions(&mut self, conditions: Option<Vec<AnyApplicationStatusConditions>>) {
-            let status = self.object.status.get_or_insert(AnyApplicationStatus {
-                owner: "".into(),
-                state: "".into(),
-                conditions: None,
-                placements: None,
-            });
-            status.conditions = conditions;
-        }
-
-        pub fn add_condition(&mut self, condition: AnyApplicationStatusConditions) {
-            let status = self.object.status.get_or_insert(AnyApplicationStatus {
-                owner: "".into(),
-                state: "".into(),
-                conditions: None,
-                placements: None,
-            });
-            status.conditions.get_or_insert(vec![]).push(condition);
-            status
-                .conditions
-                .get_or_insert(vec![])
-                .sort_by(|a, b| a.zone_id.cmp(&b.zone_id));
-        }
-
-        pub fn update_condition(
+        pub fn set_conditions(
             &mut self,
-            cond_type: &str,
+            version: i64,
             zone: &str,
-            cond: AnyApplicationStatusConditions,
+            to_set: Vec<AnyApplicationStatusZonesConditions>,
         ) {
             let status = self.object.status.get_or_insert(AnyApplicationStatus {
                 owner: "".into(),
                 state: "".into(),
-                conditions: None,
+                zones: None,
+                placements: None,
+            });
+            let zones = status.zones.get_or_insert(vec![]);
+            match zones.iter_mut().find(|z| z.zone_id == zone) {
+                Some(zone) => {
+                    zone.version = version;
+                    let conditions = zone.conditions.get_or_insert(vec![]);
+                    *conditions = to_set;
+                }
+                None => {
+                    let zone = AnyApplicationStatusZones {
+                        zone_id: zone.into(),
+                        version,
+                        conditions: Some(to_set),
+                    };
+                    zones.push(zone);
+                }
+            }
+        }
+
+        pub fn add_condition(
+            &mut self,
+            version: i64,
+            condition: AnyApplicationStatusZonesConditions,
+        ) {
+            let status = self.object.status.get_or_insert(AnyApplicationStatus {
+                owner: "".into(),
+                state: "".into(),
+                zones: None,
+                placements: None,
+            });
+            let zones = status.zones.get_or_insert(vec![]);
+            match zones.iter_mut().find(|v| v.zone_id == condition.zone_id) {
+                Some(zone) => {
+                    let conditions = zone.conditions.get_or_insert(vec![]);
+                    conditions.push(condition);
+                    conditions.sort_by(|a, b| a.zone_id.cmp(&b.zone_id));
+                }
+                None => {
+                    zones.push(AnyApplicationStatusZones {
+                        zone_id: condition.zone_id.to_owned(),
+                        version,
+                        conditions: Some(vec![condition]),
+                    });
+                }
+            };
+        }
+
+        pub fn update_condition(
+            &mut self,
+            version: i64,
+            cond_type: &str,
+            zone: &str,
+            cond: AnyApplicationStatusZonesConditions,
+        ) {
+            let status = self.object.status.get_or_insert(AnyApplicationStatus {
+                owner: "".into(),
+                state: "".into(),
+                zones: None,
                 placements: None,
             });
             let mut updated = false;
-            for existing in status.conditions.get_or_insert(vec![]).iter_mut() {
-                if existing.r#type == cond_type && existing.zone_id == zone {
-                    let existing_version = existing.zone_version.clone();
+            let zones = status.zones.get_or_insert(vec![]);
+            let zone = match zones.iter_mut().find(|z| z.zone_id == zone) {
+                Some(zone) => {
+                    zone.version = version;
+                    zone
+                }
+                None => {
+                    panic!("no zone status exists for zone '{zone}'");
+                }
+            };
+
+            for existing in zone.conditions.get_or_insert(vec![]).iter_mut() {
+                if existing.r#type == cond_type {
                     *existing = cond;
-                    existing.zone_version = existing_version;
                     updated = true;
                     break;
                 }
             }
+
             if !updated {
                 panic!("condition '{cond_type}' is not updated");
             }
-            status
-                .conditions
+            zone.conditions
                 .get_or_insert(vec![])
                 .sort_by(|a, b| a.zone_id.cmp(&b.zone_id));
         }
 
-        pub fn delete_condition(&mut self, cond_type: &str, zone: &str) {
+        pub fn delete_condition(&mut self, version: i64, cond_type: &str, zone_id: &str) {
             let status = self.object.status.get_or_insert(AnyApplicationStatus {
                 owner: "".into(),
                 state: "".into(),
-                conditions: None,
+                zones: None,
                 placements: None,
             });
-            if let Some(conditions) = status.conditions.as_mut() {
+            let zones = status.zones.get_or_insert(vec![]);
+            let Some(zone) = zones.iter_mut().find(|z| z.zone_id == zone_id) else {
+                panic!("zone '{zone_id}' is missing in status");
+            };
+            if let Some(conditions) = zone.conditions.as_mut() {
                 if let Some(pos) = conditions
                     .iter()
-                    .position(|c| c.r#type == cond_type && c.zone_id == zone)
+                    .position(|c| c.r#type == cond_type && c.zone_id == zone_id)
                 {
+                    zone.version = version;
                     conditions.remove(pos);
                     return;
                 }

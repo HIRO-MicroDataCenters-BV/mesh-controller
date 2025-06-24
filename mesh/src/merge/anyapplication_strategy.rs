@@ -1,15 +1,13 @@
-use std::collections::HashMap;
-
 use super::types::{MergeResult, MergeStrategy, UpdateResult};
-use crate::kube::{dynamic_object_ext::DynamicObjectExt, subscriptions::Version};
+use crate::kube::{
+    dynamic_object_ext::{DynamicObjectExt, dump_zones},
+    subscriptions::Version,
+};
 use anyapplication::{
     anyapplication::{
-        AnyApplication, AnyApplicationSpec, AnyApplicationStatus, AnyApplicationStatusConditions,
-        AnyApplicationStatusPlacements,
+        AnyApplication, AnyApplicationSpec, AnyApplicationStatus, AnyApplicationStatusZones,
     },
-    anyapplication_ext::{
-        AnyApplicationExt, AnyApplicationStatusConditionId, AnyApplicationStatusConditionsExt,
-    },
+    anyapplication_ext::AnyApplicationExt,
 };
 use anyhow::Result;
 use kube::api::{DynamicObject, GroupVersionKind};
@@ -21,6 +19,132 @@ pub struct AnyApplicationMerge {
 impl Default for AnyApplicationMerge {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl MergeStrategy for AnyApplicationMerge {
+    fn mesh_update(
+        &self,
+        current: Option<DynamicObject>,
+        incoming: &DynamicObject,
+        incoming_zone: &str,
+        current_zone: &str,
+    ) -> Result<MergeResult> {
+        let incoming = incoming.clone();
+        if let Some(current) = current {
+            self.merge_update_internal(current, incoming.clone(), incoming_zone, current_zone)
+        } else {
+            self.merge_create_internal(incoming, incoming_zone)
+        }
+    }
+
+    fn mesh_delete(
+        &self,
+        current: Option<DynamicObject>,
+        incoming: &DynamicObject,
+        incoming_zone: &str,
+    ) -> Result<MergeResult> {
+        if let Some(current) = current {
+            self.merge_delete_internal(current, incoming, incoming_zone)
+        } else {
+            Ok(MergeResult::DoNothing)
+        }
+    }
+
+    fn is_owner_zone(&self, current: &DynamicObject, zone: &str) -> bool {
+        let current: AnyApplication = current.clone().try_parse().unwrap(); // TODO fixme errors
+        let placements_zones = current.get_placement_zones();
+        current.get_owner_zone() == zone || placements_zones.contains(zone)
+    }
+
+    fn local_update(
+        &self,
+        current: Option<DynamicObject>,
+        incoming: DynamicObject,
+        incoming_version: Version,
+        incoming_zone: &str,
+    ) -> Result<UpdateResult> {
+        let mut incoming: AnyApplication = incoming.clone().try_parse()?;
+        let placements_zones = incoming.get_placement_zones();
+        let status_zones = incoming.get_status_zone_ids();
+
+        let is_owned_zone =
+            incoming.get_owner_zone() == incoming_zone || incoming.get_owner_zone() == "unknown";
+        let is_placement_zone = placements_zones.contains(incoming_zone);
+        let is_status_zone = status_zones.contains(incoming_zone);
+
+        let is_acceptable_zone = is_owned_zone || is_placement_zone || is_status_zone;
+
+        if !is_acceptable_zone {
+            return Ok(UpdateResult::DoNothing);
+        }
+
+        if let Some(current) = current {
+            let current_version = current.get_resource_version();
+            if current_version >= incoming_version {
+                return Ok(UpdateResult::DoNothing);
+            }
+            let mut current: AnyApplication = current.clone().try_parse()?;
+            let mut updated = false;
+            if is_owned_zone && current.spec != incoming.spec && current_version < incoming_version
+            {
+                current.spec = incoming.spec.clone();
+                updated = true;
+            }
+
+            if let Some(status) =
+                self.local_update_status(&current.status, &incoming.status, is_owned_zone)
+            {
+                current.status = Some(status);
+                updated = true;
+            }
+
+            if updated {
+                if is_owned_zone {
+                    current.set_owner_version(incoming_version);
+                }
+
+                let mut object = current.to_object()?;
+                if incoming_version > current_version {
+                    object.set_resource_version(incoming_version);
+                }
+                Ok(UpdateResult::Update { object })
+            } else {
+                Ok(UpdateResult::DoNothing)
+            }
+        } else {
+            if is_owned_zone {
+                incoming.set_owner_version(incoming_version);
+            }
+            let mut object = incoming.to_object()?;
+            object.metadata.resource_version = Some(incoming_version.to_string());
+            Ok(UpdateResult::Create { object })
+        }
+    }
+
+    fn local_delete(
+        &self,
+        current: Option<DynamicObject>,
+        incoming: DynamicObject,
+        incoming_version: Version,
+        incoming_zone: &str,
+    ) -> Result<UpdateResult> {
+        let mut incoming: AnyApplication = incoming.clone().try_parse()?;
+        // Delete is allowed only from owning zone
+        let is_owning_zone = incoming.get_owner_zone() == incoming_zone;
+        if !is_owning_zone {
+            return Ok(UpdateResult::DoNothing);
+        }
+
+        if current.is_some() {
+            incoming.set_owner_version(incoming_version);
+            let mut object = incoming.to_object()?;
+
+            object.set_resource_version(incoming_version);
+            Ok(UpdateResult::Delete { object })
+        } else {
+            Ok(UpdateResult::DoNothing)
+        }
     }
 }
 
@@ -36,6 +160,7 @@ impl AnyApplicationMerge {
         current: DynamicObject,
         incoming: DynamicObject,
         incoming_zone: &str,
+        current_zone: &str,
     ) -> Result<MergeResult> {
         let mut current: AnyApplication = current.try_parse()?;
         let current_owner_version = current.get_owner_version()?;
@@ -43,6 +168,15 @@ impl AnyApplicationMerge {
         let incoming: AnyApplication = incoming.try_parse()?;
         let incoming_owner_version = incoming.get_owner_version()?;
         let incoming_owner_zone = incoming.get_owner_zone();
+        let status_zones = incoming.get_status_zone_ids();
+        let placement_zones = incoming.get_placement_zones();
+
+        let acceptable_zone =
+            status_zones.contains(incoming_zone) || placement_zones.contains(incoming_zone);
+
+        if !acceptable_zone {
+            return Ok(MergeResult::DoNothing);
+        }
 
         let merged_spec = self.merge_spec(
             current_owner_version,
@@ -58,6 +192,7 @@ impl AnyApplicationMerge {
             incoming_owner_version,
             &incoming_owner_zone,
             incoming_zone,
+            current_zone,
         );
         let mut updated = false;
         if let Some(spec) = merged_spec {
@@ -78,6 +213,7 @@ impl AnyApplicationMerge {
         }
 
         let object = current.to_object()?;
+        object.dump_status("merge_update_internal");
         Ok(MergeResult::Update { object })
     }
 
@@ -98,6 +234,7 @@ impl AnyApplicationMerge {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn merge_status(
         &self,
         current: &Option<AnyApplicationStatus>,
@@ -106,6 +243,7 @@ impl AnyApplicationMerge {
         incoming_owner_version: Version,
         incoming_owner_zone: &str,
         incoming_zone: &str,
+        current_zone: &str,
     ) -> Option<AnyApplicationStatus> {
         let maybe_status = self.merge_ownership_section(
             current,
@@ -114,35 +252,39 @@ impl AnyApplicationMerge {
             incoming_owner_version,
             incoming_zone,
             incoming_owner_zone,
+            current_zone,
         );
 
-        let maybe_conditions = self.merge_conditions_section(
-            current
-                .as_ref()
-                .and_then(|v| v.conditions.as_ref())
-                .unwrap_or(&vec![]),
-            incoming
-                .as_ref()
-                .and_then(|v| v.conditions.as_ref())
-                .unwrap_or(&vec![]),
-            incoming_zone,
-            incoming
-                .as_ref()
-                .and_then(|v| v.placements.as_ref())
-                .unwrap_or(&vec![]),
-        );
+        // let should_merge_zones = incoming_zone == incoming_owner_zone || current_zone == incoming_owner_zone;
+        let should_merge_zones = true;
+        let maybe_zones = if should_merge_zones {
+            self.merge_zone_section(
+                current
+                    .as_ref()
+                    .and_then(|v| v.zones.as_ref())
+                    .unwrap_or(&vec![]),
+                incoming
+                    .as_ref()
+                    .and_then(|v| v.zones.as_ref())
+                    .unwrap_or(&vec![]),
+            )
+        } else {
+            None
+        };
 
         if let Some(mut status) = maybe_status {
-            maybe_conditions.into_iter().for_each(|mut conditions| {
-                conditions.sort_by(|a, b| a.zone_id.cmp(&b.zone_id));
-                status.conditions = Some(conditions);
-            });
+            if let Some(mut zones) = maybe_zones {
+                zones.sort_by(|a, b| a.zone_id.cmp(&b.zone_id));
+                status.zones = Some(zones);
+            } else {
+                status.zones = current.as_ref().and_then(|v| v.zones.clone());
+            }
             Some(status)
-        } else if let Some(mut conditions) = maybe_conditions {
+        } else if let Some(mut zones) = maybe_zones {
             if let Some(status) = current {
                 let mut status = status.clone();
-                conditions.sort_by(|a, b| a.zone_id.cmp(&b.zone_id));
-                status.conditions = Some(conditions);
+                zones.sort_by(|a, b| a.zone_id.cmp(&b.zone_id));
+                status.zones = Some(zones);
                 Some(status)
             } else {
                 None
@@ -152,6 +294,7 @@ impl AnyApplicationMerge {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn merge_ownership_section(
         &self,
         current: &Option<AnyApplicationStatus>,
@@ -160,6 +303,7 @@ impl AnyApplicationMerge {
         incoming_owner_version: Version,
         incoming_zone: &str,
         incoming_owner_zone: &str,
+        _current_zone: &str,
     ) -> Option<AnyApplicationStatus> {
         let acceptable_zone = incoming_zone == incoming_owner_zone;
         let new_change = incoming_owner_version > current_owner_version;
@@ -168,7 +312,7 @@ impl AnyApplicationMerge {
             match (current, incoming) {
                 (Some(_) | None, Some(incoming)) => {
                     let mut target = incoming.clone();
-                    target.conditions = None;
+                    target.zones = None;
                     Some(target)
                 }
                 (_, None) => None,
@@ -178,52 +322,38 @@ impl AnyApplicationMerge {
         }
     }
 
-    fn merge_conditions_section(
+    fn merge_zone_section(
         &self,
-        current: &[AnyApplicationStatusConditions],
-        incoming: &[AnyApplicationStatusConditions],
-        incoming_zone: &str,
-        placements: &[AnyApplicationStatusPlacements],
-    ) -> Option<Vec<AnyApplicationStatusConditions>> {
-        // only owner is allowed to merge condition section for other placement zones
-        let acceptable_zone = placements.iter().any(|p| p.zone == incoming_zone);
-        if !acceptable_zone {
-            return None;
-        }
-
-        let incoming_owned_by_zone = incoming.iter().filter(|v| v.zone_id == incoming_zone);
-
+        current: &[AnyApplicationStatusZones],
+        incoming: &[AnyApplicationStatusZones],
+    ) -> Option<Vec<AnyApplicationStatusZones>> {
         let mut updated = false;
-
         let mut target = vec![];
         for curr in current.iter() {
-            if curr.zone_id != incoming_zone {
-                target.push(curr.to_owned());
-            } else {
-                let found = incoming
-                    .iter()
-                    .any(|v| v.zone_id == curr.zone_id && v.r#type == curr.r#type);
-                if found {
-                    target.push(curr.to_owned());
-                } else {
+            let found = incoming.iter().find(|v| v.zone_id == curr.zone_id);
+            if let Some(found) = found {
+                if found.version > curr.version {
+                    target.push(found.to_owned());
                     updated = true;
+                } else {
+                    target.push(curr.to_owned());
                 }
+            } else {
+                target.push(curr.to_owned());
+                updated = true;
             }
         }
 
-        for incoming_cond in incoming_owned_by_zone {
-            let found = target
-                .iter_mut()
-                .find(|v| v.zone_id == incoming_cond.zone_id && v.r#type == incoming_cond.r#type);
-            if let Some(current_cond) = found {
-                if incoming_cond.zone_version > current_cond.zone_version {
-                    *current_cond = incoming_cond.clone();
-                    updated = true
-                }
-            } else {
+        for incom in incoming.iter() {
+            let found = current.iter().find(|v| v.zone_id == incom.zone_id);
+            if found.is_none() {
+                target.push(incom.to_owned());
                 updated = true;
-                target.push(incoming_cond.clone());
             }
+        }
+
+        if updated {
+            dump_zones("merge_zone_section", &target);
         }
 
         if updated { Some(target) } else { None }
@@ -286,30 +416,31 @@ impl AnyApplicationMerge {
             None
         };
 
-        let maybe_updated_conditions = self.local_update_conditions(
+        let maybe_updated_zones = self.local_update_zones(
             current
                 .as_ref()
-                .and_then(|v| v.conditions.as_ref())
+                .and_then(|v| v.zones.as_ref())
                 .unwrap_or(&vec![]),
             incoming
                 .as_ref()
-                .and_then(|v| v.conditions.as_ref())
+                .and_then(|v| v.zones.as_ref())
                 .unwrap_or(&vec![]),
         );
 
         if let Some(mut status) = maybe_updated_status {
-            maybe_updated_conditions
-                .into_iter()
-                .for_each(|mut conditions| {
-                    conditions.sort_by(|a, b| a.zone_id.cmp(&b.zone_id));
-                    status.conditions = Some(conditions);
-                });
+            if let Some(mut zones) = maybe_updated_zones {
+                zones.sort_by(|a, b| a.zone_id.cmp(&b.zone_id));
+                status.zones = Some(zones);
+            } else {
+                status.zones = current.as_ref().and_then(|v| v.zones.clone());
+            }
+
             Some(status)
-        } else if let Some(mut conditions) = maybe_updated_conditions {
+        } else if let Some(mut zones) = maybe_updated_zones {
             if let Some(status) = current {
                 let mut status = status.clone();
-                conditions.sort_by(|a, b| a.zone_id.cmp(&b.zone_id));
-                status.conditions = Some(conditions);
+                zones.sort_by(|a, b| a.zone_id.cmp(&b.zone_id));
+                status.zones = Some(zones);
                 Some(status)
             } else {
                 None
@@ -331,7 +462,7 @@ impl AnyApplicationMerge {
                 let state_diff = current.state != incoming.state;
                 if owner_diff || placements_diff || state_diff {
                     let mut target = incoming.clone();
-                    target.conditions = None;
+                    target.zones = None;
                     Some(target)
                 } else {
                     None
@@ -342,156 +473,12 @@ impl AnyApplicationMerge {
         }
     }
 
-    fn local_update_conditions(
+    fn local_update_zones(
         &self,
-        current: &[AnyApplicationStatusConditions],
-        incoming: &[AnyApplicationStatusConditions],
-    ) -> Option<Vec<AnyApplicationStatusConditions>> {
-        if current.len() != incoming.len() {
-            Some(incoming.to_vec())
-        } else {
-            let current_map: HashMap<
-                AnyApplicationStatusConditionId,
-                &AnyApplicationStatusConditions,
-            > = current.iter().map(|s| (s.identity(), s)).collect();
-            let incoming_map: HashMap<
-                AnyApplicationStatusConditionId,
-                &AnyApplicationStatusConditions,
-            > = incoming.iter().map(|s| (s.identity(), s)).collect();
-
-            let is_different = incoming_map
-                .iter()
-                .map(|(id, new_item)| (current_map.get(id), new_item))
-                .any(|(old_item, new_item)| {
-                    old_item.is_none() || !new_item.is_equal(old_item.unwrap())
-                });
-
-            if is_different {
-                Some(incoming.to_vec())
-            } else {
-                None
-            }
-        }
-    }
-}
-
-impl MergeStrategy for AnyApplicationMerge {
-    fn mesh_update(
-        &self,
-        current: Option<DynamicObject>,
-        incoming: &DynamicObject,
-        incoming_zone: &str,
-    ) -> Result<MergeResult> {
-        let incoming = incoming.clone();
-        if let Some(current) = current {
-            self.merge_update_internal(current, incoming.clone(), incoming_zone)
-        } else {
-            self.merge_create_internal(incoming, incoming_zone)
-        }
-    }
-
-    fn mesh_delete(
-        &self,
-        current: Option<DynamicObject>,
-        incoming: &DynamicObject,
-        incoming_zone: &str,
-    ) -> Result<MergeResult> {
-        if let Some(current) = current {
-            self.merge_delete_internal(current, incoming, incoming_zone)
-        } else {
-            Ok(MergeResult::DoNothing)
-        }
-    }
-
-    fn is_owner_zone(&self, current: &DynamicObject, zone: &str) -> bool {
-        let current: AnyApplication = current.clone().try_parse().unwrap(); // TODO fixme errors
-        let placements_zones = current.get_placement_zones();
-        current.get_owner_zone() == zone || placements_zones.contains(zone)
-    }
-
-    fn local_update(
-        &self,
-        current: Option<DynamicObject>,
-        incoming: DynamicObject,
-        incoming_version: Version,
-        incoming_zone: &str,
-    ) -> Result<UpdateResult> {
-        let mut incoming: AnyApplication = incoming.clone().try_parse()?;
-        let placements_zones = incoming.get_placement_zones();
-
-        let is_owned_zone =
-            incoming.get_owner_zone() == incoming_zone || incoming.get_owner_zone() == "unknown";
-        let is_placement_zone = placements_zones.contains(incoming_zone);
-        let is_acceptable_zone = is_owned_zone || is_placement_zone;
-
-        if !is_acceptable_zone {
-            return Ok(UpdateResult::DoNothing);
-        }
-
-        if let Some(current) = current {
-            let current_version = current.get_resource_version();
-            let mut current: AnyApplication = current.clone().try_parse()?;
-            let mut updated = false;
-            if is_owned_zone && current.spec != incoming.spec && current_version < incoming_version
-            {
-                current.spec = incoming.spec.clone();
-                updated = true;
-            }
-
-            // TODO merge by version of owning zone state
-            if let Some(status) =
-                self.local_update_status(&current.status, &incoming.status, is_owned_zone)
-            {
-                current.status = Some(status);
-                updated = true;
-            }
-
-            if updated {
-                if is_owned_zone {
-                    current.set_owner_version(incoming_version);
-                }
-
-                let mut object = current.to_object()?;
-                if incoming_version > current_version {
-                    object.set_resource_version(incoming_version);
-                }
-                Ok(UpdateResult::Update { object })
-            } else {
-                Ok(UpdateResult::DoNothing)
-            }
-        } else {
-            if is_owned_zone {
-                incoming.set_owner_version(incoming_version);
-            }
-            let mut object = incoming.to_object()?;
-            object.metadata.resource_version = Some(incoming_version.to_string());
-            Ok(UpdateResult::Create { object })
-        }
-    }
-
-    fn local_delete(
-        &self,
-        current: Option<DynamicObject>,
-        incoming: DynamicObject,
-        incoming_version: Version,
-        incoming_zone: &str,
-    ) -> Result<UpdateResult> {
-        let mut incoming: AnyApplication = incoming.clone().try_parse()?;
-        // Delete is allowed only from owning zone
-        let is_owning_zone = incoming.get_owner_zone() == incoming_zone;
-        if !is_owning_zone {
-            return Ok(UpdateResult::DoNothing);
-        }
-
-        if current.is_some() {
-            incoming.set_owner_version(incoming_version);
-            let mut object = incoming.to_object()?;
-
-            object.set_resource_version(incoming_version);
-            Ok(UpdateResult::Delete { object })
-        } else {
-            Ok(UpdateResult::DoNothing)
-        }
+        current: &[AnyApplicationStatusZones],
+        incoming: &[AnyApplicationStatusZones],
+    ) -> Option<Vec<AnyApplicationStatusZones>> {
+        self.merge_zone_section(current, incoming)
     }
 }
 
@@ -502,6 +489,7 @@ pub mod tests {
     use crate::merge::anyapplication_test_support::tests::anyapp;
     use crate::merge::anyapplication_test_support::tests::anycond;
     use crate::merge::anyapplication_test_support::tests::anycond_status;
+    use crate::merge::anyapplication_test_support::tests::anyzone;
     use crate::merge::anyapplication_test_support::tests::make_anyapplication_with_conditions;
     use crate::merge::types::MergeResult;
     use crate::merge::types::MergeStrategy;
@@ -516,7 +504,9 @@ pub mod tests {
             MergeResult::Create {
                 object: incoming.clone()
             },
-            strategy.mesh_update(None, &incoming, &"zone1").unwrap()
+            strategy
+                .mesh_update(None, &incoming, &"zone1", &"zone1")
+                .unwrap()
         );
     }
 
@@ -527,7 +517,9 @@ pub mod tests {
         let strategy = AnyApplicationMerge::new();
         assert_eq!(
             MergeResult::DoNothing,
-            strategy.mesh_update(None, &incoming, &"test").unwrap()
+            strategy
+                .mesh_update(None, &incoming, &"test", &"test")
+                .unwrap()
         );
     }
 
@@ -540,7 +532,7 @@ pub mod tests {
         assert_eq!(
             MergeResult::DoNothing,
             strategy
-                .mesh_update(Some(current), &incoming, &"zone1")
+                .mesh_update(Some(current), &incoming, &"zone1", &"zone1")
                 .unwrap()
         );
     }
@@ -556,7 +548,7 @@ pub mod tests {
                 object: incoming.to_owned()
             },
             strategy
-                .mesh_update(Some(current.clone()), &incoming, &"zone1")
+                .mesh_update(Some(current.clone()), &incoming, &"zone1", &"zone1")
                 .unwrap()
         );
 
@@ -564,7 +556,7 @@ pub mod tests {
         assert_eq!(
             MergeResult::DoNothing,
             strategy
-                .mesh_update(Some(current), &incoming, &"zone2")
+                .mesh_update(Some(current), &incoming, &"zone2", &"zone1")
                 .unwrap()
         );
     }
@@ -580,7 +572,7 @@ pub mod tests {
                 object: incoming.to_owned()
             },
             strategy
-                .mesh_update(Some(current), &incoming, &"zone1")
+                .mesh_update(Some(current), &incoming, &"zone1", &"zone1")
                 .unwrap()
         );
     }
@@ -596,7 +588,7 @@ pub mod tests {
                 object: incoming.to_owned()
             },
             strategy
-                .mesh_update(Some(current), &incoming, &"zone1")
+                .mesh_update(Some(current), &incoming, &"zone1", &"zone1")
                 .unwrap()
         );
     }
@@ -610,7 +602,7 @@ pub mod tests {
         assert_eq!(
             MergeResult::DoNothing,
             strategy
-                .mesh_update(Some(current), &incoming, &"zone1")
+                .mesh_update(Some(current), &incoming, &"zone1", &"zone1")
                 .unwrap()
         );
     }
@@ -664,14 +656,20 @@ pub mod tests {
             1,
             "zone1",
             0,
-            &vec![anycond(2, "zone1", "type"), anycond(3, "zone2", "type")],
+            &vec![
+                anyzone("zone1", 2, &vec![anycond("zone1", "type")]),
+                anyzone("zone2", 3, &vec![anycond("zone2", "type")]),
+            ],
         );
         let incoming = make_anyapplication_with_conditions(
             1,
             1,
             "zone1",
             1,
-            &vec![anycond(3, "zone1", "type"), anycond(4, "zone2", "type")],
+            &vec![
+                anyzone("zone1", 3, &vec![anycond("zone1", "type")]),
+                anyzone("zone2", 4, &vec![anycond("zone2", "type")]),
+            ],
         );
 
         let expected = make_anyapplication_with_conditions(
@@ -679,14 +677,17 @@ pub mod tests {
             1,
             "zone1",
             0,
-            &vec![anycond(2, "zone1", "type"), anycond(4, "zone2", "type")],
+            &vec![
+                anyzone("zone1", 3, &vec![anycond("zone1", "type")]),
+                anyzone("zone2", 4, &vec![anycond("zone2", "type")]),
+            ],
         );
 
         let strategy = AnyApplicationMerge::new();
         assert_eq!(
             MergeResult::Update { object: expected },
             strategy
-                .mesh_update(Some(current), &incoming, &"zone2")
+                .mesh_update(Some(current), &incoming, &"zone2", &"zone1")
                 .unwrap()
         );
     }
@@ -698,14 +699,17 @@ pub mod tests {
             1,
             "zone1",
             0,
-            &vec![anycond(2, "zone1", "type")],
+            &vec![anyzone("zone1", 2, &vec![anycond("zone1", "type")])],
         );
         let incoming = make_anyapplication_with_conditions(
             1,
             1,
             "zone1",
             1,
-            &vec![anycond(3, "zone1", "type"), anycond(4, "zone2", "type")],
+            &vec![
+                anyzone("zone1", 2, &vec![anycond("zone1", "type")]),
+                anyzone("zone2", 4, &vec![anycond("zone2", "type")]),
+            ],
         );
 
         let expected = make_anyapplication_with_conditions(
@@ -713,14 +717,17 @@ pub mod tests {
             1,
             "zone1",
             0,
-            &vec![anycond(2, "zone1", "type"), anycond(4, "zone2", "type")],
+            &vec![
+                anyzone("zone1", 2, &vec![anycond("zone1", "type")]),
+                anyzone("zone2", 4, &vec![anycond("zone2", "type")]),
+            ],
         );
 
         let strategy = AnyApplicationMerge::new();
         assert_eq!(
             MergeResult::Update { object: expected },
             strategy
-                .mesh_update(Some(current), &incoming, &"zone2")
+                .mesh_update(Some(current), &incoming, &"zone2", &"zone1")
                 .unwrap()
         );
     }
@@ -732,14 +739,20 @@ pub mod tests {
             1,
             "zone1",
             0,
-            &vec![anycond(2, "zone1", "type"), anycond(4, "zone2", "type")],
+            &vec![
+                anyzone("zone1", 2, &vec![anycond("zone1", "type")]),
+                anyzone("zone2", 2, &vec![anycond("zone2", "type")]),
+            ],
         );
         let incoming = make_anyapplication_with_conditions(
             1,
             1,
             "zone1",
             1,
-            &vec![anycond(3, "zone1", "type")],
+            &vec![
+                anyzone("zone1", 2, &vec![anycond("zone1", "type")]),
+                anyzone("zone2", 3, &vec![]),
+            ],
         );
 
         let expected = make_anyapplication_with_conditions(
@@ -747,14 +760,17 @@ pub mod tests {
             1,
             "zone1",
             0,
-            &vec![anycond(2, "zone1", "type")],
+            &vec![
+                anyzone("zone1", 2, &vec![anycond("zone1", "type")]),
+                anyzone("zone2", 3, &vec![]),
+            ],
         );
 
         let strategy = AnyApplicationMerge::new();
         assert_eq!(
             MergeResult::Update { object: expected },
             strategy
-                .mesh_update(Some(current), &incoming, &"zone2")
+                .mesh_update(Some(current), &incoming, &"zone2", &"zone1")
                 .unwrap()
         );
     }
@@ -838,7 +854,10 @@ pub mod tests {
             1,
             "zone1",
             1,
-            &vec![anycond(2, "zone1", "type"), anycond(3, "zone2", "type")],
+            &vec![
+                anyzone("zone1", 2, &vec![anycond("zone1", "type")]),
+                anyzone("zone2", 3, &vec![anycond("zone2", "type")]),
+            ],
         );
         let incoming = make_anyapplication_with_conditions(
             1,
@@ -846,8 +865,12 @@ pub mod tests {
             "zone1",
             1,
             &vec![
-                anycond(2, "zone1", "type"),
-                anycond_status(4, "zone2", "type", "updated"),
+                anyzone("zone1", 2, &vec![anycond("zone1", "type")]),
+                anyzone(
+                    "zone2",
+                    4,
+                    &vec![anycond_status("zone2", "type", "updated")],
+                ),
             ],
         );
 
@@ -857,8 +880,12 @@ pub mod tests {
             "zone1",
             1,
             &vec![
-                anycond(2, "zone1", "type"),
-                anycond_status(4, "zone2", "type", "updated"),
+                anyzone("zone1", 2, &vec![anycond("zone1", "type")]),
+                anyzone(
+                    "zone2",
+                    4,
+                    &vec![anycond_status("zone2", "type", "updated")],
+                ),
             ],
         );
 
@@ -878,14 +905,17 @@ pub mod tests {
             1,
             "zone1",
             0,
-            &vec![anycond(2, "zone1", "type")],
+            &vec![anyzone("zone1", 2, &vec![anycond("zone1", "type")])],
         );
         let incoming = make_anyapplication_with_conditions(
             1,
             1,
             "zone1",
             1,
-            &vec![anycond(3, "zone1", "type"), anycond(4, "zone2", "type")],
+            &vec![
+                anyzone("zone1", 3, &vec![anycond("zone1", "type")]),
+                anyzone("zone2", 4, &vec![anycond("zone2", "type")]),
+            ],
         );
 
         let expected = make_anyapplication_with_conditions(
@@ -893,7 +923,10 @@ pub mod tests {
             5,
             "zone1",
             0,
-            &vec![anycond(3, "zone1", "type"), anycond(4, "zone2", "type")],
+            &vec![
+                anyzone("zone1", 3, &vec![anycond("zone1", "type")]),
+                anyzone("zone2", 4, &vec![anycond("zone2", "type")]),
+            ],
         );
 
         let strategy = AnyApplicationMerge::new();
@@ -912,7 +945,10 @@ pub mod tests {
             1,
             "zone1",
             0,
-            &vec![anycond(2, "zone1", "type"), anycond(3, "zone2", "type")],
+            &vec![
+                anyzone("zone1", 2, &vec![anycond("zone1", "type")]),
+                anyzone("zone2", 3, &vec![anycond("zone2", "type")]),
+            ],
         );
 
         let incoming = make_anyapplication_with_conditions(
@@ -920,7 +956,10 @@ pub mod tests {
             1,
             "zone1",
             1,
-            &vec![anycond(3, "zone1", "type")],
+            &vec![
+                anyzone("zone1", 2, &vec![anycond("zone1", "type")]),
+                anyzone("zone2", 4, &vec![]),
+            ],
         );
 
         let expected = make_anyapplication_with_conditions(
@@ -928,7 +967,10 @@ pub mod tests {
             4,
             "zone1",
             0,
-            &vec![anycond(3, "zone1", "type")],
+            &vec![
+                anyzone("zone1", 2, &vec![anycond("zone1", "type")]),
+                anyzone("zone2", 4, &vec![]),
+            ],
         );
 
         let strategy = AnyApplicationMerge::new();
