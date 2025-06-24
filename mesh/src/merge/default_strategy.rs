@@ -19,6 +19,7 @@ impl MergeStrategy for DefaultMerge {
         current: Option<DynamicObject>,
         incoming: &DynamicObject,
         incoming_zone: &str,
+        _current_zone: &str,
     ) -> Result<MergeResult> {
         let incoming = incoming.clone();
         if let Some(current) = current {
@@ -155,7 +156,7 @@ pub mod tests {
                 object: incoming.clone()
             },
             DefaultMerge::new(gvk)
-                .mesh_update(None, &incoming, &"test")
+                .mesh_update(None, &incoming, &"test", &"test")
                 .unwrap()
         );
     }
@@ -168,7 +169,7 @@ pub mod tests {
         assert_eq!(
             MergeResult::DoNothing,
             DefaultMerge::new(gvk)
-                .mesh_update(None, &incoming, &"test")
+                .mesh_update(None, &incoming, &"test", &"test")
                 .unwrap()
         );
     }
@@ -182,7 +183,7 @@ pub mod tests {
         assert_eq!(
             MergeResult::DoNothing,
             DefaultMerge::new(gvk)
-                .mesh_update(Some(current), &incoming, &"test")
+                .mesh_update(Some(current), &incoming, &"test", &"test")
                 .unwrap()
         );
     }
@@ -198,7 +199,7 @@ pub mod tests {
                 object: incoming.to_owned()
             },
             DefaultMerge::new(gvk)
-                .mesh_update(Some(current), &incoming, &"test")
+                .mesh_update(Some(current), &incoming, &"test", &"test")
                 .unwrap()
         );
     }
@@ -212,7 +213,7 @@ pub mod tests {
         assert_eq!(
             MergeResult::DoNothing,
             DefaultMerge::new(gvk)
-                .mesh_update(Some(current), &incoming, &"test")
+                .mesh_update(Some(current), &incoming, &"test", &"test")
                 .unwrap()
         );
     }

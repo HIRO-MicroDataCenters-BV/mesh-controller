@@ -1,3 +1,4 @@
+use anyapplication::anyapplication::{AnyApplication, AnyApplicationStatusZones};
 use anyhow::{Context, Result, anyhow};
 use kube::ResourceExt;
 use kube::api::{DynamicObject, GroupVersionKind};
@@ -22,6 +23,7 @@ pub trait DynamicObjectExt {
     fn unset_resource_version(&mut self);
     fn get_resource_version(&self) -> Version;
     fn set_resource_version(&mut self, version: Version);
+    fn dump_status(&self, loc: &str);
 }
 
 impl DynamicObjectExt for DynamicObject {
@@ -149,4 +151,29 @@ impl DynamicObjectExt for DynamicObject {
     fn set_resource_version(&mut self, version: Version) {
         self.metadata.resource_version = Some(version.to_string());
     }
+
+    fn dump_status(&self, context: &str) {
+        let app: AnyApplication = self.clone().try_parse().unwrap();
+        let Some(status) = app.status else { return };
+        let Some(zones) = status.zones else { return };
+        dump_zones(context, &zones);
+    }
+}
+
+pub fn dump_zones(context: &str, zones: &[AnyApplicationStatusZones]) {
+    let mut out = format!("- status update - ({})\n", context);
+
+    for zone in zones.iter() {
+        out += format!(" zone: {}\n", zone.zone_id).as_str();
+        out += format!("  - version: {}\n", zone.version).as_str();
+        let Some(conditions) = &zone.conditions else {
+            continue;
+        };
+        out += "  - conditions:\n";
+        for cond in conditions {
+            out += format!("   -- {}, {}\n", cond.r#type, cond.status).as_str();
+        }
+    }
+    out += "\n";
+    println!("{}", out);
 }

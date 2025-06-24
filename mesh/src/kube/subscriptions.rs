@@ -426,10 +426,10 @@ pub mod tests {
                 zones: 1,
             },
             status: Some(AnyApplicationStatus {
-                conditions: None,
                 owner: "owner".into(),
                 placements: None,
                 state: "New".into(),
+                zones: Some(vec![]),
             }),
         };
         let resource_str = serde_json::to_string(&resource).expect("Resource is not serializable");

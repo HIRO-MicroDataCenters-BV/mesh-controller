@@ -59,6 +59,7 @@ pub trait MergeStrategy: Send + Sync {
         current: Option<DynamicObject>,
         incoming: &DynamicObject,
         incoming_zone: &str,
+        current_zone: &str,
     ) -> Result<MergeResult>;
 
     fn mesh_delete(
