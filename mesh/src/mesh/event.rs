@@ -70,7 +70,7 @@ impl From<UpdateResult> for Option<MeshEvent> {
                 });
                 Some(MeshEvent::Snapshot { snapshot })
             }
-            UpdateResult::DoNothing | UpdateResult::Tombstone { .. } => None,
+            UpdateResult::Skip | UpdateResult::Tombstone { .. } => None,
         }
     }
 }

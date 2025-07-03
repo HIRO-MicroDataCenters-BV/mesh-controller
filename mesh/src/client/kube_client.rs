@@ -98,7 +98,7 @@ impl KubeClient {
         }
     }
 
-    pub async fn direct_get(
+    pub async fn get(
         &self,
         gvk: &GroupVersionKind,
         name: &NamespacedName,
@@ -115,7 +115,7 @@ impl KubeClient {
         }
     }
 
-    pub async fn direct_delete(
+    pub async fn delete(
         &self,
         gvk: &GroupVersionKind,
         name: &NamespacedName,
@@ -129,10 +129,7 @@ impl KubeClient {
         Ok(status)
     }
 
-    pub async fn direct_patch_apply(
-        &self,
-        resource: DynamicObject,
-    ) -> Result<Version, ClientError> {
+    pub async fn patch_apply(&self, resource: DynamicObject) -> Result<Version, ClientError> {
         let gvk = resource.get_gvk()?;
         let name = resource.get_namespaced_name();
         let status = resource.get_status();

@@ -197,7 +197,7 @@ impl MeshActor {
             } => {
                 return self.kube_delete(&gvk, &name, version).await;
             }
-            MergeResult::DoNothing | MergeResult::Tombstone { .. } => (),
+            MergeResult::Skip | MergeResult::Tombstone { .. } => (),
         }
         Ok(PersistenceResult::Persisted)
     }
@@ -206,7 +206,7 @@ impl MeshActor {
         let gvk = object.get_gvk()?;
         let name = object.get_namespaced_name();
 
-        let existing = self.subscriptions.client().direct_get(&gvk, &name).await?;
+        let existing = self.subscriptions.client().get(&gvk, &name).await?;
 
         object.metadata.managed_fields = None;
         if let Some(existing) = existing {
@@ -223,7 +223,7 @@ impl MeshActor {
             object.metadata.resource_version = None;
         }
 
-        let ok_or_error = self.subscriptions.client().direct_patch_apply(object).await;
+        let ok_or_error = self.subscriptions.client().patch_apply(object).await;
 
         match ok_or_error {
             Ok(new_version) => {
@@ -244,7 +244,7 @@ impl MeshActor {
         name: &NamespacedName,
         version: Version,
     ) -> Result<PersistenceResult> {
-        let existing = self.subscriptions.client().direct_get(gvk, name).await?;
+        let existing = self.subscriptions.client().get(gvk, name).await?;
 
         if let Some(existing) = existing {
             let existing_version = existing.get_resource_version();
@@ -256,11 +256,7 @@ impl MeshActor {
                 });
             }
 
-            let ok_or_status = self
-                .subscriptions
-                .client()
-                .direct_delete(&gvk, &name)
-                .await?;
+            let ok_or_status = self.subscriptions.client().delete(&gvk, &name).await?;
             // TODO handle status maybe
             debug!("delete result {ok_or_status:?}");
         } else {
@@ -277,7 +273,7 @@ impl MeshActor {
     ) -> Result<()> {
         let mut attempts = 10;
         while attempts > 0 {
-            if let Some(object) = self.subscriptions.client().direct_get(&gvk, &name).await? {
+            if let Some(object) = self.subscriptions.client().get(&gvk, &name).await? {
                 let version = object.get_resource_version();
                 let name = object.get_namespaced_name();
                 let event = if is_update {

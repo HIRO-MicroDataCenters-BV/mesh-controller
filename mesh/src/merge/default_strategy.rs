@@ -39,7 +39,7 @@ impl MergeStrategy for DefaultMerge {
         let incoming_owner_version = incoming.get_owner_version()?;
         let acceptable_zone = incoming_owner_zone == incoming_zone;
         if !acceptable_zone {
-            return Ok(MergeResult::DoNothing);
+            return Ok(MergeResult::Skip);
         }
 
         match current {
@@ -63,7 +63,7 @@ impl MergeStrategy for DefaultMerge {
                         owner_zone: incoming_owner_zone,
                     })
                 } else {
-                    Ok(MergeResult::DoNothing)
+                    Ok(MergeResult::Skip)
                 }
             }
         }
@@ -77,37 +77,33 @@ impl MergeStrategy for DefaultMerge {
         incoming_zone: &str,
     ) -> Result<UpdateResult> {
         if incoming.metadata.deletion_timestamp.is_some() {
-            return Ok(UpdateResult::DoNothing);
+            return Ok(UpdateResult::Skip);
         }
 
         incoming.normalize(incoming_zone);
         let is_current_zone = incoming.get_owner_zone()? == incoming_zone;
         if !is_current_zone {
-            return Ok(UpdateResult::DoNothing);
+            return Ok(UpdateResult::Skip);
         }
 
         match current {
             VersionedObject::Object(current) => {
                 if current.get_owner_version()? >= incoming_version {
-                    return Ok(UpdateResult::DoNothing);
+                    return Ok(UpdateResult::Skip);
                 }
-                
-                incoming.unset_resource_version();
                 incoming.set_owner_version(incoming_version);
                 incoming.set_owner_zone(incoming_zone.into());
                 Ok(UpdateResult::Update { object: incoming })
             }
             VersionedObject::NonExisting => {
-                incoming.unset_resource_version();
                 incoming.set_owner_version(incoming_version);
                 incoming.set_owner_zone(incoming_zone.into());
                 Ok(UpdateResult::Create { object: incoming })
             }
             VersionedObject::Tombstone(current_owner_version, _) => {
                 if current_owner_version >= incoming_version {
-                    return Ok(UpdateResult::DoNothing);
+                    return Ok(UpdateResult::Skip);
                 }
-                incoming.unset_resource_version();
                 incoming.set_owner_version(incoming_version);
                 incoming.set_owner_zone(incoming_zone.into());
                 Ok(UpdateResult::Create { object: incoming })
@@ -126,16 +122,15 @@ impl MergeStrategy for DefaultMerge {
         let name = incoming.get_namespaced_name();
         let is_current_zone = incoming.get_owner_zone()? == incoming_zone;
         if !is_current_zone {
-            return Ok(UpdateResult::DoNothing);
+            return Ok(UpdateResult::Skip);
         }
         match current {
             VersionedObject::Object(current) => {
                 if current.get_owner_version()? >= incoming_version {
-                    return Ok(UpdateResult::DoNothing);
+                    return Ok(UpdateResult::Skip);
                 }
                 incoming.set_owner_version(incoming_version);
                 incoming.set_owner_zone(incoming_zone.into());
-                incoming.unset_resource_version();
                 Ok(UpdateResult::Delete { object: incoming })
             }
             VersionedObject::NonExisting => Ok(UpdateResult::Tombstone {
@@ -197,7 +192,7 @@ impl DefaultMerge {
             });
             Ok(MergeResult::Update { object })
         } else {
-            Ok(MergeResult::DoNothing)
+            Ok(MergeResult::Skip)
         }
     }
 
@@ -218,7 +213,7 @@ impl DefaultMerge {
             });
             Ok(MergeResult::Create { object })
         } else {
-            Ok(MergeResult::DoNothing)
+            Ok(MergeResult::Skip)
         }
     }
 
@@ -233,11 +228,11 @@ impl DefaultMerge {
         let acceptable_zone = incoming_owner_zone == incoming_zone;
 
         if !acceptable_zone {
-            return Ok(MergeResult::DoNothing);
+            return Ok(MergeResult::Skip);
         }
 
         if current_owner_version >= incoming_owner_version {
-            Ok(MergeResult::DoNothing)
+            Ok(MergeResult::Skip)
         } else {
             self.mesh_update_create(incoming, incoming_zone)
         }
@@ -292,7 +287,7 @@ pub mod tests {
         let existing = VersionedObject::Tombstone(3, "test".into());
 
         assert_eq!(
-            MergeResult::DoNothing,
+            MergeResult::Skip,
             DefaultMerge::new(gvk)
                 .mesh_update(existing, incoming, &"test", &"test")
                 .unwrap()
@@ -305,7 +300,7 @@ pub mod tests {
         let incoming = make_object("other", 2, "value");
 
         assert_eq!(
-            MergeResult::DoNothing,
+            MergeResult::Skip,
             DefaultMerge::new(gvk)
                 .mesh_update(VersionedObject::NonExisting, incoming, &"test", &"test")
                 .unwrap()
@@ -319,7 +314,7 @@ pub mod tests {
         let incoming = make_object("test", 1, "value");
 
         assert_eq!(
-            MergeResult::DoNothing,
+            MergeResult::Skip,
             DefaultMerge::new(gvk)
                 .mesh_update(current.into(), incoming, &"test", &"test")
                 .unwrap()
@@ -349,7 +344,7 @@ pub mod tests {
         let incoming = make_object("other", 2, "updated");
 
         assert_eq!(
-            MergeResult::DoNothing,
+            MergeResult::Skip,
             DefaultMerge::new(gvk)
                 .mesh_update(current.into(), incoming, &"test", &"test")
                 .unwrap()
@@ -485,7 +480,7 @@ pub mod tests {
         let existing = make_object("test", 1, "value1");
 
         assert_eq!(
-            UpdateResult::DoNothing,
+            UpdateResult::Skip,
             DefaultMerge::new(gvk)
                 .local_update(existing.into(), incoming, 1, &"test")
                 .unwrap()
@@ -501,7 +496,7 @@ pub mod tests {
         incoming.metadata.deletion_timestamp = Some(Time(SystemTime::now().into()));
 
         assert_eq!(
-            UpdateResult::DoNothing,
+            UpdateResult::Skip,
             DefaultMerge::new(gvk)
                 .local_update(existing.into(), incoming, 2, &"test")
                 .unwrap()

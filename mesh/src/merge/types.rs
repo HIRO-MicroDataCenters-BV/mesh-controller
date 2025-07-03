@@ -24,7 +24,7 @@ pub enum MergeResult {
         owner_version: Version,
         owner_zone: String,
     },
-    DoNothing,
+    Skip,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -46,7 +46,7 @@ pub enum UpdateResult {
         owner_version: Version,
         owner_zone: String,
     },
-    DoNothing,
+    Skip,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
