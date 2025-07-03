@@ -134,7 +134,11 @@ impl MergeStrategy for DefaultMerge {
                 }
                 incoming.set_owner_version(incoming_version);
                 incoming.set_owner_zone(incoming_zone.into());
-                Ok(UpdateResult::Delete { object: incoming })
+                Ok(UpdateResult::Delete {
+                    object: incoming,
+                    owner_version: incoming_version,
+                    owner_zone: incoming_zone.into(),
+                })
             }
             VersionedObject::NonExisting => Ok(UpdateResult::Tombstone {
                 name,
@@ -572,7 +576,9 @@ pub mod tests {
 
         assert_eq!(
             UpdateResult::Delete {
-                object: incoming.to_owned()
+                object: incoming.to_owned(),
+                owner_version: 2,
+                owner_zone: "test".into()
             },
             DefaultMerge::new(gvk)
                 .local_delete(existing.into(), incoming, 2, &"test")

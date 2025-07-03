@@ -28,6 +28,7 @@ pub trait AnyApplicationExt {
     fn get_placement_zones(&self) -> HashSet<String>;
 
     fn set_resource_version(&mut self, version: Version);
+    fn get_resource_version(&self) -> Option<Version>;
 
     fn get_status_zone_ids(&self) -> HashSet<String>;
 
@@ -75,6 +76,13 @@ impl AnyApplicationExt for AnyApplication {
 
     fn set_resource_version(&mut self, version: Version) {
         self.metadata.resource_version = Some(version.to_string());
+    }
+
+    fn get_resource_version(&self) -> Option<Version> {
+        self.metadata
+            .resource_version
+            .as_ref()
+            .and_then(|version_str| version_str.parse::<Version>().ok())
     }
 
     fn get_status_zone_ids(&self) -> HashSet<String> {

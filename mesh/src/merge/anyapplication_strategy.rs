@@ -117,11 +117,11 @@ impl MergeStrategy for AnyApplicationMerge {
         let is_owned_zone = incoming.is_owned_zone(incoming_zone);
         match current {
             VersionedObject::Object(current) => {
-                let current_version = current.get_resource_version();
+                let mut current: AnyApplication = current.clone().try_parse()?;
+                let current_version = current.get_resource_version().unwrap_or(0);
                 if current_version >= incoming_resource_version {
                     return Ok(UpdateResult::Skip);
                 }
-                let mut current: AnyApplication = current.clone().try_parse()?;
                 let mut updated = false;
                 if is_owned_zone
                     && current.spec != incoming.spec
@@ -196,7 +196,11 @@ impl MergeStrategy for AnyApplicationMerge {
                 let mut object = incoming.to_object()?;
 
                 object.set_resource_version(incoming_version);
-                Ok(UpdateResult::Delete { object })
+                Ok(UpdateResult::Delete {
+                    object,
+                    owner_version: incoming_version,
+                    owner_zone: incoming_zone.to_owned(),
+                })
             }
             VersionedObject::NonExisting => Ok(UpdateResult::Tombstone {
                 name,
@@ -1091,7 +1095,11 @@ pub mod tests {
         expected.set_owner_version(2);
 
         assert_eq!(
-            UpdateResult::Delete { object: expected },
+            UpdateResult::Delete {
+                object: expected,
+                owner_version: 2,
+                owner_zone: "zone1".into()
+            },
             AnyApplicationMerge::new()
                 .local_delete(current.into(), incoming, 2, &"zone1")
                 .unwrap()

@@ -60,7 +60,7 @@ impl From<UpdateResult> for Option<MeshEvent> {
                 object.unset_resource_version();
                 Some(MeshEvent::Update { object })
             }
-            UpdateResult::Delete { mut object } => {
+            UpdateResult::Delete { mut object, .. } => {
                 object.unset_resource_version();
                 Some(MeshEvent::Delete { object })
             }

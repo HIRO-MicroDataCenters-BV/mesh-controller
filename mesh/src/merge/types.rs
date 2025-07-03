@@ -38,6 +38,9 @@ pub enum UpdateResult {
     },
     Delete {
         object: DynamicObject,
+        // TODO should contain tombstone
+        owner_version: Version,
+        owner_zone: String,
     },
     Snapshot {
         snapshot: BTreeMap<NamespacedName, DynamicObject>,
