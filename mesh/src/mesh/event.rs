@@ -64,13 +64,13 @@ impl From<UpdateResult> for Option<MeshEvent> {
                 object.unset_resource_version();
                 Some(MeshEvent::Delete { object })
             }
-            UpdateResult::Snapshot { mut snapshot } => {
+            UpdateResult::Snapshot { mut snapshot, .. } => {
                 snapshot.iter_mut().for_each(|(_, object)| {
                     object.unset_resource_version();
                 });
                 Some(MeshEvent::Snapshot { snapshot })
             }
-            UpdateResult::DoNothing => None,
+            UpdateResult::DoNothing | UpdateResult::Tombstone { .. } => None,
         }
     }
 }
