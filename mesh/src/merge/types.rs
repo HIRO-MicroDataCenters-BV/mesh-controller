@@ -16,8 +16,9 @@ pub enum MergeResult {
     Delete {
         gvk: GroupVersionKind,
         name: NamespacedName,
-        version: Version,
+        owner_version: Version,
         owner_zone: String,
+        resource_version: Version,
     },
     Tombstone {
         name: NamespacedName,
@@ -75,7 +76,7 @@ pub trait MergeStrategy: Send + Sync {
         &self,
         current: VersionedObject,
         incoming: DynamicObject,
-        incoming_version: Version,
+        incoming_resource_version: Version,
         incoming_zone: &str,
     ) -> Result<UpdateResult>;
 
@@ -83,7 +84,7 @@ pub trait MergeStrategy: Send + Sync {
         &self,
         current: VersionedObject,
         incoming: DynamicObject,
-        incoming_version: Version,
+        incoming_resource_version: Version,
         incoming_zone: &str,
     ) -> Result<UpdateResult>;
 

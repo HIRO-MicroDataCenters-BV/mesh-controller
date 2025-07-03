@@ -193,9 +193,12 @@ impl MeshActor {
                 return self.kube_patch_apply(object).await;
             }
             MergeResult::Delete {
-                gvk, name, version, ..
+                gvk,
+                name,
+                resource_version,
+                ..
             } => {
-                return self.kube_delete(&gvk, &name, version).await;
+                return self.kube_delete(&gvk, &name, resource_version).await;
             }
             MergeResult::Skip | MergeResult::Tombstone { .. } => (),
         }
