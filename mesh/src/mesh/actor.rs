@@ -152,10 +152,10 @@ impl MeshActor {
                     )?;
                     for merge_result in merge_results.into_iter() {
                         // TODO fixme
-                        let is_update = match merge_result {
-                            MergeResult::Create { .. } | MergeResult::Update { .. } => true,
-                            _ => false,
-                        };
+                        let is_update = matches!(
+                            merge_result,
+                            MergeResult::Create { .. } | MergeResult::Update { .. }
+                        );
                         match self.on_merge_result(merge_result).await {
                             Ok(PersistenceResult::Persisted) => (),
                             Ok(PersistenceResult::Conflict { gvk, name }) => {
@@ -259,7 +259,7 @@ impl MeshActor {
                 });
             }
 
-            let ok_or_status = self.subscriptions.client().delete(&gvk, &name).await?;
+            let ok_or_status = self.subscriptions.client().delete(gvk, name).await?;
             // TODO handle status maybe
             debug!("delete result {ok_or_status:?}");
         } else {

@@ -314,7 +314,7 @@ impl Partition {
                         .resources
                         .iter()
                         .filter(|(_, v)| self.merge_strategy.is_owner_zone(v, current_zone))
-                        .filter(|(name, _)| !snapshot.contains_key(&name))
+                        .filter(|(name, _)| !snapshot.contains_key(name))
                         .map(|(k, _)| k.to_owned())
                         .collect();
 
@@ -1164,7 +1164,7 @@ pub mod tests {
             MergeResult::Delete {
                 gvk: object.get_gvk().unwrap(),
                 name: object.get_namespaced_name(),
-                owner_version: owner_version,
+                owner_version,
                 owner_zone: self.zone.clone(),
                 resource_version: self.resource_version,
             }
@@ -1172,7 +1172,7 @@ pub mod tests {
 
         fn inc_version(&mut self) -> Version {
             self.resource_version += 1;
-            return self.resource_version;
+            self.resource_version
         }
 
         pub fn as_zone(&self, zone: &str, version: Version) -> Self {

@@ -182,7 +182,7 @@ pub mod tests {
         }
 
         subscriber.close();
-        assert!(!cache.unsubscribe(&id).await.is_err());
+        assert!(cache.unsubscribe(&id).await.is_ok());
 
         cache.shutdown().expect("cache shutdown");
     }
@@ -398,7 +398,7 @@ pub mod tests {
         );
 
         subscriber.close();
-        assert!(!cache.unsubscribe(&id).await.is_err());
+        assert!(cache.unsubscribe(&id).await.is_ok());
 
         cache.shutdown().expect("cache shutdown");
     }

@@ -266,7 +266,7 @@ pub mod tests {
                 object: incoming.clone()
             },
             DefaultMerge::new(gvk)
-                .mesh_update(VersionedObject::NonExisting, incoming, &"test", &"test")
+                .mesh_update(VersionedObject::NonExisting, incoming, "test", "test")
                 .unwrap()
         );
     }
@@ -282,7 +282,7 @@ pub mod tests {
                 object: incoming.clone()
             },
             DefaultMerge::new(gvk)
-                .mesh_update(existing, incoming, &"test", &"test")
+                .mesh_update(existing, incoming, "test", "test")
                 .unwrap()
         );
     }
@@ -296,7 +296,7 @@ pub mod tests {
         assert_eq!(
             MergeResult::Skip,
             DefaultMerge::new(gvk)
-                .mesh_update(existing, incoming, &"test", &"test")
+                .mesh_update(existing, incoming, "test", "test")
                 .unwrap()
         );
     }
@@ -309,7 +309,7 @@ pub mod tests {
         assert_eq!(
             MergeResult::Skip,
             DefaultMerge::new(gvk)
-                .mesh_update(VersionedObject::NonExisting, incoming, &"test", &"test")
+                .mesh_update(VersionedObject::NonExisting, incoming, "test", "test")
                 .unwrap()
         );
     }
@@ -323,7 +323,7 @@ pub mod tests {
         assert_eq!(
             MergeResult::Skip,
             DefaultMerge::new(gvk)
-                .mesh_update(current.into(), incoming, &"test", &"test")
+                .mesh_update(current.into(), incoming, "test", "test")
                 .unwrap()
         );
     }
@@ -339,7 +339,7 @@ pub mod tests {
                 object: incoming.to_owned()
             },
             DefaultMerge::new(gvk)
-                .mesh_update(current.into(), incoming, &"test", &"test")
+                .mesh_update(current.into(), incoming, "test", "test")
                 .unwrap()
         );
     }
@@ -353,7 +353,7 @@ pub mod tests {
         assert_eq!(
             MergeResult::Skip,
             DefaultMerge::new(gvk)
-                .mesh_update(current.into(), incoming, &"test", &"test")
+                .mesh_update(current.into(), incoming, "test", "test")
                 .unwrap()
         );
     }
@@ -370,7 +370,7 @@ pub mod tests {
                 owner_zone: "test".into()
             },
             DefaultMerge::new(gvk)
-                .mesh_delete(VersionedObject::NonExisting, incoming, &"test")
+                .mesh_delete(VersionedObject::NonExisting, incoming, "test")
                 .unwrap()
         );
     }
@@ -388,7 +388,7 @@ pub mod tests {
                 owner_zone: "test".into()
             },
             DefaultMerge::new(gvk)
-                .mesh_delete(existing, incoming, &"test")
+                .mesh_delete(existing, incoming, "test")
                 .unwrap()
         );
     }
@@ -406,7 +406,7 @@ pub mod tests {
                 owner_zone: "test".into()
             },
             DefaultMerge::new(gvk)
-                .mesh_delete(existing, incoming, &"test")
+                .mesh_delete(existing, incoming, "test")
                 .unwrap()
         );
     }
@@ -427,7 +427,7 @@ pub mod tests {
                 resource_version: 10,
             },
             DefaultMerge::new(gvk)
-                .mesh_delete(current.into(), incoming, &"test")
+                .mesh_delete(current.into(), incoming, "test")
                 .unwrap()
         );
     }
@@ -448,7 +448,7 @@ pub mod tests {
                 resource_version: 10,
             },
             DefaultMerge::new(gvk)
-                .mesh_delete(current.into(), incoming, &"test")
+                .mesh_delete(current.into(), incoming, "test")
                 .unwrap()
         );
     }
@@ -463,7 +463,7 @@ pub mod tests {
                 object: incoming.clone()
             },
             DefaultMerge::new(gvk)
-                .local_update(VersionedObject::NonExisting, incoming, 2, &"test")
+                .local_update(VersionedObject::NonExisting, incoming, 2, "test")
                 .unwrap()
         );
     }
@@ -479,7 +479,7 @@ pub mod tests {
                 object: incoming.clone()
             },
             DefaultMerge::new(gvk)
-                .local_update(existing, incoming, 2, &"test")
+                .local_update(existing, incoming, 2, "test")
                 .unwrap()
         );
     }
@@ -494,7 +494,7 @@ pub mod tests {
         assert_eq!(
             UpdateResult::Skip,
             DefaultMerge::new(gvk)
-                .local_update(existing.into(), incoming, 1, &"test")
+                .local_update(existing.into(), incoming, 1, "test")
                 .unwrap()
         );
     }
@@ -510,7 +510,7 @@ pub mod tests {
         assert_eq!(
             UpdateResult::Skip,
             DefaultMerge::new(gvk)
-                .local_update(existing.into(), incoming, 2, &"test")
+                .local_update(existing.into(), incoming, 2, "test")
                 .unwrap()
         );
     }
@@ -527,7 +527,7 @@ pub mod tests {
                 object: incoming.clone()
             },
             DefaultMerge::new(gvk)
-                .local_update(existing.into(), incoming, 2, &"test")
+                .local_update(existing.into(), incoming, 2, "test")
                 .unwrap()
         );
     }
@@ -544,7 +544,7 @@ pub mod tests {
                 owner_zone: "test".into()
             },
             DefaultMerge::new(gvk)
-                .local_delete(VersionedObject::NonExisting, incoming, 2, &"test")
+                .local_delete(VersionedObject::NonExisting, incoming, 2, "test")
                 .unwrap()
         );
     }
@@ -562,7 +562,7 @@ pub mod tests {
                 owner_zone: "test".into()
             },
             DefaultMerge::new(gvk)
-                .local_delete(existing, incoming, 2, &"test")
+                .local_delete(existing, incoming, 2, "test")
                 .unwrap()
         );
     }
@@ -581,7 +581,7 @@ pub mod tests {
                 owner_zone: "test".into()
             },
             DefaultMerge::new(gvk)
-                .local_delete(existing.into(), incoming, 2, &"test")
+                .local_delete(existing.into(), incoming, 2, "test")
                 .unwrap()
         );
     }

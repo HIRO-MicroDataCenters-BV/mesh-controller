@@ -609,7 +609,7 @@ pub mod tests {
                 object: incoming.clone()
             },
             strategy
-                .mesh_update(VersionedObject::NonExisting, incoming, &"zone1", &"zone1")
+                .mesh_update(VersionedObject::NonExisting, incoming, "zone1", "zone1")
                 .unwrap()
         );
     }
@@ -625,7 +625,7 @@ pub mod tests {
                 object: incoming.clone()
             },
             strategy
-                .mesh_update(existing, incoming, &"zone1", &"zone1")
+                .mesh_update(existing, incoming, "zone1", "zone1")
                 .unwrap()
         );
     }
@@ -639,7 +639,7 @@ pub mod tests {
         assert_eq!(
             MergeResult::Skip,
             strategy
-                .mesh_update(existing, incoming, &"zone1", &"zone1")
+                .mesh_update(existing, incoming, "zone1", "zone1")
                 .unwrap()
         );
     }
@@ -652,7 +652,7 @@ pub mod tests {
         assert_eq!(
             MergeResult::Skip,
             strategy
-                .mesh_update(VersionedObject::NonExisting, incoming, &"test", &"test")
+                .mesh_update(VersionedObject::NonExisting, incoming, "test", "test")
                 .unwrap()
         );
     }
@@ -666,7 +666,7 @@ pub mod tests {
         assert_eq!(
             MergeResult::Skip,
             strategy
-                .mesh_update(current.into(), incoming, &"zone1", &"zone1")
+                .mesh_update(current.into(), incoming, "zone1", "zone1")
                 .unwrap()
         );
     }
@@ -682,7 +682,7 @@ pub mod tests {
                 object: incoming.to_owned()
             },
             strategy
-                .mesh_update(current.clone().into(), incoming.clone(), &"zone1", &"zone1")
+                .mesh_update(current.clone().into(), incoming.clone(), "zone1", "zone1")
                 .unwrap()
         );
 
@@ -690,7 +690,7 @@ pub mod tests {
         assert_eq!(
             MergeResult::Skip,
             strategy
-                .mesh_update(current.into(), incoming, &"zone2", &"zone1")
+                .mesh_update(current.into(), incoming, "zone2", "zone1")
                 .unwrap()
         );
     }
@@ -706,7 +706,7 @@ pub mod tests {
                 object: incoming.to_owned()
             },
             strategy
-                .mesh_update(current.into(), incoming, &"zone1", &"zone1")
+                .mesh_update(current.into(), incoming, "zone1", "zone1")
                 .unwrap()
         );
     }
@@ -722,7 +722,7 @@ pub mod tests {
                 object: incoming.to_owned()
             },
             strategy
-                .mesh_update(current.into(), incoming, &"zone1", &"zone1")
+                .mesh_update(current.into(), incoming, "zone1", "zone1")
                 .unwrap()
         );
     }
@@ -736,7 +736,7 @@ pub mod tests {
         assert_eq!(
             MergeResult::Skip,
             strategy
-                .mesh_update(current.into(), incoming, &"zone1", &"zone1")
+                .mesh_update(current.into(), incoming, "zone1", "zone1")
                 .unwrap()
         );
     }
@@ -753,7 +753,7 @@ pub mod tests {
                 owner_zone: "zone1".into()
             },
             strategy
-                .mesh_delete(VersionedObject::NonExisting, incoming, &"zone1")
+                .mesh_delete(VersionedObject::NonExisting, incoming, "zone1")
                 .unwrap()
         );
     }
@@ -770,7 +770,7 @@ pub mod tests {
                 owner_version: 1,
                 owner_zone: "zone1".into()
             },
-            strategy.mesh_delete(existing, incoming, &"zone1").unwrap()
+            strategy.mesh_delete(existing, incoming, "zone1").unwrap()
         );
     }
 
@@ -786,7 +786,7 @@ pub mod tests {
                 owner_version: 2,
                 owner_zone: "zone1".into()
             },
-            strategy.mesh_delete(existing, incoming, &"zone1").unwrap()
+            strategy.mesh_delete(existing, incoming, "zone1").unwrap()
         );
     }
 
@@ -798,7 +798,7 @@ pub mod tests {
         let strategy = AnyApplicationMerge::new();
         assert_eq!(
             MergeResult::Skip,
-            strategy.mesh_delete(existing, incoming, &"zone1").unwrap()
+            strategy.mesh_delete(existing, incoming, "zone1").unwrap()
         );
     }
 
@@ -812,7 +812,7 @@ pub mod tests {
         assert_eq!(
             MergeResult::Skip,
             strategy
-                .mesh_delete(current.into(), incoming, &"zone1")
+                .mesh_delete(current.into(), incoming, "zone1")
                 .unwrap()
         );
     }
@@ -833,7 +833,7 @@ pub mod tests {
                 resource_version: 10,
             },
             strategy
-                .mesh_delete(current.into(), incoming, &"zone1")
+                .mesh_delete(current.into(), incoming, "zone1")
                 .unwrap()
         );
     }
@@ -845,9 +845,9 @@ pub mod tests {
             1,
             "zone1",
             0,
-            &vec![
-                anyzone("zone1", 2, &vec![anycond("zone1", "type")]),
-                anyzone("zone2", 3, &vec![anycond("zone2", "type")]),
+            &[
+                anyzone("zone1", 2, &[anycond("zone1", "type")]),
+                anyzone("zone2", 3, &[anycond("zone2", "type")]),
             ],
         );
         let incoming = make_anyapplication_with_conditions(
@@ -855,9 +855,9 @@ pub mod tests {
             1,
             "zone1",
             1,
-            &vec![
-                anyzone("zone1", 3, &vec![anycond("zone1", "type")]),
-                anyzone("zone2", 4, &vec![anycond("zone2", "type")]),
+            &[
+                anyzone("zone1", 3, &[anycond("zone1", "type")]),
+                anyzone("zone2", 4, &[anycond("zone2", "type")]),
             ],
         );
 
@@ -866,9 +866,9 @@ pub mod tests {
             1,
             "zone1",
             0,
-            &vec![
-                anyzone("zone1", 3, &vec![anycond("zone1", "type")]),
-                anyzone("zone2", 4, &vec![anycond("zone2", "type")]),
+            &[
+                anyzone("zone1", 3, &[anycond("zone1", "type")]),
+                anyzone("zone2", 4, &[anycond("zone2", "type")]),
             ],
         );
 
@@ -876,7 +876,7 @@ pub mod tests {
         assert_eq!(
             MergeResult::Update { object: expected },
             strategy
-                .mesh_update(current.into(), incoming, &"zone2", &"zone1")
+                .mesh_update(current.into(), incoming, "zone2", "zone1")
                 .unwrap()
         );
     }
@@ -888,16 +888,16 @@ pub mod tests {
             1,
             "zone1",
             0,
-            &vec![anyzone("zone1", 2, &vec![anycond("zone1", "type")])],
+            &[anyzone("zone1", 2, &[anycond("zone1", "type")])],
         );
         let incoming = make_anyapplication_with_conditions(
             1,
             1,
             "zone1",
             1,
-            &vec![
-                anyzone("zone1", 2, &vec![anycond("zone1", "type")]),
-                anyzone("zone2", 4, &vec![anycond("zone2", "type")]),
+            &[
+                anyzone("zone1", 2, &[anycond("zone1", "type")]),
+                anyzone("zone2", 4, &[anycond("zone2", "type")]),
             ],
         );
 
@@ -906,9 +906,9 @@ pub mod tests {
             1,
             "zone1",
             0,
-            &vec![
-                anyzone("zone1", 2, &vec![anycond("zone1", "type")]),
-                anyzone("zone2", 4, &vec![anycond("zone2", "type")]),
+            &[
+                anyzone("zone1", 2, &[anycond("zone1", "type")]),
+                anyzone("zone2", 4, &[anycond("zone2", "type")]),
             ],
         );
 
@@ -916,7 +916,7 @@ pub mod tests {
         assert_eq!(
             MergeResult::Update { object: expected },
             strategy
-                .mesh_update(current.into(), incoming, &"zone2", &"zone1")
+                .mesh_update(current.into(), incoming, "zone2", "zone1")
                 .unwrap()
         );
     }
@@ -928,9 +928,9 @@ pub mod tests {
             1,
             "zone1",
             0,
-            &vec![
-                anyzone("zone1", 2, &vec![anycond("zone1", "type")]),
-                anyzone("zone2", 2, &vec![anycond("zone2", "type")]),
+            &[
+                anyzone("zone1", 2, &[anycond("zone1", "type")]),
+                anyzone("zone2", 2, &[anycond("zone2", "type")]),
             ],
         );
         let incoming = make_anyapplication_with_conditions(
@@ -938,9 +938,9 @@ pub mod tests {
             1,
             "zone1",
             1,
-            &vec![
-                anyzone("zone1", 2, &vec![anycond("zone1", "type")]),
-                anyzone("zone2", 3, &vec![]),
+            &[
+                anyzone("zone1", 2, &[anycond("zone1", "type")]),
+                anyzone("zone2", 3, &[]),
             ],
         );
 
@@ -949,9 +949,9 @@ pub mod tests {
             1,
             "zone1",
             0,
-            &vec![
-                anyzone("zone1", 2, &vec![anycond("zone1", "type")]),
-                anyzone("zone2", 3, &vec![]),
+            &[
+                anyzone("zone1", 2, &[anycond("zone1", "type")]),
+                anyzone("zone2", 3, &[]),
             ],
         );
 
@@ -959,28 +959,28 @@ pub mod tests {
         assert_eq!(
             MergeResult::Update { object: expected },
             strategy
-                .mesh_update(current.into(), incoming, &"zone2", &"zone1")
+                .mesh_update(current.into(), incoming, "zone2", "zone1")
                 .unwrap()
         );
     }
 
     #[test]
     pub fn local_update_create_non_existing() {
-        let incoming = make_anyapplication_with_conditions(1, 1, "zone1", 0, &vec![]);
+        let incoming = make_anyapplication_with_conditions(1, 1, "zone1", 0, &[]);
 
         assert_eq!(
             UpdateResult::Create {
                 object: incoming.clone()
             },
             AnyApplicationMerge::new()
-                .local_update(VersionedObject::NonExisting, incoming, 1, &"zone1")
+                .local_update(VersionedObject::NonExisting, incoming, 1, "zone1")
                 .unwrap()
         );
     }
 
     #[test]
     pub fn local_update_create_tombstone() {
-        let incoming = make_anyapplication_with_conditions(1, 1, "zone1", 0, &vec![]);
+        let incoming = make_anyapplication_with_conditions(1, 1, "zone1", 0, &[]);
         let existing = VersionedObject::Tombstone(0, "zone1".into());
 
         assert_eq!(
@@ -988,42 +988,42 @@ pub mod tests {
                 object: incoming.clone()
             },
             AnyApplicationMerge::new()
-                .local_update(existing, incoming, 1, &"zone1")
+                .local_update(existing, incoming, 1, "zone1")
                 .unwrap()
         );
     }
 
     #[test]
     pub fn local_update_skip_create_tombstone_is_newer() {
-        let incoming = make_anyapplication_with_conditions(1, 1, "zone1", 0, &vec![]);
+        let incoming = make_anyapplication_with_conditions(1, 1, "zone1", 0, &[]);
         let existing = VersionedObject::Tombstone(2, "zone1".into());
 
         assert_eq!(
             UpdateResult::Skip,
             AnyApplicationMerge::new()
-                .local_update(existing, incoming, 1, &"zone1")
+                .local_update(existing, incoming, 1, "zone1")
                 .unwrap()
         );
     }
 
     #[test]
     pub fn local_update_skip_old_version() {
-        let incoming = make_anyapplication_with_conditions(1, 1, "zone1", 0, &vec![]);
+        let incoming = make_anyapplication_with_conditions(1, 1, "zone1", 0, &[]);
 
-        let existing = make_anyapplication_with_conditions(2, 2, "zone1", 0, &vec![]);
+        let existing = make_anyapplication_with_conditions(2, 2, "zone1", 0, &[]);
 
         assert_eq!(
             UpdateResult::Skip,
             AnyApplicationMerge::new()
-                .local_update(existing.into(), incoming, 1, &"zone1")
+                .local_update(existing.into(), incoming, 1, "zone1")
                 .unwrap()
         );
     }
 
     #[test]
     pub fn local_update_incoming_has_diff() {
-        let incoming = make_anyapplication_with_conditions(1, 2, "zone1", 2, &vec![]);
-        let existing = make_anyapplication_with_conditions(1, 1, "zone1", 0, &vec![]);
+        let incoming = make_anyapplication_with_conditions(1, 2, "zone1", 2, &[]);
+        let existing = make_anyapplication_with_conditions(1, 1, "zone1", 0, &[]);
 
         let mut expected = incoming.clone();
         expected.set_owner_version(2);
@@ -1031,7 +1031,7 @@ pub mod tests {
         assert_eq!(
             UpdateResult::Update { object: expected },
             AnyApplicationMerge::new()
-                .local_update(existing.into(), incoming, 2, &"zone1")
+                .local_update(existing.into(), incoming, 2, "zone1")
                 .unwrap()
         );
     }
@@ -1047,7 +1047,7 @@ pub mod tests {
                 owner_zone: "zone1".into()
             },
             AnyApplicationMerge::new()
-                .local_delete(VersionedObject::NonExisting, incoming, 2, &"zone1")
+                .local_delete(VersionedObject::NonExisting, incoming, 2, "zone1")
                 .unwrap()
         );
     }
@@ -1064,7 +1064,7 @@ pub mod tests {
                 owner_zone: "zone1".into()
             },
             AnyApplicationMerge::new()
-                .local_delete(existing, incoming, 2, &"zone1")
+                .local_delete(existing, incoming, 2, "zone1")
                 .unwrap()
         );
     }
@@ -1081,15 +1081,15 @@ pub mod tests {
                 owner_zone: "zone1".into()
             },
             AnyApplicationMerge::new()
-                .local_delete(existing, incoming, 2, &"zone1")
+                .local_delete(existing, incoming, 2, "zone1")
                 .unwrap()
         );
     }
 
     #[test]
     pub fn local_delete_incoming_resource_version_greater() {
-        let current = make_anyapplication_with_conditions(1, 1, "zone1", 1, &vec![]);
-        let incoming = make_anyapplication_with_conditions(1, 2, "zone1", 1, &vec![]);
+        let current = make_anyapplication_with_conditions(1, 1, "zone1", 1, &[]);
+        let incoming = make_anyapplication_with_conditions(1, 2, "zone1", 1, &[]);
 
         let mut expected = incoming.clone();
         expected.set_owner_version(2);
@@ -1101,7 +1101,7 @@ pub mod tests {
                 owner_zone: "zone1".into()
             },
             AnyApplicationMerge::new()
-                .local_delete(current.into(), incoming, 2, &"zone1")
+                .local_delete(current.into(), incoming, 2, "zone1")
                 .unwrap()
         );
     }
@@ -1113,9 +1113,9 @@ pub mod tests {
             1,
             "zone1",
             1,
-            &vec![
-                anyzone("zone1", 2, &vec![anycond("zone1", "type")]),
-                anyzone("zone2", 3, &vec![anycond("zone2", "type")]),
+            &[
+                anyzone("zone1", 2, &[anycond("zone1", "type")]),
+                anyzone("zone2", 3, &[anycond("zone2", "type")]),
             ],
         );
         let incoming = make_anyapplication_with_conditions(
@@ -1123,13 +1123,9 @@ pub mod tests {
             1,
             "zone1",
             1,
-            &vec![
-                anyzone("zone1", 2, &vec![anycond("zone1", "type")]),
-                anyzone(
-                    "zone2",
-                    4,
-                    &vec![anycond_status("zone2", "type", "updated")],
-                ),
+            &[
+                anyzone("zone1", 2, &[anycond("zone1", "type")]),
+                anyzone("zone2", 4, &[anycond_status("zone2", "type", "updated")]),
             ],
         );
 
@@ -1138,13 +1134,9 @@ pub mod tests {
             5,
             "zone1",
             1,
-            &vec![
-                anyzone("zone1", 2, &vec![anycond("zone1", "type")]),
-                anyzone(
-                    "zone2",
-                    4,
-                    &vec![anycond_status("zone2", "type", "updated")],
-                ),
+            &[
+                anyzone("zone1", 2, &[anycond("zone1", "type")]),
+                anyzone("zone2", 4, &[anycond_status("zone2", "type", "updated")]),
             ],
         );
 
@@ -1152,7 +1144,7 @@ pub mod tests {
         assert_eq!(
             UpdateResult::Update { object: expected },
             strategy
-                .local_update(current.into(), incoming, 5, &"zone2")
+                .local_update(current.into(), incoming, 5, "zone2")
                 .unwrap()
         );
     }
@@ -1164,16 +1156,16 @@ pub mod tests {
             1,
             "zone1",
             0,
-            &vec![anyzone("zone1", 2, &vec![anycond("zone1", "type")])],
+            &[anyzone("zone1", 2, &[anycond("zone1", "type")])],
         );
         let incoming = make_anyapplication_with_conditions(
             1,
             1,
             "zone1",
             1,
-            &vec![
-                anyzone("zone1", 3, &vec![anycond("zone1", "type")]),
-                anyzone("zone2", 4, &vec![anycond("zone2", "type")]),
+            &[
+                anyzone("zone1", 3, &[anycond("zone1", "type")]),
+                anyzone("zone2", 4, &[anycond("zone2", "type")]),
             ],
         );
 
@@ -1182,9 +1174,9 @@ pub mod tests {
             5,
             "zone1",
             0,
-            &vec![
-                anyzone("zone1", 3, &vec![anycond("zone1", "type")]),
-                anyzone("zone2", 4, &vec![anycond("zone2", "type")]),
+            &[
+                anyzone("zone1", 3, &[anycond("zone1", "type")]),
+                anyzone("zone2", 4, &[anycond("zone2", "type")]),
             ],
         );
 
@@ -1192,7 +1184,7 @@ pub mod tests {
         assert_eq!(
             UpdateResult::Update { object: expected },
             strategy
-                .local_update(current.into(), incoming, 5, &"zone2")
+                .local_update(current.into(), incoming, 5, "zone2")
                 .unwrap()
         );
     }
@@ -1204,9 +1196,9 @@ pub mod tests {
             1,
             "zone1",
             0,
-            &vec![
-                anyzone("zone1", 2, &vec![anycond("zone1", "type")]),
-                anyzone("zone2", 3, &vec![anycond("zone2", "type")]),
+            &[
+                anyzone("zone1", 2, &[anycond("zone1", "type")]),
+                anyzone("zone2", 3, &[anycond("zone2", "type")]),
             ],
         );
 
@@ -1215,9 +1207,9 @@ pub mod tests {
             1,
             "zone1",
             1,
-            &vec![
-                anyzone("zone1", 2, &vec![anycond("zone1", "type")]),
-                anyzone("zone2", 4, &vec![]),
+            &[
+                anyzone("zone1", 2, &[anycond("zone1", "type")]),
+                anyzone("zone2", 4, &[]),
             ],
         );
 
@@ -1226,9 +1218,9 @@ pub mod tests {
             4,
             "zone1",
             0,
-            &vec![
-                anyzone("zone1", 2, &vec![anycond("zone1", "type")]),
-                anyzone("zone2", 4, &vec![]),
+            &[
+                anyzone("zone1", 2, &[anycond("zone1", "type")]),
+                anyzone("zone2", 4, &[]),
             ],
         );
 
@@ -1236,7 +1228,7 @@ pub mod tests {
         assert_eq!(
             UpdateResult::Update { object: expected },
             strategy
-                .local_update(current.into(), incoming, 4, &"zone2")
+                .local_update(current.into(), incoming, 4, "zone2")
                 .unwrap()
         );
     }

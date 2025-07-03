@@ -68,9 +68,9 @@ pub enum VersionedObject {
     Tombstone(Version, String), // TODO add delete timestamp
 }
 
-impl Into<VersionedObject> for DynamicObject {
-    fn into(self) -> VersionedObject {
-        VersionedObject::Object(self)
+impl From<DynamicObject> for VersionedObject {
+    fn from(val: DynamicObject) -> Self {
+        VersionedObject::Object(val)
     }
 }
 

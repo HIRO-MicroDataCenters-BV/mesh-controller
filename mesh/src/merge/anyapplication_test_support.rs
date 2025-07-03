@@ -39,7 +39,7 @@ pub mod tests {
                 },
                 placement_strategy: None,
                 recover_strategy: None,
-                zones: zones,
+                zones,
             },
             status: Some(AnyApplicationStatus {
                 zones: None,
@@ -93,7 +93,7 @@ pub mod tests {
                 },
                 placement_strategy: None,
                 recover_strategy: None,
-                zones: zones,
+                zones,
             },
             status: Some(AnyApplicationStatus {
                 zones: Some(zones_statuses.into()),
@@ -178,7 +178,7 @@ pub mod tests {
         zones: Option<Vec<AnyApplicationStatusZones>>,
     ) -> AnyApplicationStatus {
         AnyApplicationStatus {
-            zones: zones,
+            zones,
             owner: owner_zone.into(),
             placements: Some(placements),
             state: "New".into(),
@@ -199,7 +199,7 @@ pub mod tests {
             },
             placement_strategy: None,
             recover_strategy: None,
-            zones: zones,
+            zones,
         }
     }
 }

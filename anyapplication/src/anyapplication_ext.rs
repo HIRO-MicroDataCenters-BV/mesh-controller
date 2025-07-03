@@ -111,9 +111,7 @@ impl AnyApplicationExt for AnyApplication {
     }
 
     fn is_owned_zone(&self, incoming_zone: &str) -> bool {
-        let is_owned_zone =
-            self.get_owner_zone() == incoming_zone || self.get_owner_zone() == "unknown";
-        is_owned_zone
+        self.get_owner_zone() == incoming_zone || self.get_owner_zone() == "unknown"
     }
 }
 
