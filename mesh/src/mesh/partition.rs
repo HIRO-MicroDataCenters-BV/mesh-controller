@@ -4,7 +4,10 @@ use std::{
 };
 
 use super::event::MeshEvent;
-use crate::{kube::subscriptions::Version, merge::types::VersionedObject};
+use crate::{
+    kube::subscriptions::Version,
+    merge::types::{Tombstone, VersionedObject},
+};
 use crate::{
     kube::{dynamic_object_ext::DynamicObjectExt, event::KubeEvent, types::NamespacedName},
     merge::types::{MergeResult, MergeStrategy, UpdateResult},
@@ -109,7 +112,7 @@ impl Partition {
                             self.mesh_update_partition(&result);
                             results.push(result);
                         }
-                        VersionedObject::NonExisting | VersionedObject::Tombstone(_, _) => {
+                        VersionedObject::NonExisting | VersionedObject::Tombstone(_) => {
                             // Nothing to do since the object is does not exist in destination repository
                         }
                     }
@@ -143,26 +146,18 @@ impl Partition {
                     VersionedObject::Object(object.clone()),
                 );
             }
-            MergeResult::Delete {
-                gvk: _,
-                name,
-                owner_version,
-                owner_zone,
-                ..
-            } => {
+            MergeResult::Delete(tombstone) => {
+                let tombstone = tombstone.to_owned();
                 self.resources.insert(
-                    name.to_owned(),
-                    VersionedObject::Tombstone(*owner_version, owner_zone.clone()),
+                    tombstone.name.to_owned(),
+                    VersionedObject::Tombstone(tombstone),
                 );
             }
-            MergeResult::Tombstone {
-                name,
-                owner_version,
-                owner_zone,
-            } => {
+            MergeResult::Tombstone(tombstone) => {
+                let tombstone = tombstone.to_owned();
                 self.resources.insert(
-                    name.to_owned(),
-                    VersionedObject::Tombstone(*owner_version, owner_zone.clone()),
+                    tombstone.name.to_owned(),
+                    VersionedObject::Tombstone(tombstone),
                 );
             }
             MergeResult::Skip => {}
@@ -319,6 +314,7 @@ impl Partition {
                         .collect();
 
                     // Inserting tombstone if partition has object absent in snapshot
+                    // TODO snapshot test
                     for name in owned_by_current_zone_not_in_snapshot {
                         match self
                             .resources
@@ -326,18 +322,22 @@ impl Partition {
                             .unwrap_or(&VersionedObject::NonExisting)
                         {
                             VersionedObject::Object(object) => {
+                                let resource_version = object.get_resource_version();
                                 let owner_version = object
                                     .get_owner_version()
-                                    .expect("owner version is not available");
-                                self.resources.insert(
-                                    name.to_owned(),
-                                    VersionedObject::Tombstone(
-                                        owner_version,
-                                        current_zone.to_owned(),
-                                    ),
-                                );
+                                    .unwrap_or_else(|| object.get_resource_version());
+                                let tombstone = Tombstone {
+                                    gvk: object.get_gvk()?,
+                                    name: name.to_owned(),
+                                    owner_version,
+                                    owner_zone: current_zone.to_owned(),
+                                    resource_version,
+                                    deletion_timestamp: 0, // TODO now
+                                };
+                                self.resources
+                                    .insert(name.to_owned(), VersionedObject::Tombstone(tombstone));
                             }
-                            VersionedObject::NonExisting | VersionedObject::Tombstone(_, _) => (),
+                            VersionedObject::NonExisting | VersionedObject::Tombstone(_) => (),
                         }
                     }
 
@@ -372,24 +372,18 @@ impl Partition {
                     VersionedObject::Object(object.clone()),
                 );
             }
-            UpdateResult::Delete {
-                object,
-                owner_version,
-                owner_zone,
-            } => {
+            UpdateResult::Delete { object, tombstone } => {
+                let tombstone = tombstone.to_owned();
                 self.resources.insert(
                     object.get_namespaced_name(),
-                    VersionedObject::Tombstone(*owner_version, owner_zone.to_owned()),
+                    VersionedObject::Tombstone(tombstone),
                 );
             }
-            UpdateResult::Tombstone {
-                name,
-                owner_version,
-                owner_zone,
-            } => {
+            UpdateResult::Tombstone(tombstone) => {
+                let tombstone = tombstone.to_owned();
                 self.resources.insert(
-                    name.to_owned(),
-                    VersionedObject::Tombstone(*owner_version, owner_zone.to_owned()),
+                    tombstone.name.to_owned(),
+                    VersionedObject::Tombstone(tombstone),
                 );
             }
             UpdateResult::Snapshot { .. } => {
@@ -400,15 +394,16 @@ impl Partition {
         Ok(())
     }
 
-    pub fn update_version(&mut self, name: &NamespacedName, version: Version) {
+    pub fn update_resource_version(&mut self, name: &NamespacedName, version: Version) {
         if let Some(object) = self.resources.get_mut(name) {
             match object {
                 VersionedObject::Object(object) => {
                     object.set_resource_version(version);
                 }
-                // TODO owner_version and resource_version
-                VersionedObject::Tombstone(current_version, _) => {
-                    *current_version = version;
+                VersionedObject::Tombstone(Tombstone {
+                    resource_version, ..
+                }) => {
+                    *resource_version = version;
                 }
                 _ => (),
             }
@@ -420,7 +415,7 @@ impl Partition {
             .get(name)
             .map(|v| match v {
                 VersionedObject::Object(obj) => Some(obj.to_owned()),
-                VersionedObject::NonExisting | VersionedObject::Tombstone(_, _) => None,
+                VersionedObject::NonExisting | VersionedObject::Tombstone(_) => None,
             })
             .unwrap_or_default()
     }
@@ -446,7 +441,7 @@ pub mod tests {
         merge::{
             anyapplication_strategy::AnyApplicationMerge,
             anyapplication_test_support::tests::{anycond, anyplacements, anyspec},
-            types::MergeResult,
+            types::{MergeResult, Tombstone},
         },
         mesh::{event::MeshEvent, partition::Partition},
     };
@@ -876,7 +871,7 @@ pub mod tests {
                 .set_resource_version(controller.resource_version);
             let name = controller.get_namespaced_name();
             self.partition_a
-                .update_version(&name, controller.resource_version);
+                .update_resource_version(&name, controller.resource_version);
         }
 
         pub fn post_merge_update_version_b(&mut self, controller: &mut AnyApplicationStore) {
@@ -885,7 +880,7 @@ pub mod tests {
                 .set_resource_version(controller.resource_version);
             let version = controller.resource_version;
             let name = controller.get_namespaced_name();
-            self.partition_b.update_version(&name, version);
+            self.partition_b.update_resource_version(&name, version);
         }
     }
 
@@ -1162,13 +1157,14 @@ pub mod tests {
                 .get_owner_version()
                 .expect("owner version is expected");
             let object = self.object();
-            MergeResult::Delete {
+            MergeResult::Delete(Tombstone {
                 gvk: object.get_gvk().unwrap(),
                 name: object.get_namespaced_name(),
                 owner_version,
                 owner_zone: self.zone.clone(),
                 resource_version: self.resource_version,
-            }
+                deletion_timestamp: 0,
+            })
         }
 
         fn inc_version(&mut self) -> Version {

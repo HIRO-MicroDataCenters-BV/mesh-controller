@@ -9,6 +9,7 @@ use crate::kube::subscriptions::Subscriptions;
 use crate::kube::subscriptions::Version;
 use crate::kube::types::NamespacedName;
 use crate::merge::types::MergeResult;
+use crate::merge::types::Tombstone;
 use crate::mesh::event::MeshEvent;
 use crate::mesh::operation_log::OperationLog;
 use crate::mesh::operation_log::Ready;
@@ -191,12 +192,12 @@ impl MeshActor {
             MergeResult::Create { object } | MergeResult::Update { object } => {
                 return self.kube_patch_apply(object).await;
             }
-            MergeResult::Delete {
+            MergeResult::Delete(Tombstone {
                 gvk,
                 name,
                 resource_version,
                 ..
-            } => {
+            }) => {
                 return self.kube_delete(&gvk, &name, resource_version).await;
             }
             MergeResult::Skip | MergeResult::Tombstone { .. } => (),
@@ -229,7 +230,7 @@ impl MeshActor {
 
         match ok_or_error {
             Ok(new_version) => {
-                self.partition.update_version(&name, new_version);
+                self.partition.update_resource_version(&name, new_version);
                 Ok(PersistenceResult::Persisted)
             }
             Err(ClientError::VersionConflict) => {
@@ -290,12 +291,14 @@ impl MeshActor {
                 if let Err(err) = self.on_event(event).await {
                     error!("on_event error during forced sync {err}");
                 }
-                self.partition.update_version(&name, version);
+                self.partition.update_resource_version(&name, version);
                 if let Some(current) = self.partition.get(&name) {
-                    let version = current.get_resource_version();
                     let persistence_result = match operation_type {
                         OperationType::Update => self.kube_patch_apply(current).await?,
-                        OperationType::Delete => self.kube_delete(&gvk, &name, version).await?,
+                        OperationType::Delete => {
+                            self.kube_delete(&gvk, &name, current.get_resource_version())
+                                .await?
+                        }
                     };
                     let PersistenceResult::Conflict { .. } = persistence_result else {
                         return Ok(());
@@ -307,7 +310,7 @@ impl MeshActor {
             }
         }
         warn!(
-            "Conflicts: Number of attempts is exhausted while updating object {}",
+            "Conflicts: Number of attempts (10) is exhausted while updating object {}",
             name
         );
         Ok(())

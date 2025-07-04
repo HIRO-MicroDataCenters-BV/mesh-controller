@@ -14,7 +14,8 @@ pub trait DynamicObjectExt {
     fn get_gvk(&self) -> Result<GroupVersionKind>;
     fn get_namespaced_name(&self) -> NamespacedName;
     fn get_first_item_or_fail(&self) -> Result<Option<DynamicObject>>;
-    fn get_owner_version(&self) -> Result<Version>;
+    fn get_owner_version_or_fail(&self) -> Result<Version>;
+    fn get_owner_version(&self) -> Option<Version>;
     fn set_owner_version(&mut self, version: Version);
     fn get_owner_zone(&self) -> Result<String>;
     fn set_owner_zone(&mut self, zone: String);
@@ -86,7 +87,7 @@ impl DynamicObjectExt for DynamicObject {
         }
     }
 
-    fn get_owner_version(&self) -> Result<Version> {
+    fn get_owner_version_or_fail(&self) -> Result<Version> {
         self.metadata
             .labels
             .as_ref()
@@ -112,6 +113,12 @@ impl DynamicObjectExt for DynamicObject {
             .get(OWNER_ZONE)
             .cloned()
             .ok_or(anyhow!("{} label not set", OWNER_ZONE))
+    }
+
+    fn get_owner_version(&self) -> Option<Version> {
+        let labels = self.metadata.labels.as_ref()?;
+        let version_str = labels.get(OWNER_VERSION)?;
+        version_str.parse::<Version>().map(Some).unwrap_or_default()
     }
 
     fn set_owner_zone(&mut self, zone: String) {

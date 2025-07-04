@@ -1,7 +1,7 @@
 use super::types::{MergeResult, MergeStrategy, UpdateResult};
 use crate::{
     kube::{dynamic_object_ext::DynamicObjectExt, subscriptions::Version},
-    merge::types::VersionedObject,
+    merge::types::{Tombstone, VersionedObject},
 };
 use anyhow::Result;
 use kube::api::{DynamicObject, GroupVersionKind, TypeMeta};
@@ -23,8 +23,8 @@ impl MergeStrategy for DefaultMerge {
                 self.mesh_update_update(current, incoming, incoming_zone)
             }
             VersionedObject::NonExisting => self.mesh_update_create(incoming, incoming_zone),
-            VersionedObject::Tombstone(current_owner_version, ..) => {
-                self.mesh_update_tombstone(current_owner_version, incoming, incoming_zone)
+            VersionedObject::Tombstone(tombstone) => {
+                self.mesh_update_tombstone(tombstone.owner_version, incoming, incoming_zone)
             }
         }
     }
@@ -36,33 +36,40 @@ impl MergeStrategy for DefaultMerge {
         incoming_zone: &str,
     ) -> Result<MergeResult> {
         let incoming_owner_zone = incoming.get_owner_zone()?;
-        let incoming_owner_version = incoming.get_owner_version()?;
+        let incoming_owner_version = incoming.get_owner_version_or_fail()?;
         let acceptable_zone = incoming_owner_zone == incoming_zone;
         if !acceptable_zone {
             return Ok(MergeResult::Skip);
         }
 
         match current {
-            VersionedObject::Object(current) => Ok(MergeResult::Delete {
+            VersionedObject::Object(current) => Ok(MergeResult::Delete(Tombstone {
                 gvk: self.gvk.to_owned(),
                 name: incoming.get_namespaced_name(),
                 owner_version: incoming_owner_version,
                 owner_zone: incoming_owner_zone,
                 resource_version: current.get_resource_version(),
-            }),
-            VersionedObject::NonExisting => Ok(MergeResult::Tombstone {
+                deletion_timestamp: 0,
+            })),
+            VersionedObject::NonExisting => Ok(MergeResult::Tombstone(Tombstone {
+                gvk: self.gvk.to_owned(),
                 name: incoming.get_namespaced_name(),
                 owner_version: incoming_owner_version,
                 owner_zone: incoming_owner_zone,
-            }),
-            VersionedObject::Tombstone(owner_version, owner_zone) => {
-                if owner_zone == incoming_zone {
-                    let version = Version::max(owner_version, incoming_owner_version);
-                    Ok(MergeResult::Tombstone {
+                resource_version: 0,
+                deletion_timestamp: 0, // TODO now
+            })),
+            VersionedObject::Tombstone(tombstone) => {
+                if tombstone.owner_zone == incoming_zone {
+                    let version = Version::max(tombstone.owner_version, incoming_owner_version);
+                    Ok(MergeResult::Tombstone(Tombstone {
+                        gvk: self.gvk.to_owned(),
                         name: incoming.get_namespaced_name(),
                         owner_version: version,
                         owner_zone: incoming_owner_zone,
-                    })
+                        resource_version: tombstone.resource_version,
+                        deletion_timestamp: tombstone.deletion_timestamp,
+                    }))
                 } else {
                     Ok(MergeResult::Skip)
                 }
@@ -102,8 +109,8 @@ impl MergeStrategy for DefaultMerge {
                 incoming.set_owner_zone(incoming_zone.into());
                 Ok(UpdateResult::Create { object: incoming })
             }
-            VersionedObject::Tombstone(current_owner_version, _) => {
-                if current_owner_version >= incoming_resource_version {
+            VersionedObject::Tombstone(tombstone) => {
+                if tombstone.owner_version >= incoming_resource_version {
                     return Ok(UpdateResult::Skip);
                 }
                 incoming.set_owner_version(incoming_resource_version);
@@ -135,23 +142,35 @@ impl MergeStrategy for DefaultMerge {
                 incoming.set_owner_version(incoming_version);
                 incoming.set_owner_zone(incoming_zone.into());
                 Ok(UpdateResult::Delete {
+                    tombstone: Tombstone {
+                        gvk: self.gvk.to_owned(),
+                        name,
+                        owner_version: incoming_version,
+                        owner_zone: incoming_zone.into(),
+                        resource_version: incoming_version,
+                        deletion_timestamp: 0, // TODO  now
+                    },
                     object: incoming,
-                    owner_version: incoming_version,
-                    owner_zone: incoming_zone.into(),
                 })
             }
-            VersionedObject::NonExisting => Ok(UpdateResult::Tombstone {
+            VersionedObject::NonExisting => Ok(UpdateResult::Tombstone(Tombstone {
+                gvk: self.gvk.to_owned(),
                 name,
                 owner_version: incoming_version,
-                owner_zone: incoming_zone.to_owned(),
-            }),
-            VersionedObject::Tombstone(owner_version, _owner_zone) => {
-                let max_version = Version::max(owner_version, incoming_version);
-                Ok(UpdateResult::Tombstone {
+                owner_zone: incoming_zone.into(),
+                resource_version: incoming_version,
+                deletion_timestamp: 0, // TODO  now
+            })),
+            VersionedObject::Tombstone(tombstone) => {
+                let max_version = Version::max(tombstone.owner_version, incoming_version);
+                Ok(UpdateResult::Tombstone(Tombstone {
+                    gvk: self.gvk.to_owned(),
                     name,
                     owner_version: max_version,
                     owner_zone: incoming_zone.to_owned(),
-                })
+                    resource_version: tombstone.resource_version,
+                    deletion_timestamp: 0, // TODO now
+                }))
             }
         }
     }
@@ -160,7 +179,7 @@ impl MergeStrategy for DefaultMerge {
         match current {
             VersionedObject::Object(current) => self.is_owner_zone_object(current, zone),
             VersionedObject::NonExisting => false,
-            VersionedObject::Tombstone(_, owner_zone) => owner_zone == zone,
+            VersionedObject::Tombstone(tombstone) => tombstone.owner_zone == zone,
         }
     }
 
@@ -180,9 +199,9 @@ impl DefaultMerge {
         incoming: DynamicObject,
         incoming_zone: &str,
     ) -> Result<MergeResult> {
-        let current_owner_version = current.get_owner_version()?;
+        let current_owner_version = current.get_owner_version_or_fail()?;
 
-        let incoming_owner_version = incoming.get_owner_version()?;
+        let incoming_owner_version = incoming.get_owner_version_or_fail()?;
         let incoming_owner_zone = incoming.get_owner_zone()?;
 
         let acceptable_zone = incoming_owner_zone == incoming_zone;
@@ -230,7 +249,7 @@ impl DefaultMerge {
         incoming: DynamicObject,
         incoming_zone: &str,
     ) -> Result<MergeResult> {
-        let incoming_owner_version = incoming.get_owner_version()?;
+        let incoming_owner_version = incoming.get_owner_version_or_fail()?;
         let incoming_owner_zone = incoming.get_owner_zone()?;
         let acceptable_zone = incoming_owner_zone == incoming_zone;
 
@@ -275,7 +294,14 @@ pub mod tests {
     pub fn mesh_update_tombstone_create() {
         let gvk = GroupVersionKind::gvk("", "v1", "Secret");
         let incoming = make_object("test", 2, "value");
-        let existing = VersionedObject::Tombstone(1, "test".into());
+        let existing = VersionedObject::Tombstone(Tombstone {
+            gvk: gvk.to_owned(),
+            name: incoming.get_namespaced_name(),
+            owner_version: 1,
+            owner_zone: "test".into(),
+            resource_version: 0,
+            deletion_timestamp: 0,
+        });
 
         assert_eq!(
             MergeResult::Create {
@@ -291,7 +317,14 @@ pub mod tests {
     pub fn mesh_update_tombstone_skip_create_if_obsolete() {
         let gvk = GroupVersionKind::gvk("", "v1", "Secret");
         let incoming = make_object("test", 2, "value");
-        let existing = VersionedObject::Tombstone(3, "test".into());
+        let existing = VersionedObject::Tombstone(Tombstone {
+            gvk: gvk.to_owned(),
+            name: incoming.get_namespaced_name(),
+            owner_version: 3,
+            owner_zone: "test".into(),
+            resource_version: 0,
+            deletion_timestamp: 0,
+        });
 
         assert_eq!(
             MergeResult::Skip,
@@ -364,11 +397,14 @@ pub mod tests {
         let incoming = make_object("test", 1, "value");
 
         assert_eq!(
-            MergeResult::Tombstone {
+            MergeResult::Tombstone(Tombstone {
+                gvk: gvk.to_owned(),
                 name: incoming.get_namespaced_name(),
                 owner_version: 1,
-                owner_zone: "test".into()
-            },
+                owner_zone: "test".into(),
+                resource_version: 0,
+                deletion_timestamp: 0
+            }),
             DefaultMerge::new(gvk)
                 .mesh_delete(VersionedObject::NonExisting, incoming, "test")
                 .unwrap()
@@ -379,14 +415,24 @@ pub mod tests {
     pub fn mesh_delete_tombstone_skip_if_already_deleted() {
         let gvk = GroupVersionKind::gvk("", "v1", "Secret");
         let incoming = make_object("test", 2, "value");
-        let existing = VersionedObject::Tombstone(1, "test".into());
+        let existing = VersionedObject::Tombstone(Tombstone {
+            gvk: gvk.to_owned(),
+            name: incoming.get_namespaced_name(),
+            owner_version: 1,
+            owner_zone: "test".into(),
+            resource_version: 5,
+            deletion_timestamp: 0,
+        });
 
         assert_eq!(
-            MergeResult::Tombstone {
+            MergeResult::Tombstone(Tombstone {
+                gvk: gvk.to_owned(),
                 name: incoming.get_namespaced_name(),
                 owner_version: 2,
-                owner_zone: "test".into()
-            },
+                owner_zone: "test".into(),
+                resource_version: 5,
+                deletion_timestamp: 0,
+            }),
             DefaultMerge::new(gvk)
                 .mesh_delete(existing, incoming, "test")
                 .unwrap()
@@ -397,14 +443,24 @@ pub mod tests {
     pub fn mesh_delete_tombstone_skip_if_obsolete() {
         let gvk = GroupVersionKind::gvk("", "v1", "Secret");
         let incoming = make_object("test", 2, "value");
-        let existing = VersionedObject::Tombstone(3, "test".into());
+        let existing = VersionedObject::Tombstone(Tombstone {
+            gvk: gvk.to_owned(),
+            name: incoming.get_namespaced_name(),
+            owner_version: 3,
+            owner_zone: "test".into(),
+            resource_version: 5,
+            deletion_timestamp: 0,
+        });
 
         assert_eq!(
-            MergeResult::Tombstone {
+            MergeResult::Tombstone(Tombstone {
+                gvk: gvk.to_owned(),
                 name: incoming.get_namespaced_name(),
                 owner_version: 3,
-                owner_zone: "test".into()
-            },
+                owner_zone: "test".into(),
+                resource_version: 5,
+                deletion_timestamp: 0,
+            }),
             DefaultMerge::new(gvk)
                 .mesh_delete(existing, incoming, "test")
                 .unwrap()
@@ -419,13 +475,14 @@ pub mod tests {
         current.set_resource_version(10);
 
         assert_eq!(
-            MergeResult::Delete {
+            MergeResult::Delete(Tombstone {
                 gvk: gvk.to_owned(),
                 name: incoming.get_namespaced_name(),
                 owner_version: 1,
                 owner_zone: "test".into(),
                 resource_version: 10,
-            },
+                deletion_timestamp: 0,
+            }),
             DefaultMerge::new(gvk)
                 .mesh_delete(current.into(), incoming, "test")
                 .unwrap()
@@ -440,13 +497,14 @@ pub mod tests {
         current.set_resource_version(10);
 
         assert_eq!(
-            MergeResult::Delete {
+            MergeResult::Delete(Tombstone {
                 gvk: incoming.get_gvk().unwrap(),
                 name: current.get_namespaced_name(),
                 owner_version: 2,
                 owner_zone: "test".into(),
                 resource_version: 10,
-            },
+                deletion_timestamp: 0,
+            }),
             DefaultMerge::new(gvk)
                 .mesh_delete(current.into(), incoming, "test")
                 .unwrap()
@@ -454,7 +512,7 @@ pub mod tests {
     }
 
     #[test]
-    pub fn local_update_create_non_existing() {
+    pub fn kube_update_create_non_existing() {
         let gvk = GroupVersionKind::gvk("", "v1", "Secret");
         let incoming = make_object("test", 2, "value");
 
@@ -469,10 +527,18 @@ pub mod tests {
     }
 
     #[test]
-    pub fn local_update_create_tombstone_is_old() {
+    pub fn kube_update_create_tombstone_is_old() {
         let gvk = GroupVersionKind::gvk("", "v1", "Secret");
         let incoming = make_object("test", 2, "value");
-        let existing = VersionedObject::Tombstone(1, "test".into());
+
+        let existing = VersionedObject::Tombstone(Tombstone {
+            gvk: gvk.to_owned(),
+            name: incoming.get_namespaced_name(),
+            owner_version: 1,
+            owner_zone: "test".into(),
+            resource_version: 5,
+            deletion_timestamp: 0,
+        });
 
         assert_eq!(
             UpdateResult::Create {
@@ -485,7 +551,7 @@ pub mod tests {
     }
 
     #[test]
-    pub fn local_update_skip_versions_equal() {
+    pub fn kube_update_skip_versions_equal() {
         let gvk = GroupVersionKind::gvk("", "v1", "Secret");
         let incoming = make_object("test", 1, "value2");
         let mut existing = make_object("test", 1, "value1");
@@ -500,7 +566,7 @@ pub mod tests {
     }
 
     #[test]
-    pub fn local_update_skip_event_with_delete_timestamp() {
+    pub fn kube_update_skip_event_with_delete_timestamp() {
         let gvk = GroupVersionKind::gvk("", "v1", "Secret");
         let mut incoming = make_object("test", 2, "value2");
         let existing = make_object("test", 1, "value1");
@@ -516,7 +582,7 @@ pub mod tests {
     }
 
     #[test]
-    pub fn local_update_incoming_version_is_greater() {
+    pub fn kube_update_incoming_version_is_greater() {
         let gvk = GroupVersionKind::gvk("", "v1", "Secret");
         let incoming = make_object("test", 2, "value2");
         let mut existing = make_object("test", 1, "value1");
@@ -533,16 +599,19 @@ pub mod tests {
     }
 
     #[test]
-    pub fn local_delete_skip_non_existing() {
+    pub fn kube_delete_skip_non_existing() {
         let gvk = GroupVersionKind::gvk("", "v1", "Secret");
         let incoming = make_object("test", 2, "value");
 
         assert_eq!(
-            UpdateResult::Tombstone {
+            UpdateResult::Tombstone(Tombstone {
+                gvk: gvk.to_owned(),
                 name: incoming.get_namespaced_name(),
                 owner_version: 2,
-                owner_zone: "test".into()
-            },
+                owner_zone: "test".into(),
+                resource_version: 2,
+                deletion_timestamp: 0,
+            }),
             DefaultMerge::new(gvk)
                 .local_delete(VersionedObject::NonExisting, incoming, 2, "test")
                 .unwrap()
@@ -550,17 +619,27 @@ pub mod tests {
     }
 
     #[test]
-    pub fn local_delete_skip_if_tombstone() {
+    pub fn kube_delete_skip_if_tombstone() {
         let gvk = GroupVersionKind::gvk("", "v1", "Secret");
         let incoming = make_object("test", 2, "value");
-        let existing = VersionedObject::Tombstone(1, "test".into());
+        let existing = VersionedObject::Tombstone(Tombstone {
+            gvk: gvk.to_owned(),
+            name: incoming.get_namespaced_name(),
+            owner_version: 1,
+            owner_zone: "test".into(),
+            resource_version: 5,
+            deletion_timestamp: 0,
+        });
 
         assert_eq!(
-            UpdateResult::Tombstone {
+            UpdateResult::Tombstone(Tombstone {
+                gvk: gvk.to_owned(),
                 name: incoming.get_namespaced_name(),
                 owner_version: 2,
-                owner_zone: "test".into()
-            },
+                owner_zone: "test".into(),
+                resource_version: 5,
+                deletion_timestamp: 0,
+            }),
             DefaultMerge::new(gvk)
                 .local_delete(existing, incoming, 2, "test")
                 .unwrap()
@@ -568,7 +647,7 @@ pub mod tests {
     }
 
     #[test]
-    pub fn local_delete_incoming_version_greater() {
+    pub fn kube_delete_incoming_version_greater() {
         let gvk = GroupVersionKind::gvk("", "v1", "Secret");
         let incoming = make_object("test", 2, "value");
         let mut existing = make_object("test", 1, "value");
@@ -577,8 +656,14 @@ pub mod tests {
         assert_eq!(
             UpdateResult::Delete {
                 object: incoming.to_owned(),
-                owner_version: 2,
-                owner_zone: "test".into()
+                tombstone: Tombstone {
+                    gvk: gvk.to_owned(),
+                    name: incoming.get_namespaced_name(),
+                    owner_version: 2,
+                    owner_zone: "test".into(),
+                    resource_version: 2,
+                    deletion_timestamp: 0,
+                }
             },
             DefaultMerge::new(gvk)
                 .local_delete(existing.into(), incoming, 2, "test")
@@ -591,7 +676,8 @@ pub mod tests {
             "apiVersion": "v1",
             "kind": "Secret",
             "metadata": {
-                "name": "example"
+                "name": "example",
+                "namespace": "default"
             },
             "spec": {
                 "data": data,

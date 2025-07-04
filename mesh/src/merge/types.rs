@@ -7,24 +7,10 @@ use crate::kube::{subscriptions::Version, types::NamespacedName};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum MergeResult {
-    Create {
-        object: DynamicObject,
-    },
-    Update {
-        object: DynamicObject,
-    },
-    Delete {
-        gvk: GroupVersionKind,
-        name: NamespacedName,
-        owner_version: Version,
-        owner_zone: String,
-        resource_version: Version,
-    },
-    Tombstone {
-        name: NamespacedName,
-        owner_version: Version,
-        owner_zone: String,
-    },
+    Create { object: DynamicObject },
+    Update { object: DynamicObject },
+    Delete(Tombstone),
+    Tombstone(Tombstone),
     Skip,
 }
 
@@ -38,34 +24,30 @@ pub enum UpdateResult {
     },
     Delete {
         object: DynamicObject,
-        // TODO should contain tombstone
-        owner_version: Version,
-        owner_zone: String,
+        tombstone: Tombstone,
     },
     Snapshot {
         snapshot: BTreeMap<NamespacedName, DynamicObject>,
     },
-    Tombstone {
-        name: NamespacedName,
-        owner_version: Version,
-        owner_zone: String,
-    },
+    Tombstone(Tombstone),
     Skip,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Tombstone {
-    gvk: GroupVersionKind,
-    name: NamespacedName,
-    owner_version: Version,
-    owner_zone: String,
+    pub gvk: GroupVersionKind,
+    pub name: NamespacedName,
+    pub owner_version: Version,
+    pub owner_zone: String,
+    pub resource_version: Version,
+    pub deletion_timestamp: u64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum VersionedObject {
     NonExisting,
     Object(DynamicObject),
-    Tombstone(Version, String), // TODO add delete timestamp
+    Tombstone(Tombstone), // TODO add delete timestamp
 }
 
 impl From<DynamicObject> for VersionedObject {
@@ -75,6 +57,7 @@ impl From<DynamicObject> for VersionedObject {
 }
 
 pub trait MergeStrategy: Send + Sync {
+    // TODO rename to kube_*
     fn local_update(
         &self,
         current: VersionedObject,
