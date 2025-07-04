@@ -77,7 +77,7 @@ impl MergeStrategy for DefaultMerge {
         }
     }
 
-    fn local_update(
+    fn kube_update(
         &self,
         current: VersionedObject,
         mut incoming: DynamicObject,
@@ -120,7 +120,7 @@ impl MergeStrategy for DefaultMerge {
         }
     }
 
-    fn local_delete(
+    fn kube_delete(
         &self,
         current: VersionedObject,
         mut incoming: DynamicObject,
@@ -521,7 +521,7 @@ pub mod tests {
                 object: incoming.clone()
             },
             DefaultMerge::new(gvk)
-                .local_update(VersionedObject::NonExisting, incoming, 2, "test")
+                .kube_update(VersionedObject::NonExisting, incoming, 2, "test")
                 .unwrap()
         );
     }
@@ -545,7 +545,7 @@ pub mod tests {
                 object: incoming.clone()
             },
             DefaultMerge::new(gvk)
-                .local_update(existing, incoming, 2, "test")
+                .kube_update(existing, incoming, 2, "test")
                 .unwrap()
         );
     }
@@ -560,7 +560,7 @@ pub mod tests {
         assert_eq!(
             UpdateResult::Skip,
             DefaultMerge::new(gvk)
-                .local_update(existing.into(), incoming, 1, "test")
+                .kube_update(existing.into(), incoming, 1, "test")
                 .unwrap()
         );
     }
@@ -576,7 +576,7 @@ pub mod tests {
         assert_eq!(
             UpdateResult::Skip,
             DefaultMerge::new(gvk)
-                .local_update(existing.into(), incoming, 2, "test")
+                .kube_update(existing.into(), incoming, 2, "test")
                 .unwrap()
         );
     }
@@ -593,7 +593,7 @@ pub mod tests {
                 object: incoming.clone()
             },
             DefaultMerge::new(gvk)
-                .local_update(existing.into(), incoming, 2, "test")
+                .kube_update(existing.into(), incoming, 2, "test")
                 .unwrap()
         );
     }
@@ -613,7 +613,7 @@ pub mod tests {
                 deletion_timestamp: 0,
             }),
             DefaultMerge::new(gvk)
-                .local_delete(VersionedObject::NonExisting, incoming, 2, "test")
+                .kube_delete(VersionedObject::NonExisting, incoming, 2, "test")
                 .unwrap()
         );
     }
@@ -641,7 +641,7 @@ pub mod tests {
                 deletion_timestamp: 0,
             }),
             DefaultMerge::new(gvk)
-                .local_delete(existing, incoming, 2, "test")
+                .kube_delete(existing, incoming, 2, "test")
                 .unwrap()
         );
     }
@@ -666,7 +666,7 @@ pub mod tests {
                 }
             },
             DefaultMerge::new(gvk)
-                .local_delete(existing.into(), incoming, 2, "test")
+                .kube_delete(existing.into(), incoming, 2, "test")
                 .unwrap()
         );
     }

@@ -198,7 +198,7 @@ impl Partition {
                     .get(&name)
                     .cloned()
                     .unwrap_or(VersionedObject::NonExisting);
-                let result = self.merge_strategy.local_update(
+                let result = self.merge_strategy.kube_update(
                     current,
                     object.to_owned(),
                     *version,
@@ -216,7 +216,7 @@ impl Partition {
                     .get(&name)
                     .cloned()
                     .unwrap_or(VersionedObject::NonExisting);
-                let result = self.merge_strategy.local_delete(
+                let result = self.merge_strategy.kube_delete(
                     current,
                     object.to_owned(),
                     *version,
@@ -245,7 +245,7 @@ impl Partition {
                     let mut filtered_snapshot = BTreeMap::new();
                     for name in owned.into_iter() {
                         let object = snapshot.get(&name).unwrap();
-                        let result = self.merge_strategy.local_update(
+                        let result = self.merge_strategy.kube_update(
                             VersionedObject::NonExisting,
                             object.clone(),
                             *version,
@@ -287,7 +287,7 @@ impl Partition {
                         let object = snapshot
                             .get(name)
                             .expect("Invariant failure. expected object in snapshot");
-                        let result = self.merge_strategy.local_update(
+                        let result = self.merge_strategy.kube_update(
                             VersionedObject::NonExisting,
                             object.clone(),
                             *version,
@@ -314,7 +314,6 @@ impl Partition {
                         .collect();
 
                     // Inserting tombstone if partition has object absent in snapshot
-                    // TODO snapshot test
                     for name in owned_by_current_zone_not_in_snapshot {
                         match self
                             .resources
@@ -445,6 +444,9 @@ pub mod tests {
         },
         mesh::{event::MeshEvent, partition::Partition},
     };
+
+    // TODO snapshot test
+    // TODO drop tombstones test
 
     #[test]
     fn single_source_replication() {

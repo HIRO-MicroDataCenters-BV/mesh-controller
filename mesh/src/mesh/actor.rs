@@ -264,11 +264,14 @@ impl MeshActor {
                 });
             }
 
-            let ok_or_status = self.subscriptions.client().delete(gvk, name).await?;
-            // TODO handle status maybe
-            debug!("delete result {ok_or_status:?}");
+            let object_or_status = self.subscriptions.client().delete(gvk, name).await?;
+            object_or_status.map_right(|status|{
+                if status.is_failure() {
+                    error!(%name, %status.code, %status.message, %status.reason, "delete object failure");
+                }
+            });
         } else {
-            warn!("Object not found {name} {gvk:?}. Skipping delete.");
+            warn!(%name, "Object not found. Skipping delete.");
         }
         Ok(PersistenceResult::Persisted)
     }

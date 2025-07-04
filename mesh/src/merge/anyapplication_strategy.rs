@@ -12,8 +12,9 @@ use anyapplication::{
     },
     anyapplication_ext::AnyApplicationExt,
 };
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use kube::api::{DynamicObject, GroupVersionKind};
+use tracing::error;
 
 pub struct AnyApplicationMerge {
     gvk: GroupVersionKind,
@@ -101,7 +102,7 @@ impl MergeStrategy for AnyApplicationMerge {
         current.get_owner_zone() == zone || placements_zones.contains(zone)
     }
 
-    fn local_update(
+    fn kube_update(
         &self,
         current: VersionedObject,
         incoming: DynamicObject,
@@ -124,7 +125,13 @@ impl MergeStrategy for AnyApplicationMerge {
         match current {
             VersionedObject::Object(current) => {
                 let mut current: AnyApplication = current.clone().try_parse()?;
-                let current_version = current.get_resource_version().unwrap_or(0);
+                let maybe_current_version = current
+                    .get_resource_version()
+                    .ok_or(anyhow!("resource version is absent"));
+                if maybe_current_version.is_err() {
+                    error!("current resource version is not available: {current:?}");
+                }
+                let current_version = maybe_current_version.unwrap();
                 if current_version >= incoming_resource_version {
                     return Ok(UpdateResult::Skip);
                 }
@@ -181,7 +188,7 @@ impl MergeStrategy for AnyApplicationMerge {
         }
     }
 
-    fn local_delete(
+    fn kube_delete(
         &self,
         current: VersionedObject,
         incoming: DynamicObject,
@@ -1038,7 +1045,7 @@ pub mod tests {
                 object: incoming.clone()
             },
             AnyApplicationMerge::new()
-                .local_update(VersionedObject::NonExisting, incoming, 1, "zone1")
+                .kube_update(VersionedObject::NonExisting, incoming, 1, "zone1")
                 .unwrap()
         );
     }
@@ -1060,7 +1067,7 @@ pub mod tests {
                 object: incoming.clone()
             },
             AnyApplicationMerge::new()
-                .local_update(existing, incoming, 1, "zone1")
+                .kube_update(existing, incoming, 1, "zone1")
                 .unwrap()
         );
     }
@@ -1081,7 +1088,7 @@ pub mod tests {
         assert_eq!(
             UpdateResult::Skip,
             AnyApplicationMerge::new()
-                .local_update(existing, incoming, 1, "zone1")
+                .kube_update(existing, incoming, 1, "zone1")
                 .unwrap()
         );
     }
@@ -1095,7 +1102,7 @@ pub mod tests {
         assert_eq!(
             UpdateResult::Skip,
             AnyApplicationMerge::new()
-                .local_update(existing.into(), incoming, 1, "zone1")
+                .kube_update(existing.into(), incoming, 1, "zone1")
                 .unwrap()
         );
     }
@@ -1111,7 +1118,7 @@ pub mod tests {
         assert_eq!(
             UpdateResult::Update { object: expected },
             AnyApplicationMerge::new()
-                .local_update(existing.into(), incoming, 2, "zone1")
+                .kube_update(existing.into(), incoming, 2, "zone1")
                 .unwrap()
         );
     }
@@ -1130,7 +1137,7 @@ pub mod tests {
                 deletion_timestamp: 0
             }),
             AnyApplicationMerge::new()
-                .local_delete(VersionedObject::NonExisting, incoming, 2, "zone1")
+                .kube_delete(VersionedObject::NonExisting, incoming, 2, "zone1")
                 .unwrap()
         );
     }
@@ -1157,7 +1164,7 @@ pub mod tests {
                 deletion_timestamp: 0,
             }),
             AnyApplicationMerge::new()
-                .local_delete(existing, incoming, 2, "zone1")
+                .kube_delete(existing, incoming, 2, "zone1")
                 .unwrap()
         );
     }
@@ -1184,7 +1191,7 @@ pub mod tests {
                 deletion_timestamp: 0
             }),
             AnyApplicationMerge::new()
-                .local_delete(existing, incoming, 2, "zone1")
+                .kube_delete(existing, incoming, 2, "zone1")
                 .unwrap()
         );
     }
@@ -1210,7 +1217,7 @@ pub mod tests {
                 },
             },
             AnyApplicationMerge::new()
-                .local_delete(current.into(), incoming, 2, "zone1")
+                .kube_delete(current.into(), incoming, 2, "zone1")
                 .unwrap()
         );
     }
@@ -1253,7 +1260,7 @@ pub mod tests {
         assert_eq!(
             UpdateResult::Update { object: expected },
             strategy
-                .local_update(current.into(), incoming, 5, "zone2")
+                .kube_update(current.into(), incoming, 5, "zone2")
                 .unwrap()
         );
     }
@@ -1293,7 +1300,7 @@ pub mod tests {
         assert_eq!(
             UpdateResult::Update { object: expected },
             strategy
-                .local_update(current.into(), incoming, 5, "zone2")
+                .kube_update(current.into(), incoming, 5, "zone2")
                 .unwrap()
         );
     }
@@ -1337,7 +1344,7 @@ pub mod tests {
         assert_eq!(
             UpdateResult::Update { object: expected },
             strategy
-                .local_update(current.into(), incoming, 4, "zone2")
+                .kube_update(current.into(), incoming, 4, "zone2")
                 .unwrap()
         );
     }

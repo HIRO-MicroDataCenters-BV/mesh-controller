@@ -57,8 +57,7 @@ impl From<DynamicObject> for VersionedObject {
 }
 
 pub trait MergeStrategy: Send + Sync {
-    // TODO rename to kube_*
-    fn local_update(
+    fn kube_update(
         &self,
         current: VersionedObject,
         incoming: DynamicObject,
@@ -66,7 +65,7 @@ pub trait MergeStrategy: Send + Sync {
         incoming_zone: &str,
     ) -> Result<UpdateResult>;
 
-    fn local_delete(
+    fn kube_delete(
         &self,
         current: VersionedObject,
         incoming: DynamicObject,
