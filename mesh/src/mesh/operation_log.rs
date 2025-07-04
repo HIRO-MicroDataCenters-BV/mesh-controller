@@ -354,3 +354,5 @@ impl LogPointers {
         }
     }
 }
+
+//TODO test Operation log

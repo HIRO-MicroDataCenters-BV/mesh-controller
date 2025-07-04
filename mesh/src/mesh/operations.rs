@@ -83,3 +83,5 @@ impl LinkedOperations {
         self.seq_num.wrapping_sub(self.last_snapshot_seq_num)
     }
 }
+
+//TODO test linked operations
