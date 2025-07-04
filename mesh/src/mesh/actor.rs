@@ -117,7 +117,7 @@ impl MeshActor {
     }
 
     async fn on_event(&mut self, event: KubeEvent) -> Result<()> {
-        let update_result = self.partition.kube_apply(&event, &self.instance_id.zone)?;
+        let update_result = self.partition.kube_apply(event, &self.instance_id.zone)?;
         let event: Option<MeshEvent> = update_result.into();
 
         if let Some(event) = event {
@@ -341,7 +341,7 @@ impl MeshActor {
 
     async fn send_snapshot(&mut self) -> Result<()> {
         trace!("Periodic snapshot");
-        let event = self.partition.mesh_snapshot(&self.instance_id.zone);
+        let event = self.partition.get_mesh_snapshot(&self.instance_id.zone);
         let operation = self.operations.next(event);
         self.on_incoming_from_network(operation).await?;
         self.last_snapshot_time = SystemTime::now();

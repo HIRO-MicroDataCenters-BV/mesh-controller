@@ -164,7 +164,7 @@ impl Partition {
         }
     }
 
-    pub fn mesh_snapshot(&self, current_zone: &str) -> MeshEvent {
+    pub fn get_mesh_snapshot(&self, current_zone: &str) -> MeshEvent {
         let owned: HashSet<NamespacedName> = self
             .resources
             .iter()
@@ -187,7 +187,7 @@ impl Partition {
         MeshEvent::Snapshot { snapshot }
     }
 
-    pub fn kube_apply(&mut self, event: &KubeEvent, current_zone: &str) -> Result<UpdateResult> {
+    pub fn kube_apply(&mut self, event: KubeEvent, current_zone: &str) -> Result<UpdateResult> {
         match event {
             KubeEvent::Update {
                 version, object, ..
@@ -198,12 +198,9 @@ impl Partition {
                     .get(&name)
                     .cloned()
                     .unwrap_or(VersionedObject::NonExisting);
-                let result = self.merge_strategy.kube_update(
-                    current,
-                    object.to_owned(),
-                    *version,
-                    current_zone,
-                )?;
+                let result =
+                    self.merge_strategy
+                        .kube_update(current, object, version, current_zone)?;
                 self.kube_update_partition(&result)?;
                 Ok(result)
             }
@@ -216,12 +213,9 @@ impl Partition {
                     .get(&name)
                     .cloned()
                     .unwrap_or(VersionedObject::NonExisting);
-                let result = self.merge_strategy.kube_delete(
-                    current,
-                    object.to_owned(),
-                    *version,
-                    current_zone,
-                )?;
+                let result =
+                    self.merge_strategy
+                        .kube_delete(current, object, version, current_zone)?;
                 self.kube_update_partition(&result)?;
                 Ok(result)
             }
@@ -230,120 +224,14 @@ impl Partition {
             } => {
                 // TODO extract
                 if !self.initialized {
-                    let owned: HashSet<NamespacedName> = snapshot
-                        .iter()
-                        .filter(|(_, v)| self.merge_strategy.is_owner_zone_object(v, current_zone))
-                        .map(|(k, _)| k.to_owned())
-                        .collect();
-
-                    let not_owned: HashSet<NamespacedName> = snapshot
-                        .iter()
-                        .filter(|(_, v)| !self.merge_strategy.is_owner_zone_object(v, current_zone))
-                        .map(|(k, _)| k.to_owned())
-                        .collect();
-
-                    let mut filtered_snapshot = BTreeMap::new();
-                    for name in owned.into_iter() {
-                        let object = snapshot.get(&name).unwrap();
-                        let result = self.merge_strategy.kube_update(
-                            VersionedObject::NonExisting,
-                            object.clone(),
-                            *version,
-                            current_zone,
-                        )?;
-                        self.kube_update_partition(&result)?;
-                        match result {
-                            UpdateResult::Create { object } | UpdateResult::Update { object } => {
-                                filtered_snapshot.insert(name.to_owned(), object.clone());
-                            }
-                            UpdateResult::Delete { .. } | UpdateResult::Snapshot { .. } => {
-                                panic!("unexpected delete or snapshot")
-                            }
-                            UpdateResult::Skip | UpdateResult::Tombstone { .. } => (),
-                        }
-                    }
-                    let snapshot_result = UpdateResult::Snapshot {
-                        snapshot: filtered_snapshot,
-                    };
-                    // partition should reflect the state of the kubernetes for not owned resources as well
-                    for name in not_owned.into_iter() {
-                        let object = snapshot
-                            .get(&name)
-                            .expect("Invariant failure. expected object in snapshot");
-                        self.resources
-                            .insert(name.to_owned(), VersionedObject::Object(object.to_owned()));
-                    }
+                    let snapshot_result =
+                        self.kube_apply_snapshot(version, snapshot, current_zone, true)?;
                     self.initialized = true;
                     Ok(snapshot_result)
                 } else {
-                    let incoming: HashSet<&NamespacedName> = snapshot
-                        .iter()
-                        .filter(|(_, v)| self.merge_strategy.is_owner_zone_object(v, current_zone))
-                        .map(|(k, _)| k)
-                        .collect();
-
-                    let mut filtered_snapshot = BTreeMap::new();
-                    for name in incoming {
-                        let object = snapshot
-                            .get(name)
-                            .expect("Invariant failure. expected object in snapshot");
-                        let result = self.merge_strategy.kube_update(
-                            VersionedObject::NonExisting,
-                            object.clone(),
-                            *version,
-                            current_zone,
-                        )?;
-                        self.kube_update_partition(&result)?;
-                        match result {
-                            UpdateResult::Create { object } | UpdateResult::Update { object } => {
-                                filtered_snapshot.insert(name.to_owned(), object.clone());
-                            }
-                            UpdateResult::Delete { .. } | UpdateResult::Snapshot { .. } => {
-                                panic!("unexpected delete or snapshot")
-                            }
-                            UpdateResult::Skip | UpdateResult::Tombstone { .. } => (),
-                        }
-                    }
-
-                    let owned_by_current_zone_not_in_snapshot: HashSet<NamespacedName> = self
-                        .resources
-                        .iter()
-                        .filter(|(_, v)| self.merge_strategy.is_owner_zone(v, current_zone))
-                        .filter(|(name, _)| !snapshot.contains_key(name))
-                        .map(|(k, _)| k.to_owned())
-                        .collect();
-
-                    // Inserting tombstone if partition has object absent in snapshot
-                    for name in owned_by_current_zone_not_in_snapshot {
-                        match self
-                            .resources
-                            .get(&name)
-                            .unwrap_or(&VersionedObject::NonExisting)
-                        {
-                            VersionedObject::Object(object) => {
-                                let resource_version = object.get_resource_version();
-                                let owner_version = object
-                                    .get_owner_version()
-                                    .unwrap_or_else(|| object.get_resource_version());
-                                let tombstone = Tombstone {
-                                    gvk: object.get_gvk()?,
-                                    name: name.to_owned(),
-                                    owner_version,
-                                    owner_zone: current_zone.to_owned(),
-                                    resource_version,
-                                    deletion_timestamp: 0, // TODO now
-                                };
-                                self.resources
-                                    .insert(name.to_owned(), VersionedObject::Tombstone(tombstone));
-                            }
-                            VersionedObject::NonExisting | VersionedObject::Tombstone(_) => (),
-                        }
-                    }
-
-                    let result = UpdateResult::Snapshot {
-                        snapshot: filtered_snapshot,
-                    };
-                    Ok(result)
+                    let snapshot_result =
+                        self.kube_apply_snapshot(version, snapshot, current_zone, false)?;
+                    Ok(snapshot_result)
                 }
             }
         }
@@ -391,6 +279,98 @@ impl Partition {
             UpdateResult::Skip => {}
         }
         Ok(())
+    }
+
+    fn kube_apply_snapshot(
+        &mut self,
+        version: Version,
+        mut snapshot: BTreeMap<NamespacedName, DynamicObject>,
+        current_zone: &str,
+        initial: bool,
+    ) -> Result<UpdateResult> {
+        let owned_resources: HashSet<NamespacedName> = snapshot
+            .iter()
+            .filter(|(_, v)| self.merge_strategy.is_owner_zone_object(v, current_zone))
+            .map(|(k, _)| k.to_owned())
+            .collect();
+
+        let mut owned_snapshot = BTreeMap::new();
+        for name in owned_resources.into_iter() {
+            let object = snapshot
+                .remove(&name)
+                .expect("Invariant failure. expected object in snapshot");
+            let result = self.merge_strategy.kube_update(
+                VersionedObject::NonExisting,
+                object,
+                version,
+                current_zone,
+            )?;
+            self.kube_update_partition(&result)?;
+            match result {
+                UpdateResult::Create { object } | UpdateResult::Update { object } => {
+                    owned_snapshot.insert(name.to_owned(), object.clone());
+                }
+                UpdateResult::Delete { .. } | UpdateResult::Snapshot { .. } => {
+                    panic!("unexpected delete or snapshot update result")
+                }
+                UpdateResult::Skip | UpdateResult::Tombstone { .. } => (),
+            }
+        }
+        let snapshot_result = UpdateResult::Snapshot {
+            snapshot: owned_snapshot,
+        };
+
+        if initial {
+            // partition should reflect the state of the kubernetes for not owned resources as well
+            // this is valid only for the first snapshot, all subsequent snapshots skip this initial loading
+            let not_owned_resources: HashSet<NamespacedName> = snapshot
+                .iter()
+                .filter(|(_, v)| !self.merge_strategy.is_owner_zone_object(v, current_zone))
+                .map(|(k, _)| k.to_owned())
+                .collect();
+
+            for name in not_owned_resources.into_iter() {
+                let object = snapshot
+                    .get(&name)
+                    .expect("Invariant failure. expected object in snapshot");
+                self.resources
+                    .insert(name.to_owned(), VersionedObject::Object(object.to_owned()));
+            }
+        } else {
+            let owned_by_current_zone_not_in_snapshot: HashSet<NamespacedName> = self
+                .resources
+                .iter()
+                .filter(|(_, v)| self.merge_strategy.is_owner_zone(v, current_zone))
+                .filter(|(name, _)| !snapshot.contains_key(name))
+                .map(|(k, _)| k.to_owned())
+                .collect();
+
+            // Inserting tombstone if partition contains object which is absent in kube snapshot
+            for name in owned_by_current_zone_not_in_snapshot {
+                match self
+                    .resources
+                    .get(&name)
+                    .unwrap_or(&VersionedObject::NonExisting)
+                {
+                    VersionedObject::Object(object) => {
+                        let resource_version = object.get_resource_version();
+                        let owner_version = object.get_owner_version().unwrap_or(resource_version);
+                        let tombstone = Tombstone {
+                            gvk: object.get_gvk()?,
+                            name: name.to_owned(),
+                            owner_version,
+                            owner_zone: current_zone.to_owned(),
+                            resource_version,
+                            deletion_timestamp: 0, // TODO now
+                        };
+                        self.resources
+                            .insert(name.to_owned(), VersionedObject::Tombstone(tombstone));
+                    }
+                    VersionedObject::NonExisting | VersionedObject::Tombstone(_) => (),
+                }
+            }
+        }
+        Ok(snapshot_result)
     }
 
     pub fn update_resource_version(&mut self, name: &NamespacedName, version: Version) {
@@ -815,7 +795,7 @@ pub mod tests {
 
         pub fn init_partition_a(&mut self, event: KubeEvent) {
             self.partition_a
-                .kube_apply(&event, &self.zone_a)
+                .kube_apply(event, &self.zone_a)
                 .expect("init partition a should succeed");
         }
 
@@ -827,7 +807,7 @@ pub mod tests {
         ) {
             let actual_mesh_event: Option<MeshEvent> = self
                 .partition_a
-                .kube_apply(kube_event_a, &self.zone_a)
+                .kube_apply(kube_event_a.to_owned(), &self.zone_a)
                 .expect("partition_a.kube_apply() succeeds")
                 .into();
             assert_eq!(
@@ -851,7 +831,7 @@ pub mod tests {
         ) {
             let actual_mesh_event: Option<MeshEvent> = self
                 .partition_b
-                .kube_apply(kube_event_b, &self.zone_b)
+                .kube_apply(kube_event_b.to_owned(), &self.zone_b)
                 .expect("partition_b.kube_apply() succeeds")
                 .into();
             assert_eq!(
