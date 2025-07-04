@@ -73,67 +73,7 @@ impl Partition {
                 Ok(vec![result])
             }
             MeshEvent::Snapshot { snapshot } => {
-                // TODO extract
-                let existing: HashSet<NamespacedName> = self
-                    .resources
-                    .iter()
-                    .filter(|(_, v)| self.merge_strategy.is_owner_zone(v, incoming_zone))
-                    .map(|(k, _)| k.to_owned())
-                    .collect();
-
-                let incoming: HashSet<NamespacedName> = snapshot
-                    .iter()
-                    .filter(|(_, v)| {
-                        self.merge_strategy
-                            .is_owner_zone(&VersionedObject::Object((*v).clone()), incoming_zone)
-                    })
-                    .map(|(k, _)| k.to_owned())
-                    .collect();
-
-                let to_update = incoming.clone();
-                let to_delete_non_existing: HashSet<&NamespacedName> =
-                    existing.difference(&incoming).collect();
-
-                let mut results = vec![];
-
-                for name in to_delete_non_existing {
-                    let current = self
-                        .resources
-                        .get(name)
-                        .unwrap_or(&VersionedObject::NonExisting);
-
-                    match current {
-                        VersionedObject::Object(object) => {
-                            let result = self.merge_strategy.mesh_delete(
-                                current.clone(),
-                                object.clone(),
-                                incoming_zone,
-                            )?;
-                            self.mesh_update_partition(&result);
-                            results.push(result);
-                        }
-                        VersionedObject::NonExisting | VersionedObject::Tombstone(_) => {
-                            // Nothing to do since the object is does not exist in destination repository
-                        }
-                    }
-                }
-                for name in to_update {
-                    let current = self
-                        .resources
-                        .get(&name)
-                        .cloned()
-                        .unwrap_or(VersionedObject::NonExisting);
-                    let incoming = snapshot.get(&name).cloned().unwrap();
-                    let result = self.merge_strategy.mesh_update(
-                        current,
-                        incoming,
-                        incoming_zone,
-                        current_zone,
-                    )?;
-                    self.mesh_update_partition(&result);
-                    results.push(result);
-                }
-                Ok(results)
+                self.mesh_apply_snapshot(snapshot, incoming_zone, current_zone)
             }
         }
     }
@@ -162,6 +102,68 @@ impl Partition {
             }
             MergeResult::Skip => {}
         }
+    }
+
+    pub fn mesh_apply_snapshot(
+        &mut self,
+        snapshot: BTreeMap<NamespacedName, DynamicObject>,
+        incoming_zone: &str,
+        current_zone: &str,
+    ) -> Result<Vec<MergeResult>> {
+        let existing: HashSet<NamespacedName> = self
+            .resources
+            .iter()
+            .filter(|(_, v)| self.merge_strategy.is_owner_zone(v, incoming_zone))
+            .map(|(k, _)| k.to_owned())
+            .collect();
+
+        let incoming: HashSet<NamespacedName> = snapshot
+            .iter()
+            .filter(|(_, v)| self.merge_strategy.is_owner_zone_object(v, incoming_zone))
+            .map(|(k, _)| k.to_owned())
+            .collect();
+
+        let to_update = incoming.clone();
+        let to_delete_non_existing: HashSet<&NamespacedName> =
+            existing.difference(&incoming).collect();
+
+        let mut results = vec![];
+
+        for name in to_delete_non_existing {
+            let current = self
+                .resources
+                .get(name)
+                .unwrap_or(&VersionedObject::NonExisting);
+
+            match current {
+                VersionedObject::Object(object) => {
+                    let result = self.merge_strategy.mesh_delete(
+                        current.clone(),
+                        object.clone(),
+                        incoming_zone,
+                    )?;
+                    self.mesh_update_partition(&result);
+                    results.push(result);
+                }
+                VersionedObject::NonExisting | VersionedObject::Tombstone(_) => {
+                    // Nothing to do since the object is does not exist in destination repository
+                }
+            }
+        }
+        for name in to_update {
+            let current = self
+                .resources
+                .get(&name)
+                .cloned()
+                .unwrap_or(VersionedObject::NonExisting);
+            let incoming = snapshot.get(&name).cloned().unwrap();
+            let result =
+                self.merge_strategy
+                    .mesh_update(current, incoming, incoming_zone, current_zone)?;
+            self.mesh_update_partition(&result);
+            results.push(result);
+        }
+        Ok(results)
     }
 
     pub fn get_mesh_snapshot(&self, current_zone: &str) -> MeshEvent {
@@ -222,7 +224,6 @@ impl Partition {
             KubeEvent::Snapshot {
                 version, snapshot, ..
             } => {
-                // TODO extract
                 if !self.initialized {
                     let snapshot_result =
                         self.kube_apply_snapshot(version, snapshot, current_zone, true)?;
@@ -260,6 +261,10 @@ impl Partition {
                 );
             }
             UpdateResult::Delete { object, tombstone } => {
+                debug!(
+                    "kube_update_partition: delete: version set to {:?}",
+                    object.metadata.resource_version
+                );
                 let tombstone = tombstone.to_owned();
                 self.resources.insert(
                     object.get_namespaced_name(),
@@ -267,6 +272,10 @@ impl Partition {
                 );
             }
             UpdateResult::Tombstone(tombstone) => {
+                debug!(
+                    "kube_update_partition: tombstone: version set to {:?}",
+                    tombstone.resource_version
+                );
                 let tombstone = tombstone.to_owned();
                 self.resources.insert(
                     tombstone.name.to_owned(),
