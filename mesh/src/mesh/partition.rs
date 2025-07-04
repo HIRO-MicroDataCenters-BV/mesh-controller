@@ -406,6 +406,7 @@ impl Partition {
                 VersionedObject::Object(object) => {
                     object.set_resource_version(version);
                 }
+                // TODO owner_version and resource_version
                 VersionedObject::Tombstone(current_version, _) => {
                     *current_version = version;
                 }

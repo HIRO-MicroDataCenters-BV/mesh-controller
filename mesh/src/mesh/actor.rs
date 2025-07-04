@@ -151,15 +151,14 @@ impl MeshActor {
                         &self.instance_id.zone,
                     )?;
                     for merge_result in merge_results.into_iter() {
-                        // TODO fixme
-                        let is_update = matches!(
-                            merge_result,
-                            MergeResult::Create { .. } | MergeResult::Update { .. }
-                        );
                         match self.on_merge_result(merge_result).await {
                             Ok(PersistenceResult::Persisted) => (),
-                            Ok(PersistenceResult::Conflict { gvk, name }) => {
-                                self.forced_sync(gvk, name, is_update).await?;
+                            Ok(PersistenceResult::Conflict {
+                                gvk,
+                                name,
+                                operation_type,
+                            }) => {
+                                self.forced_sync(gvk, name, operation_type).await?;
                             }
                             Err(err) => {
                                 error!("error while merging {err}");
@@ -235,7 +234,11 @@ impl MeshActor {
             }
             Err(ClientError::VersionConflict) => {
                 debug!("Version Conflict for resource {}", name);
-                Ok(PersistenceResult::Conflict { gvk, name })
+                Ok(PersistenceResult::Conflict {
+                    gvk,
+                    name,
+                    operation_type: OperationType::Update,
+                })
             }
             Err(err) => Err(err.into()),
         }
@@ -256,6 +259,7 @@ impl MeshActor {
                 return Ok(PersistenceResult::Conflict {
                     gvk: gvk.to_owned(),
                     name: name.to_owned(),
+                    operation_type: OperationType::Delete,
                 });
             }
 
@@ -272,17 +276,16 @@ impl MeshActor {
         &mut self,
         gvk: GroupVersionKind,
         name: NamespacedName,
-        is_update: bool,
+        operation_type: OperationType,
     ) -> Result<()> {
         let mut attempts = 10;
         while attempts > 0 {
             if let Some(object) = self.subscriptions.client().get(&gvk, &name).await? {
                 let version = object.get_resource_version();
                 let name = object.get_namespaced_name();
-                let event = if is_update {
-                    KubeEvent::Update { version, object }
-                } else {
-                    KubeEvent::Delete { version, object }
+                let event = match operation_type {
+                    OperationType::Update => KubeEvent::Update { version, object },
+                    OperationType::Delete => KubeEvent::Delete { version, object },
                 };
                 if let Err(err) = self.on_event(event).await {
                     error!("on_event error during forced sync {err}");
@@ -290,10 +293,9 @@ impl MeshActor {
                 self.partition.update_version(&name, version);
                 if let Some(current) = self.partition.get(&name) {
                     let version = current.get_resource_version();
-                    let persistence_result = if is_update {
-                        self.kube_patch_apply(current).await?
-                    } else {
-                        self.kube_delete(&gvk, &name, version).await?
+                    let persistence_result = match operation_type {
+                        OperationType::Update => self.kube_patch_apply(current).await?,
+                        OperationType::Delete => self.kube_delete(&gvk, &name, version).await?,
                     };
                     let PersistenceResult::Conflict { .. } = persistence_result else {
                         return Ok(());
@@ -341,10 +343,18 @@ impl MeshActor {
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum OperationType {
+    Update,
+    Delete,
+}
+
+#[derive(Debug, Clone)]
 pub enum PersistenceResult {
     Persisted,
     Conflict {
         gvk: GroupVersionKind,
         name: NamespacedName,
+        operation_type: OperationType,
     },
 }
