@@ -84,4 +84,73 @@ impl LinkedOperations {
     }
 }
 
-//TODO test linked operations
+
+#[cfg(test)]
+pub mod tests {
+    use std::collections::BTreeMap;
+
+    use kube::api::DynamicObject;
+    use p2panda_core::PrivateKey;
+
+    use crate::{kube::{dynamic_object_ext::DynamicObjectExt, subscriptions::Version}, mesh::{event::MeshEvent, operations::LinkedOperations, topic::InstanceId}};
+
+
+    #[test]
+    fn test_ordinary_operation_flow() {
+        let key = PrivateKey::new();
+        let instance_id = InstanceId::new("test-instance".into());
+        let mut linked_operations = LinkedOperations::new(key.clone(), instance_id);
+        assert_eq!(linked_operations.count_since_snapshot(), 0);
+
+        // Snapshot1 event
+        let event1 = MeshEvent::Snapshot { snapshot: BTreeMap::new() };
+        let operation1 = linked_operations.next(event1.clone());
+        assert_eq!(operation1.header.backlink, None);
+        assert_eq!(operation1.header.seq_num, 0);
+        assert!(operation1.header.extensions.unwrap().prune_flag.is_set());
+        assert_eq!(operation1.header.public_key, key.public_key());
+        assert_eq!(operation1.body.unwrap().to_bytes(), event1.to_bytes());
+        assert_eq!(linked_operations.count_since_snapshot(), 1);
+
+        // Update event
+        let event2 = MeshEvent::Update { object: make_object("test", 1, "data") };
+        let operation2 = linked_operations.next(event2.clone());
+        assert_eq!(operation2.header.backlink, Some(operation1.hash));
+        assert_eq!(operation2.header.seq_num, 1);
+        assert!(!operation2.header.extensions.unwrap().prune_flag.is_set());
+        assert_eq!(operation2.header.public_key, key.public_key());
+        assert_eq!(operation2.body.unwrap().to_bytes(), event2.to_bytes());
+        assert_eq!(linked_operations.count_since_snapshot(), 2);
+
+        // Snapshot2 event
+        let event3 = MeshEvent::Snapshot { snapshot: BTreeMap::new() };
+        let operation3 = linked_operations.next(event3.clone());
+        assert_eq!(operation3.header.backlink, Some(operation2.hash));
+        assert_eq!(operation3.header.seq_num, 2);
+        assert!(operation3.header.extensions.unwrap().prune_flag.is_set());
+        assert_eq!(operation3.header.public_key, key.public_key());
+        assert_eq!(operation3.body.unwrap().to_bytes(), event3.to_bytes());
+        assert_eq!(linked_operations.count_since_snapshot(), 1);
+
+    }
+
+    fn make_object(zone: &str, version: Version, data: &str) -> DynamicObject {
+        let mut object: DynamicObject = serde_json::from_value(serde_json::json!({
+            "apiVersion": "v1",
+            "kind": "Secret",
+            "metadata": {
+                "name": "example",
+                "namespace": "default"
+            },
+            "spec": {
+                "data": data,
+            }
+        }))
+        .unwrap();
+        object.set_owner_zone(zone.into());
+        object.set_owner_version(version);
+        object
+    }
+
+}
+
