@@ -332,11 +332,14 @@ impl MeshActor {
         self.on_ready().await?;
         let truncate_size =
             self.operations.count_since_snapshot() >= self.snapshot_config.snapshot_max_log;
-        let duration_since_last_snapshot = self.clock.now()
+        let duration_since_last_snapshot = self
+            .clock
+            .now()
             .duration_since(self.last_snapshot_time)
             .context("compute duration since last snapshot time")?
             .as_secs();
-        let snapshot_time = duration_since_last_snapshot > self.snapshot_config.snapshot_interval_seconds;
+        let snapshot_time =
+            duration_since_last_snapshot > self.snapshot_config.snapshot_interval_seconds;
         if truncate_size || snapshot_time {
             self.send_snapshot().await?;
             self.operation_log.truncate_obsolete_logs().await?;

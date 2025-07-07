@@ -84,7 +84,6 @@ impl LinkedOperations {
     }
 }
 
-
 #[cfg(test)]
 pub mod tests {
     use std::collections::BTreeMap;
@@ -92,8 +91,10 @@ pub mod tests {
     use kube::api::DynamicObject;
     use p2panda_core::PrivateKey;
 
-    use crate::{kube::{dynamic_object_ext::DynamicObjectExt, subscriptions::Version}, mesh::{event::MeshEvent, operations::LinkedOperations, topic::InstanceId}};
-
+    use crate::{
+        kube::{dynamic_object_ext::DynamicObjectExt, subscriptions::Version},
+        mesh::{event::MeshEvent, operations::LinkedOperations, topic::InstanceId},
+    };
 
     #[test]
     fn test_ordinary_operation_flow() {
@@ -103,7 +104,9 @@ pub mod tests {
         assert_eq!(linked_operations.count_since_snapshot(), 0);
 
         // Snapshot1 event
-        let event1 = MeshEvent::Snapshot { snapshot: BTreeMap::new() };
+        let event1 = MeshEvent::Snapshot {
+            snapshot: BTreeMap::new(),
+        };
         let operation1 = linked_operations.next(event1.clone());
         assert_eq!(operation1.header.backlink, None);
         assert_eq!(operation1.header.seq_num, 0);
@@ -113,7 +116,9 @@ pub mod tests {
         assert_eq!(linked_operations.count_since_snapshot(), 1);
 
         // Update event
-        let event2 = MeshEvent::Update { object: make_object("test", 1, "data") };
+        let event2 = MeshEvent::Update {
+            object: make_object("test", 1, "data"),
+        };
         let operation2 = linked_operations.next(event2.clone());
         assert_eq!(operation2.header.backlink, Some(operation1.hash));
         assert_eq!(operation2.header.seq_num, 1);
@@ -123,7 +128,9 @@ pub mod tests {
         assert_eq!(linked_operations.count_since_snapshot(), 2);
 
         // Snapshot2 event
-        let event3 = MeshEvent::Snapshot { snapshot: BTreeMap::new() };
+        let event3 = MeshEvent::Snapshot {
+            snapshot: BTreeMap::new(),
+        };
         let operation3 = linked_operations.next(event3.clone());
         assert_eq!(operation3.header.backlink, Some(operation2.hash));
         assert_eq!(operation3.header.seq_num, 2);
@@ -131,7 +138,6 @@ pub mod tests {
         assert_eq!(operation3.header.public_key, key.public_key());
         assert_eq!(operation3.body.unwrap().to_bytes(), event3.to_bytes());
         assert_eq!(linked_operations.count_since_snapshot(), 1);
-
     }
 
     fn make_object(zone: &str, version: Version, data: &str) -> DynamicObject {
@@ -151,6 +157,4 @@ pub mod tests {
         object.set_owner_version(version);
         object
     }
-
 }
-
