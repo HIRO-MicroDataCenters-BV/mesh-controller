@@ -233,7 +233,9 @@ impl OperationLog {
                     .await
                     .into_iter()
                     .for_each(|ops| {
-                        incoming.insert(log_id.to_owned(), ops);
+                        if !ops.is_empty() {
+                            incoming.insert(log_id.to_owned(), ops);
+                        }
                     });
             } else {
                 error!("No current pointer for log {log_id:?}");
@@ -355,4 +357,400 @@ impl LogPointers {
     }
 }
 
-//TODO test Operation log
+#[cfg(test)]
+pub mod tests {
+    use std::collections::{BTreeMap, HashMap};
+
+    use anyhow::Result;
+    use kube::api::DynamicObject;
+    use maplit::hashmap;
+    use p2panda_core::PrivateKey;
+    use p2panda_store::MemoryStore;
+
+    use crate::{
+        kube::{dynamic_object_ext::DynamicObjectExt, subscriptions::Version},
+        mesh::{
+            event::MeshEvent,
+            operation_log::OperationLog,
+            operations::LinkedOperations,
+            topic::{InstanceId, MeshLogId, MeshTopicLogMap},
+        },
+    };
+
+    #[tokio::test]
+    async fn insert_local_operations() -> Result<()> {
+        let LocalTestSetup {
+            mut own_linked_operations,
+            own_mesh_log_id,
+            mut log,
+            ..
+        } = setup_local_log();
+
+        let event1 = snapshot();
+        let event2 = update();
+        let event3 = snapshot();
+
+        let op1 = own_linked_operations.next(event1);
+        let op2 = own_linked_operations.next(event2);
+        let op3 = own_linked_operations.next(event3);
+
+        log.insert(op1.clone()).await?;
+        log.insert(op2.clone()).await?;
+
+        assert_ready(&mut log, hashmap! {}, vec![0, 1]).await;
+
+        // the same ready if pointer is not advanced
+        assert_ready(&mut log, hashmap! {}, vec![0, 1]).await;
+
+        // advance pointers to commit the operations
+        log.advance_log_pointer(&own_mesh_log_id, 2);
+        assert_not_ready(&log).await;
+
+        // more operations can be inserted
+        log.insert(op3.clone()).await?;
+
+        assert_ready(&mut log, hashmap! {}, vec![2]).await;
+        log.advance_log_pointer(&own_mesh_log_id, 3);
+
+        assert_not_ready(&log).await;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn insert_remote_operations() -> Result<()> {
+        let RemoteTestSetup {
+            mut remote_linked_operations,
+            remote_mesh_log_id,
+            mut log,
+            ..
+        } = setup_remote_log();
+
+        let event_remote1 = snapshot();
+        let event_remote2 = update();
+        let event_remote3 = snapshot();
+
+        let remote_op1 = remote_linked_operations.next(event_remote1);
+        let remote_op2 = remote_linked_operations.next(event_remote2);
+        let remote_op3 = remote_linked_operations.next(event_remote3);
+
+        log.insert(remote_op1.clone()).await?;
+        log.insert(remote_op2.clone()).await?;
+
+        assert_ready(
+            &mut log,
+            hashmap! { remote_mesh_log_id.clone() => vec![0, 1]},
+            vec![],
+        )
+        .await;
+        log.advance_log_pointer(&remote_mesh_log_id, 2);
+
+        assert_not_ready(&log).await;
+
+        log.insert(remote_op3.clone()).await?;
+        assert_ready(
+            &mut log,
+            hashmap! { remote_mesh_log_id.clone() => vec![2]},
+            vec![],
+        )
+        .await;
+        log.advance_log_pointer(&remote_mesh_log_id, 3);
+
+        assert_not_ready(&log).await;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn wait_till_gaps_are_filled_with_incremental_ops() -> Result<()> {
+        let RemoteTestSetup {
+            mut remote_linked_operations,
+            remote_mesh_log_id,
+            mut log,
+            ..
+        } = setup_remote_log();
+
+        let event_remote1 = snapshot();
+        let event_remote2 = update();
+        let event_remote3 = update();
+        let event_remote4 = update();
+
+        let remote_op1 = remote_linked_operations.next(event_remote1);
+        let remote_op2 = remote_linked_operations.next(event_remote2);
+        let remote_op3 = remote_linked_operations.next(event_remote3);
+        let remote_op4 = remote_linked_operations.next(event_remote4);
+
+        log.insert(remote_op1.clone()).await?;
+        log.insert(remote_op4.clone()).await?;
+
+        assert_ready(
+            &mut log,
+            hashmap! { remote_mesh_log_id.clone() => vec![0]},
+            vec![],
+        )
+        .await;
+        log.advance_log_pointer(&remote_mesh_log_id, 1);
+
+        assert_not_ready(&log).await;
+
+        log.insert(remote_op2.clone()).await?;
+        log.insert(remote_op3.clone()).await?;
+        assert_ready(
+            &mut log,
+            hashmap! { remote_mesh_log_id.clone() => vec![1, 2, 3]},
+            vec![],
+        )
+        .await;
+        log.advance_log_pointer(&remote_mesh_log_id, 4);
+
+        assert_not_ready(&log).await;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn wait_till_gaps_are_filled_with_next_snapshot() -> Result<()> {
+        let RemoteTestSetup {
+            mut remote_linked_operations,
+            remote_mesh_log_id,
+            mut log,
+            ..
+        } = setup_remote_log();
+
+        let event_remote1 = snapshot();
+        let event_remote2 = update();
+        let event_remote3 = update();
+        let event_remote4 = update();
+        let event_remote5 = snapshot();
+
+        let remote_op1 = remote_linked_operations.next(event_remote1);
+        let _remote_op2 = remote_linked_operations.next(event_remote2);
+        let _remote_op3 = remote_linked_operations.next(event_remote3);
+        let remote_op4 = remote_linked_operations.next(event_remote4);
+        let remote_op5 = remote_linked_operations.next(event_remote5);
+
+        log.insert(remote_op1.clone()).await?;
+        log.insert(remote_op4.clone()).await?;
+
+        assert_ready(
+            &mut log,
+            hashmap! { remote_mesh_log_id.clone() => vec![0]},
+            vec![],
+        )
+        .await;
+        log.advance_log_pointer(&remote_mesh_log_id, 1);
+
+        assert_not_ready(&log).await;
+
+        log.insert(remote_op5.clone()).await?;
+        assert_ready(
+            &mut log,
+            hashmap! { remote_mesh_log_id.clone() => vec![4]},
+            vec![],
+        )
+        .await;
+        log.advance_log_pointer(&remote_mesh_log_id, 5);
+
+        assert_not_ready(&log).await;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn continue_with_new_log_on_restart() -> Result<()> {
+        let RemoteTestSetup {
+            mut remote_linked_operations,
+            remote_mesh_log_id,
+            remote_key,
+            mut log,
+            ..
+        } = setup_remote_log();
+
+        let event_remote11 = snapshot();
+        let event_remote12 = update();
+
+        let remote_op11 = remote_linked_operations.next(event_remote11);
+        let remote_op12 = remote_linked_operations.next(event_remote12);
+
+        log.insert(remote_op11.clone()).await?;
+        log.insert(remote_op12.clone()).await?;
+
+        assert_ready(
+            &mut log,
+            hashmap! { remote_mesh_log_id.clone() => vec![0, 1]},
+            vec![],
+        )
+        .await;
+        log.advance_log_pointer(&remote_mesh_log_id, 2);
+
+        assert_not_ready(&log).await;
+
+        // Restarting the peer
+        let new_remote_instance_id = InstanceId::new(remote_mesh_log_id.0.zone.clone());
+        let mut new_remote_linked_operations =
+            LinkedOperations::new(remote_key.clone(), new_remote_instance_id.clone());
+        let new_remote_mesh_log_id = MeshLogId(new_remote_instance_id);
+
+        // new events after restart
+        let event_remote21 = snapshot();
+        let event_remote22 = update();
+        let event_remote23 = update();
+        let event_remote24 = snapshot();
+
+        let remote_op21 = new_remote_linked_operations.next(event_remote21);
+        let remote_op22 = new_remote_linked_operations.next(event_remote22);
+        let remote_op23 = new_remote_linked_operations.next(event_remote23);
+        let remote_op24 = new_remote_linked_operations.next(event_remote24);
+
+        log.insert(remote_op21.clone()).await?;
+        log.insert(remote_op22.clone()).await?;
+        log.insert(remote_op23.clone()).await?;
+        log.insert(remote_op24.clone()).await?;
+
+        // new log started from the last snapshot
+        assert_ready(
+            &mut log,
+            hashmap! { new_remote_mesh_log_id.clone() => vec![3]},
+            vec![],
+        )
+        .await;
+        log.advance_log_pointer(&new_remote_mesh_log_id, 4);
+
+        assert_not_ready(&log).await;
+
+        Ok(())
+    }
+
+    fn snapshot() -> MeshEvent {
+        MeshEvent::Snapshot {
+            snapshot: BTreeMap::new(),
+        }
+    }
+
+    fn update() -> MeshEvent {
+        MeshEvent::Update {
+            object: make_object("test", 1, "data"),
+        }
+    }
+
+    async fn assert_not_ready(log: &OperationLog) {
+        assert_eq!(log.get_ready().await, None);
+    }
+
+    async fn assert_ready(
+        log: &mut OperationLog,
+        incoming: HashMap<MeshLogId, Vec<usize>>,
+        outgoing: Vec<usize>,
+    ) {
+        let Some(mut ready) = log.get_ready().await else {
+            panic!("Expected ready operations");
+        };
+
+        let actual_incoming = ready.take_incoming();
+        assert_eq!(
+            actual_incoming.len(),
+            incoming.len(),
+            "Actual incoming operations do not match expected"
+        );
+        for (log_id, actual_incoming) in actual_incoming {
+            let actual_incoming: Vec<usize> = actual_incoming
+                .into_iter()
+                .map(|op| op.header.seq_num as usize)
+                .collect();
+            assert_eq!(
+                &actual_incoming,
+                incoming.get(&log_id).unwrap(),
+                "Incoming operations for log {log_id:?} do not match expected"
+            );
+        }
+
+        let actual_outgoing = ready.take_outgoing();
+
+        let actual_outgoing: Vec<usize> = actual_outgoing
+            .into_iter()
+            .map(|op| op.header.seq_num as usize)
+            .collect();
+        assert_eq!(actual_outgoing.len(), outgoing.len());
+    }
+
+    fn setup_local_log() -> LocalTestSetup {
+        let own_key = PrivateKey::new();
+        let own_instance_id = InstanceId::new("1".to_string());
+        let own_linked_operations = LinkedOperations::new(own_key.clone(), own_instance_id.clone());
+
+        let own_mesh_log_id = MeshLogId(own_instance_id);
+        let own_topic_map = MeshTopicLogMap::new(own_key.public_key(), own_mesh_log_id.clone());
+        let log = OperationLog::new(
+            own_mesh_log_id.clone(),
+            own_key.public_key(),
+            own_topic_map.clone(),
+            MemoryStore::new(),
+        );
+
+        LocalTestSetup {
+            own_linked_operations,
+            own_mesh_log_id,
+            log,
+        }
+    }
+
+    struct LocalTestSetup {
+        pub own_linked_operations: LinkedOperations,
+        pub own_mesh_log_id: MeshLogId,
+
+        pub log: OperationLog,
+    }
+
+    fn setup_remote_log() -> RemoteTestSetup {
+        let own_key = PrivateKey::new();
+        let own_instance_id = InstanceId::new("1".to_string());
+        let own_mesh_log_id = MeshLogId(own_instance_id);
+        let own_topic_map = MeshTopicLogMap::new(own_key.public_key(), own_mesh_log_id.clone());
+        let log = OperationLog::new(
+            own_mesh_log_id.clone(),
+            own_key.public_key(),
+            own_topic_map.clone(),
+            MemoryStore::new(),
+        );
+
+        let remote_key = PrivateKey::new();
+        let remote_instance_id = InstanceId::new("2".to_string());
+        let remote_linked_operations =
+            LinkedOperations::new(remote_key.clone(), remote_instance_id.clone());
+        let remote_mesh_log_id = MeshLogId(remote_instance_id);
+
+        RemoteTestSetup {
+            remote_key,
+            remote_linked_operations,
+            remote_mesh_log_id,
+
+            log,
+        }
+    }
+
+    struct RemoteTestSetup {
+        pub remote_key: PrivateKey,
+        pub remote_linked_operations: LinkedOperations,
+        pub remote_mesh_log_id: MeshLogId,
+
+        pub log: OperationLog,
+    }
+
+    fn make_object(zone: &str, version: Version, data: &str) -> DynamicObject {
+        let mut object: DynamicObject = serde_json::from_value(serde_json::json!({
+            "apiVersion": "v1",
+            "kind": "Secret",
+            "metadata": {
+                "name": "example",
+                "namespace": "default"
+            },
+            "spec": {
+                "data": data,
+            }
+        }))
+        .unwrap();
+        object.set_owner_zone(zone.into());
+        object.set_owner_version(version);
+        object
+    }
+}

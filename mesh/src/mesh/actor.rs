@@ -131,7 +131,7 @@ impl MeshActor {
 
         if let Some(event) = event {
             let operation = self.operations.next(event);
-            self.operation_log.insert(operation.clone()).await?;
+            self.operation_log.insert(operation).await?;
         }
         Ok(())
     }
