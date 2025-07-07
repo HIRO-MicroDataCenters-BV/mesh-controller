@@ -125,6 +125,7 @@ pub struct MeshConfig {
     pub zone: String,
     pub bootstrap: bool,
     pub snapshot: PeriodicSnapshotConfig,
+    pub tombstone: TombstoneConfig,
     pub resource: ResourceConfig,
 }
 
@@ -178,6 +179,19 @@ impl Default for PeriodicSnapshotConfig {
         Self {
             snapshot_interval_seconds: 300,
             snapshot_max_log: 256,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Hash)]
+pub struct TombstoneConfig {
+    pub tombstone_retention_interval_seconds: u64,
+}
+
+impl Default for TombstoneConfig {
+    fn default() -> Self {
+        Self {
+            tombstone_retention_interval_seconds: 600,
         }
     }
 }
@@ -255,7 +269,7 @@ mod tests {
     use crate::config::configuration::{
         Config, DiscoveryOptions, KnownNode, KubeConfiguration, KubeConfigurationExternal,
         MergeStrategyType, MeshConfig, NodeConfig, PeriodicSnapshotConfig, ProtocolConfig,
-        ResourceConfig,
+        ResourceConfig, TombstoneConfig,
     };
 
     #[test]
@@ -302,6 +316,7 @@ mod tests {
                         zone: "test".into(),
                         bootstrap: false,
                         snapshot: PeriodicSnapshotConfig::default(),
+                        tombstone: TombstoneConfig::default(),
                         resource: ResourceConfig {
                             group: "".into(),
                             version: "v2".into(),
@@ -347,6 +362,8 @@ mesh:
     snapshot:
         snapshot_interval_seconds: 100
         snapshot_max_log: 100
+    tombstone:
+        tombstone_retention_interval_seconds: 100
     resource:
         group: ""
         version: v2
@@ -398,6 +415,9 @@ kubernetes:
                         snapshot: PeriodicSnapshotConfig {
                             snapshot_interval_seconds: 100,
                             snapshot_max_log: 100
+                        },
+                        tombstone: TombstoneConfig {
+                            tombstone_retention_interval_seconds: 100,
                         },
                         resource: ResourceConfig {
                             group: "".into(),

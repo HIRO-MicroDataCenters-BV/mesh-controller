@@ -56,8 +56,7 @@ impl Subscription {
                     tokio::time::sleep(Duration::from_millis(STREAM_RECONNECT_DELAY_MS)).await;
                     error!("Retrying subscription: {error}");
                 } else {
-                    info!("Stream stopped.");
-                    break;
+                    info!("Event watcher exited. Restarting...");
                 }
             }
         });

@@ -182,7 +182,7 @@ pub mod tests {
         }
 
         subscriber.close();
-        assert!(!cache.unsubscribe(&id).await.is_err());
+        assert!(cache.unsubscribe(&id).await.is_ok());
 
         cache.shutdown().expect("cache shutdown");
     }
@@ -203,12 +203,12 @@ pub mod tests {
         let resource = anyapplication();
 
         client
-            .direct_patch_apply(resource.clone())
+            .patch_apply(resource.clone())
             .await
             .expect("resource is not updated");
 
         let created = client
-            .direct_get(&gvk, &resource.get_namespaced_name())
+            .get(&gvk, &resource.get_namespaced_name())
             .await
             .expect("cannot get resource");
 
@@ -240,7 +240,7 @@ pub mod tests {
         let cache = Subscriptions::new(client.clone());
 
         let mut to_update = client
-            .direct_get(&gvk, &resource_name)
+            .get(&gvk, &resource_name)
             .await
             .expect("cannot get resource")
             .ok_or(anyhow!("no result returned"))
@@ -249,12 +249,12 @@ pub mod tests {
         to_update.metadata.labels = Some(test_labels.clone());
         to_update.metadata.managed_fields = None;
         client
-            .direct_patch_apply(to_update)
+            .patch_apply(to_update)
             .await
             .expect("resource is not updated");
 
         let updated = client
-            .direct_get(&gvk, &resource_name)
+            .get(&gvk, &resource_name)
             .await
             .expect("cannot get resource")
             .ok_or(anyhow!("no result returned"))
@@ -286,13 +286,13 @@ pub mod tests {
         let cache = Subscriptions::new(client.clone());
 
         let status = client
-            .direct_delete(&gvk, &resource_name)
+            .delete(&gvk, &resource_name)
             .await
             .expect("resource is not deleted");
         info!("delete status {:?}", status);
 
         let deleted = client
-            .direct_get(&gvk, &resource_name)
+            .get(&gvk, &resource_name)
             .await
             .expect("cannot get resource");
 
@@ -332,7 +332,7 @@ pub mod tests {
         }
         // Create
         client
-            .direct_patch_apply(resource)
+            .patch_apply(resource)
             .await
             .expect("resource is not updated");
 
@@ -350,7 +350,7 @@ pub mod tests {
 
         // Update
         let mut to_update = client
-            .direct_get(&gvk, &resource_name)
+            .get(&gvk, &resource_name)
             .await
             .expect("cannot get resource")
             .ok_or(anyhow!("no result returned"))
@@ -359,7 +359,7 @@ pub mod tests {
         to_update.metadata.labels = Some(test_labels.clone());
         to_update.metadata.managed_fields = None;
         client
-            .direct_patch_apply(to_update)
+            .patch_apply(to_update)
             .await
             .expect("resource is not updated");
 
@@ -387,7 +387,7 @@ pub mod tests {
 
         // Delete
         client
-            .direct_delete(&gvk, &resource_name)
+            .delete(&gvk, &resource_name)
             .await
             .expect("resource is not deleted");
 
@@ -398,7 +398,7 @@ pub mod tests {
         );
 
         subscriber.close();
-        assert!(!cache.unsubscribe(&id).await.is_err());
+        assert!(cache.unsubscribe(&id).await.is_ok());
 
         cache.shutdown().expect("cache shutdown");
     }

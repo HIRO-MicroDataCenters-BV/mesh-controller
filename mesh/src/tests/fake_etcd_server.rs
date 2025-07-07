@@ -5,7 +5,7 @@ use once_cell::sync::Lazy;
 use crate::{client::kube_client::KubeClient, config::configuration::KubeConfiguration};
 
 pub static TEST_FAKE_SERVER: Lazy<DashMap<KubeConfiguration, FakeEtcdServer>> =
-    Lazy::new(|| DashMap::new());
+    Lazy::new(DashMap::new);
 
 #[derive(Clone)]
 pub struct FakeEtcdServer {

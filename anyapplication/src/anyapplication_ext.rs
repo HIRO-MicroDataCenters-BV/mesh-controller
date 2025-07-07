@@ -28,8 +28,13 @@ pub trait AnyApplicationExt {
     fn get_placement_zones(&self) -> HashSet<String>;
 
     fn set_resource_version(&mut self, version: Version);
+    fn get_resource_version(&self) -> Option<Version>;
 
     fn get_status_zone_ids(&self) -> HashSet<String>;
+
+    fn is_acceptable_zone(&self, incoming_zone: &str) -> bool;
+
+    fn is_owned_zone(&self, incoming_zone: &str) -> bool;
 }
 
 impl AnyApplicationExt for AnyApplication {
@@ -73,6 +78,13 @@ impl AnyApplicationExt for AnyApplication {
         self.metadata.resource_version = Some(version.to_string());
     }
 
+    fn get_resource_version(&self) -> Option<Version> {
+        self.metadata
+            .resource_version
+            .as_ref()
+            .and_then(|version_str| version_str.parse::<Version>().ok())
+    }
+
     fn get_status_zone_ids(&self) -> HashSet<String> {
         self.status
             .as_ref()
@@ -84,6 +96,22 @@ impl AnyApplicationExt for AnyApplication {
                     .collect::<HashSet<String>>()
             })
             .unwrap_or_default()
+    }
+
+    fn is_acceptable_zone(&self, incoming_zone: &str) -> bool {
+        let placements_zones = self.get_placement_zones();
+        let status_zones = self.get_status_zone_ids();
+
+        // The updates are distributed only from owning zone, status zone or placement zones
+        let is_owned_zone = self.is_owned_zone(incoming_zone);
+        let is_placement_zone = placements_zones.contains(incoming_zone);
+        let is_status_zone = status_zones.contains(incoming_zone);
+
+        is_owned_zone || is_placement_zone || is_status_zone
+    }
+
+    fn is_owned_zone(&self, incoming_zone: &str) -> bool {
+        self.get_owner_zone() == incoming_zone || self.get_owner_zone() == "unknown"
     }
 }
 

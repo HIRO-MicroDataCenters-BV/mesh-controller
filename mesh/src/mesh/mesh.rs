@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use super::actor::MeshActor;
 use super::partition::Partition;
 use super::topic::InstanceId;
@@ -8,6 +10,7 @@ use crate::config::configuration::MergeStrategyType;
 use crate::config::configuration::MeshConfig;
 use crate::merge::anyapplication_strategy::AnyApplicationMerge;
 use crate::merge::default_strategy::DefaultMerge;
+use crate::utils::clock::RealClock;
 use crate::{JoinErrToStr, kube::subscriptions::Subscriptions};
 use anyhow::Result;
 use futures::future::{MapErr, Shared};
@@ -39,21 +42,30 @@ impl Mesh {
         network_rx: mpsc::Receiver<Operation<Extensions>>,
     ) -> Result<Mesh> {
         let resource = &config.resource;
-        let snapshot = config.snapshot.to_owned();
+        let snapshot_config = config.snapshot.to_owned();
+        let tombstone_config = config.tombstone.to_owned();
         let gvk = resource.get_gvk();
         let namespace = &resource.namespace;
+        let clock = Arc::new(RealClock::new());
+
         let partition = match resource.merge_strategy {
-            MergeStrategyType::Default => Partition::new(DefaultMerge::new(gvk.to_owned())),
-            MergeStrategyType::AnyApplication => Partition::new(AnyApplicationMerge::new()),
+            MergeStrategyType::Default => {
+                Partition::new(DefaultMerge::new(gvk.to_owned()), clock.clone())
+            }
+            MergeStrategyType::AnyApplication => {
+                Partition::new(AnyApplicationMerge::new(), clock.clone())
+            }
         };
         let subscriptions = Subscriptions::new(client);
         let (subscriber_rx, _) = subscriptions.subscribe(&gvk, namespace).await?;
         let event_rx = subscriber_rx.into_stream();
         let actor = MeshActor::new(
             key,
-            snapshot,
+            snapshot_config,
+            tombstone_config,
             instance_id,
             partition,
+            clock,
             cancelation,
             topic_log_map,
             network_tx,

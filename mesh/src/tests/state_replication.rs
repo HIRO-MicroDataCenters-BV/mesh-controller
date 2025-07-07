@@ -49,17 +49,17 @@ pub fn test_state_replication() -> Result<()> {
     let name2 = app2.get_namespaced_name();
 
     test_runtime.block_on(async {
-        client1.direct_patch_apply(app1).await?;
-        client2.direct_patch_apply(app2).await
+        client1.patch_apply(app1).await?;
+        client2.patch_apply(app2).await
     })?;
 
     wait_for_condition(Duration::from_secs(10), || {
-        let result = test_runtime.block_on(async { client2.direct_get(&gvk, &name1).await })?;
+        let result = test_runtime.block_on(async { client2.get(&gvk, &name1).await })?;
         Ok(result.is_some())
     })?;
 
     wait_for_condition(Duration::from_secs(10), || {
-        let result = test_runtime.block_on(async { client1.direct_get(&gvk, &name2).await })?;
+        let result = test_runtime.block_on(async { client1.get(&gvk, &name2).await })?;
         Ok(result.is_some())
     })?;
 

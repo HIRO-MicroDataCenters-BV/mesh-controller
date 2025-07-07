@@ -1,17 +1,21 @@
+use std::sync::Arc;
 use std::time::Duration;
 use std::time::SystemTime;
 
 use crate::client::kube_client::ClientError;
 use crate::config::configuration::PeriodicSnapshotConfig;
+use crate::config::configuration::TombstoneConfig;
 use crate::kube::dynamic_object_ext::DynamicObjectExt;
 use crate::kube::event::KubeEvent;
 use crate::kube::subscriptions::Subscriptions;
+use crate::kube::subscriptions::Version;
 use crate::kube::types::NamespacedName;
 use crate::merge::types::MergeResult;
+use crate::merge::types::Tombstone;
 use crate::mesh::event::MeshEvent;
 use crate::mesh::operation_log::OperationLog;
 use crate::mesh::operation_log::Ready;
-use anyhow::Context;
+use crate::utils::types::Clock;
 use anyhow::Result;
 use futures::StreamExt;
 use kube::api::DynamicObject;
@@ -40,8 +44,10 @@ pub struct MeshActor {
     operation_log: OperationLog,
     operations: LinkedOperations,
     partition: Partition,
+    clock: Arc<dyn Clock>,
     cancelation: CancellationToken,
     snapshot_config: PeriodicSnapshotConfig,
+    tombstone_config: TombstoneConfig,
     last_snapshot_time: SystemTime,
     own_log_id: MeshLogId,
 }
@@ -51,8 +57,10 @@ impl MeshActor {
     pub fn new(
         key: PrivateKey,
         snapshot_config: PeriodicSnapshotConfig,
+        tombstone_config: TombstoneConfig,
         instance_id: InstanceId,
         partition: Partition,
+        clock: Arc<dyn Clock>,
         cancelation: CancellationToken,
         topic_log_map: MeshTopicLogMap,
         network_tx: mpsc::Sender<Operation<Extensions>>,
@@ -63,6 +71,7 @@ impl MeshActor {
     ) -> MeshActor {
         let own_log_id = MeshLogId(instance_id.clone());
         MeshActor {
+            last_snapshot_time: clock.now(),
             operations: LinkedOperations::new(key.clone(), instance_id.clone()),
             operation_log: OperationLog::new(
                 own_log_id.clone(),
@@ -76,9 +85,10 @@ impl MeshActor {
             event_rx,
             subscriptions,
             partition,
+            clock,
             cancelation,
             snapshot_config,
-            last_snapshot_time: SystemTime::now(),
+            tombstone_config,
             own_log_id,
         }
     }
@@ -115,7 +125,7 @@ impl MeshActor {
     }
 
     async fn on_event(&mut self, event: KubeEvent) -> Result<()> {
-        let update_result = self.partition.kube_apply(&event, &self.instance_id.zone)?;
+        let update_result = self.partition.kube_apply(event, &self.instance_id.zone)?;
         let event: Option<MeshEvent> = update_result.into();
 
         if let Some(event) = event {
@@ -152,8 +162,12 @@ impl MeshActor {
                     for merge_result in merge_results.into_iter() {
                         match self.on_merge_result(merge_result).await {
                             Ok(PersistenceResult::Persisted) => (),
-                            Ok(PersistenceResult::Conflict { gvk, name }) => {
-                                self.forced_sync(gvk, name).await?;
+                            Ok(PersistenceResult::Conflict {
+                                gvk,
+                                name,
+                                operation_type,
+                            }) => {
+                                self.forced_sync(gvk, name, operation_type).await?;
                             }
                             Err(err) => {
                                 error!("error while merging {err}");
@@ -184,34 +198,26 @@ impl MeshActor {
     ) -> Result<PersistenceResult> {
         match merge_result {
             MergeResult::Create { object } | MergeResult::Update { object } => {
-                return self.patch_apply(object).await;
+                return self.kube_patch_apply(object).await;
             }
-            MergeResult::Delete { gvk, name } => {
-                if self
-                    .subscriptions
-                    .client()
-                    .direct_get(&gvk, &name)
-                    .await?
-                    .is_some()
-                {
-                    self.subscriptions
-                        .client()
-                        .direct_delete(&gvk, &name)
-                        .await?;
-                } else {
-                    warn!("Object not found {name} {gvk:?}. Skipping delete.");
-                }
+            MergeResult::Delete(Tombstone {
+                gvk,
+                name,
+                resource_version,
+                ..
+            }) => {
+                return self.kube_delete(&gvk, &name, resource_version).await;
             }
-            MergeResult::DoNothing => (),
+            MergeResult::Skip | MergeResult::Tombstone { .. } => (),
         }
         Ok(PersistenceResult::Persisted)
     }
 
-    async fn patch_apply(&mut self, mut object: DynamicObject) -> Result<PersistenceResult> {
+    async fn kube_patch_apply(&mut self, mut object: DynamicObject) -> Result<PersistenceResult> {
         let gvk = object.get_gvk()?;
         let name = object.get_namespaced_name();
 
-        let existing = self.subscriptions.client().direct_get(&gvk, &name).await?;
+        let existing = self.subscriptions.client().get(&gvk, &name).await?;
 
         object.metadata.managed_fields = None;
         if let Some(existing) = existing {
@@ -228,35 +234,84 @@ impl MeshActor {
             object.metadata.resource_version = None;
         }
 
-        let ok_or_error = self.subscriptions.client().direct_patch_apply(object).await;
+        let ok_or_error = self.subscriptions.client().patch_apply(object).await;
 
         match ok_or_error {
             Ok(new_version) => {
-                self.partition.update_version(&name, new_version);
+                self.partition.update_resource_version(&name, new_version);
                 Ok(PersistenceResult::Persisted)
             }
             Err(ClientError::VersionConflict) => {
                 debug!("Version Conflict for resource {}", name);
-                Ok(PersistenceResult::Conflict { gvk, name })
+                Ok(PersistenceResult::Conflict {
+                    gvk,
+                    name,
+                    operation_type: OperationType::Update,
+                })
             }
             Err(err) => Err(err.into()),
         }
     }
 
-    async fn forced_sync(&mut self, gvk: GroupVersionKind, name: NamespacedName) -> Result<()> {
+    async fn kube_delete(
+        &mut self,
+        gvk: &GroupVersionKind,
+        name: &NamespacedName,
+        version: Version,
+    ) -> Result<PersistenceResult> {
+        let existing = self.subscriptions.client().get(gvk, name).await?;
+
+        if let Some(existing) = existing {
+            let existing_version = existing.get_resource_version();
+
+            if existing_version != version {
+                return Ok(PersistenceResult::Conflict {
+                    gvk: gvk.to_owned(),
+                    name: name.to_owned(),
+                    operation_type: OperationType::Delete,
+                });
+            }
+
+            let object_or_status = self.subscriptions.client().delete(gvk, name).await?;
+            object_or_status.map_right(|status|{
+                if status.is_failure() {
+                    error!(%name, %status.code, %status.message, %status.reason, "delete object failure");
+                }
+            });
+        } else {
+            warn!(%name, "Object not found. Skipping delete.");
+        }
+        Ok(PersistenceResult::Persisted)
+    }
+
+    async fn forced_sync(
+        &mut self,
+        gvk: GroupVersionKind,
+        name: NamespacedName,
+        operation_type: OperationType,
+    ) -> Result<()> {
         let mut attempts = 10;
         while attempts > 0 {
-            if let Some(object) = self.subscriptions.client().direct_get(&gvk, &name).await? {
+            if let Some(object) = self.subscriptions.client().get(&gvk, &name).await? {
                 let version = object.get_resource_version();
                 let name = object.get_namespaced_name();
-                let event = KubeEvent::Update { version, object };
+                let event = match operation_type {
+                    OperationType::Update => KubeEvent::Update { version, object },
+                    OperationType::Delete => KubeEvent::Delete { version, object },
+                };
                 if let Err(err) = self.on_event(event).await {
                     error!("on_event error during forced sync {err}");
                 }
-                self.partition.update_version(&name, version);
+                self.partition.update_resource_version(&name, version);
                 if let Some(current) = self.partition.get(&name) {
-                    let PersistenceResult::Conflict { .. } = self.patch_apply(current).await?
-                    else {
+                    let persistence_result = match operation_type {
+                        OperationType::Update => self.kube_patch_apply(current).await?,
+                        OperationType::Delete => {
+                            self.kube_delete(&gvk, &name, current.get_resource_version())
+                                .await?
+                        }
+                    };
+                    let PersistenceResult::Conflict { .. } = persistence_result else {
                         return Ok(());
                     };
                     attempts -= 1;
@@ -266,7 +321,7 @@ impl MeshActor {
             }
         }
         warn!(
-            "Conflicts: Number of attempts is exhausted while updating object {}",
+            "Conflicts: Number of attempts (10) is exhausted while updating object {}",
             name
         );
         Ok(())
@@ -276,32 +331,41 @@ impl MeshActor {
         self.on_ready().await?;
         let truncate_size =
             self.operations.count_since_snapshot() >= self.snapshot_config.snapshot_max_log;
-        let snapshot_time = SystemTime::now()
-            .duration_since(self.last_snapshot_time)
-            .context("compute duration since last snapshot time")?
-            .as_secs()
-            > self.snapshot_config.snapshot_interval_seconds;
+        let now_seconds = self.clock.now_millis() / 1000;
+        let snapshot_time = now_seconds > self.snapshot_config.snapshot_interval_seconds;
         if truncate_size || snapshot_time {
             self.send_snapshot().await?;
             self.operation_log.truncate_obsolete_logs().await?;
         }
+
+        self.partition
+            .drop_tombstones(self.tombstone_config.tombstone_retention_interval_seconds);
+
         Ok(())
     }
 
     async fn send_snapshot(&mut self) -> Result<()> {
         trace!("Periodic snapshot");
-        let event = self.partition.mesh_snapshot(&self.instance_id.zone);
+        let event = self.partition.get_mesh_snapshot(&self.instance_id.zone);
         let operation = self.operations.next(event);
         self.on_incoming_from_network(operation).await?;
-        self.last_snapshot_time = SystemTime::now();
+        self.last_snapshot_time = self.clock.now();
         Ok(())
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum OperationType {
+    Update,
+    Delete,
+}
+
+#[derive(Debug, Clone)]
 pub enum PersistenceResult {
     Persisted,
     Conflict {
         gvk: GroupVersionKind,
         name: NamespacedName,
+        operation_type: OperationType,
     },
 }
