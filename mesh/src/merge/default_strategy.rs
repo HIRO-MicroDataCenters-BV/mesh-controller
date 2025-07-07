@@ -34,6 +34,7 @@ impl MergeStrategy for DefaultMerge {
         current: VersionedObject,
         incoming: DynamicObject,
         incoming_zone: &str,
+        now_millis: u64,
     ) -> Result<MergeResult> {
         let incoming_owner_zone = incoming.get_owner_zone()?;
         let incoming_owner_version = incoming.get_owner_version_or_fail()?;
@@ -49,7 +50,7 @@ impl MergeStrategy for DefaultMerge {
                 owner_version: incoming_owner_version,
                 owner_zone: incoming_owner_zone,
                 resource_version: current.get_resource_version(),
-                deletion_timestamp: 0,
+                deletion_timestamp: now_millis,
             })),
             VersionedObject::NonExisting => Ok(MergeResult::Tombstone(Tombstone {
                 gvk: self.gvk.to_owned(),
@@ -57,7 +58,7 @@ impl MergeStrategy for DefaultMerge {
                 owner_version: incoming_owner_version,
                 owner_zone: incoming_owner_zone,
                 resource_version: 0,
-                deletion_timestamp: 0, // TODO now
+                deletion_timestamp: now_millis,
             })),
             VersionedObject::Tombstone(tombstone) => {
                 if tombstone.owner_zone == incoming_zone {
@@ -126,6 +127,7 @@ impl MergeStrategy for DefaultMerge {
         mut incoming: DynamicObject,
         incoming_version: Version,
         incoming_zone: &str,
+        now_millis: u64,
     ) -> Result<UpdateResult> {
         incoming.normalize(incoming_zone);
         let name = incoming.get_namespaced_name();
@@ -148,7 +150,7 @@ impl MergeStrategy for DefaultMerge {
                         owner_version: incoming_version,
                         owner_zone: incoming_zone.into(),
                         resource_version: incoming_version,
-                        deletion_timestamp: 0, // TODO  now
+                        deletion_timestamp: now_millis,
                     },
                     object: incoming,
                 })
@@ -159,7 +161,7 @@ impl MergeStrategy for DefaultMerge {
                 owner_version: incoming_version,
                 owner_zone: incoming_zone.into(),
                 resource_version: incoming_version,
-                deletion_timestamp: 0, // TODO  now
+                deletion_timestamp: now_millis,
             })),
             VersionedObject::Tombstone(tombstone) => {
                 let max_version = Version::max(tombstone.owner_version, incoming_version);
@@ -169,7 +171,7 @@ impl MergeStrategy for DefaultMerge {
                     owner_version: max_version,
                     owner_zone: incoming_zone.to_owned(),
                     resource_version: tombstone.resource_version,
-                    deletion_timestamp: 0, // TODO now
+                    deletion_timestamp: now_millis,
                 }))
             }
         }
@@ -403,10 +405,10 @@ pub mod tests {
                 owner_version: 1,
                 owner_zone: "test".into(),
                 resource_version: 0,
-                deletion_timestamp: 0
+                deletion_timestamp: 17
             }),
             DefaultMerge::new(gvk)
-                .mesh_delete(VersionedObject::NonExisting, incoming, "test")
+                .mesh_delete(VersionedObject::NonExisting, incoming, "test", 17)
                 .unwrap()
         );
     }
@@ -434,7 +436,7 @@ pub mod tests {
                 deletion_timestamp: 0,
             }),
             DefaultMerge::new(gvk)
-                .mesh_delete(existing, incoming, "test")
+                .mesh_delete(existing, incoming, "test", 17)
                 .unwrap()
         );
     }
@@ -462,7 +464,7 @@ pub mod tests {
                 deletion_timestamp: 0,
             }),
             DefaultMerge::new(gvk)
-                .mesh_delete(existing, incoming, "test")
+                .mesh_delete(existing, incoming, "test", 17)
                 .unwrap()
         );
     }
@@ -481,10 +483,10 @@ pub mod tests {
                 owner_version: 1,
                 owner_zone: "test".into(),
                 resource_version: 10,
-                deletion_timestamp: 0,
+                deletion_timestamp: 17,
             }),
             DefaultMerge::new(gvk)
-                .mesh_delete(current.into(), incoming, "test")
+                .mesh_delete(current.into(), incoming, "test", 17)
                 .unwrap()
         );
     }
@@ -503,10 +505,10 @@ pub mod tests {
                 owner_version: 2,
                 owner_zone: "test".into(),
                 resource_version: 10,
-                deletion_timestamp: 0,
+                deletion_timestamp: 17,
             }),
             DefaultMerge::new(gvk)
-                .mesh_delete(current.into(), incoming, "test")
+                .mesh_delete(current.into(), incoming, "test", 17)
                 .unwrap()
         );
     }
@@ -610,10 +612,10 @@ pub mod tests {
                 owner_version: 2,
                 owner_zone: "test".into(),
                 resource_version: 2,
-                deletion_timestamp: 0,
+                deletion_timestamp: 17,
             }),
             DefaultMerge::new(gvk)
-                .kube_delete(VersionedObject::NonExisting, incoming, 2, "test")
+                .kube_delete(VersionedObject::NonExisting, incoming, 2, "test", 17)
                 .unwrap()
         );
     }
@@ -638,10 +640,10 @@ pub mod tests {
                 owner_version: 2,
                 owner_zone: "test".into(),
                 resource_version: 5,
-                deletion_timestamp: 0,
+                deletion_timestamp: 17,
             }),
             DefaultMerge::new(gvk)
-                .kube_delete(existing, incoming, 2, "test")
+                .kube_delete(existing, incoming, 2, "test", 17)
                 .unwrap()
         );
     }
@@ -662,11 +664,11 @@ pub mod tests {
                     owner_version: 2,
                     owner_zone: "test".into(),
                     resource_version: 2,
-                    deletion_timestamp: 0,
+                    deletion_timestamp: 17,
                 }
             },
             DefaultMerge::new(gvk)
-                .kube_delete(existing.into(), incoming, 2, "test")
+                .kube_delete(existing.into(), incoming, 2, "test", 17)
                 .unwrap()
         );
     }

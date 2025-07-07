@@ -20,12 +20,6 @@ pub struct AnyApplicationMerge {
     gvk: GroupVersionKind,
 }
 
-impl Default for AnyApplicationMerge {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl MergeStrategy for AnyApplicationMerge {
     fn mesh_update(
         &self,
@@ -50,10 +44,11 @@ impl MergeStrategy for AnyApplicationMerge {
         current: VersionedObject,
         incoming: DynamicObject,
         incoming_zone: &str,
+        now_millis: u64,
     ) -> Result<MergeResult> {
         match current {
             VersionedObject::Object(current) => {
-                self.mesh_delete_internal(current, incoming, incoming_zone)
+                self.mesh_delete_internal(current, incoming, incoming_zone, now_millis)
             }
             VersionedObject::NonExisting => Ok(MergeResult::Tombstone(Tombstone {
                 gvk: self.gvk.to_owned(),
@@ -61,7 +56,7 @@ impl MergeStrategy for AnyApplicationMerge {
                 owner_version: incoming.get_owner_version_or_fail()?,
                 owner_zone: incoming_zone.into(),
                 resource_version: 0,
-                deletion_timestamp: 0, //TODO now
+                deletion_timestamp: now_millis,
             })),
             VersionedObject::Tombstone(tombstone) => {
                 if tombstone.owner_zone == incoming_zone {
@@ -76,7 +71,7 @@ impl MergeStrategy for AnyApplicationMerge {
                         owner_version: version,
                         owner_zone: incoming_zone.into(),
                         resource_version: tombstone.resource_version,
-                        deletion_timestamp: 0, //TODO now
+                        deletion_timestamp: now_millis,
                     }))
                 } else {
                     Ok(MergeResult::Skip)
@@ -194,6 +189,7 @@ impl MergeStrategy for AnyApplicationMerge {
         incoming: DynamicObject,
         incoming_version: Version,
         incoming_zone: &str,
+        now_millis: u64,
     ) -> Result<UpdateResult> {
         let name = incoming.get_namespaced_name();
         let mut incoming: AnyApplication = incoming.clone().try_parse()?;
@@ -217,7 +213,7 @@ impl MergeStrategy for AnyApplicationMerge {
                         owner_version: incoming_version,
                         owner_zone: incoming_zone.to_owned(),
                         resource_version: incoming_version,
-                        deletion_timestamp: 0, //TODO now
+                        deletion_timestamp: now_millis,
                     },
                 })
             }
@@ -227,7 +223,7 @@ impl MergeStrategy for AnyApplicationMerge {
                 owner_version: incoming_version,
                 owner_zone: incoming_zone.to_owned(),
                 resource_version: incoming_version,
-                deletion_timestamp: 0, // TODO now
+                deletion_timestamp: now_millis,
             })),
             VersionedObject::Tombstone(tombstone) => {
                 let max_version = Version::max(tombstone.owner_version, incoming_version);
@@ -237,10 +233,16 @@ impl MergeStrategy for AnyApplicationMerge {
                     owner_version: max_version,
                     owner_zone: incoming_zone.to_owned(),
                     resource_version: tombstone.resource_version,
-                    deletion_timestamp: 0, // TODO now
+                    deletion_timestamp: now_millis,
                 }))
             }
         }
+    }
+}
+
+impl Default for AnyApplicationMerge {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -505,6 +507,7 @@ impl AnyApplicationMerge {
         current: DynamicObject,
         incoming: DynamicObject,
         incoming_zone: &str,
+        now_millis: u64,
     ) -> Result<MergeResult> {
         let current_resource_version = current.get_resource_version();
         let current: AnyApplication = current.try_parse()?;
@@ -525,7 +528,7 @@ impl AnyApplicationMerge {
                 owner_version: incoming_owner_version,
                 owner_zone: incoming_owner_zone,
                 resource_version: current_resource_version,
-                deletion_timestamp: 0, // TODO now
+                deletion_timestamp: now_millis,
             }))
         } else {
             Ok(MergeResult::Skip)
@@ -794,10 +797,10 @@ pub mod tests {
                 owner_version: 1,
                 owner_zone: "zone1".into(),
                 resource_version: 0,
-                deletion_timestamp: 0,
+                deletion_timestamp: 17,
             }),
             strategy
-                .mesh_delete(VersionedObject::NonExisting, incoming, "zone1")
+                .mesh_delete(VersionedObject::NonExisting, incoming, "zone1", 17)
                 .unwrap()
         );
     }
@@ -822,9 +825,11 @@ pub mod tests {
                 owner_version: 1,
                 owner_zone: "zone1".into(),
                 resource_version: 5,
-                deletion_timestamp: 0,
+                deletion_timestamp: 17,
             }),
-            strategy.mesh_delete(existing, incoming, "zone1").unwrap()
+            strategy
+                .mesh_delete(existing, incoming, "zone1", 17)
+                .unwrap()
         );
     }
 
@@ -848,9 +853,11 @@ pub mod tests {
                 owner_version: 2,
                 owner_zone: "zone1".into(),
                 resource_version: 5,
-                deletion_timestamp: 0
+                deletion_timestamp: 17
             }),
-            strategy.mesh_delete(existing, incoming, "zone1").unwrap()
+            strategy
+                .mesh_delete(existing, incoming, "zone1", 17)
+                .unwrap()
         );
     }
 
@@ -869,7 +876,9 @@ pub mod tests {
         let strategy = AnyApplicationMerge::new();
         assert_eq!(
             MergeResult::Skip,
-            strategy.mesh_delete(existing, incoming, "zone1").unwrap()
+            strategy
+                .mesh_delete(existing, incoming, "zone1", 17)
+                .unwrap()
         );
     }
 
@@ -883,7 +892,7 @@ pub mod tests {
         assert_eq!(
             MergeResult::Skip,
             strategy
-                .mesh_delete(current.into(), incoming, "zone1")
+                .mesh_delete(current.into(), incoming, "zone1", 17)
                 .unwrap()
         );
     }
@@ -902,10 +911,10 @@ pub mod tests {
                 owner_version: 2,
                 owner_zone: "zone1".into(),
                 resource_version: 10,
-                deletion_timestamp: 0,
+                deletion_timestamp: 17,
             }),
             strategy
-                .mesh_delete(current.into(), incoming, "zone1")
+                .mesh_delete(current.into(), incoming, "zone1", 17)
                 .unwrap()
         );
     }
@@ -1134,10 +1143,10 @@ pub mod tests {
                 owner_version: 2,
                 owner_zone: "zone1".into(),
                 resource_version: 2,
-                deletion_timestamp: 0
+                deletion_timestamp: 17
             }),
             AnyApplicationMerge::new()
-                .kube_delete(VersionedObject::NonExisting, incoming, 2, "zone1")
+                .kube_delete(VersionedObject::NonExisting, incoming, 2, "zone1", 17)
                 .unwrap()
         );
     }
@@ -1161,10 +1170,10 @@ pub mod tests {
                 owner_version: 2,
                 owner_zone: "zone1".into(),
                 resource_version: 5,
-                deletion_timestamp: 0,
+                deletion_timestamp: 17,
             }),
             AnyApplicationMerge::new()
-                .kube_delete(existing, incoming, 2, "zone1")
+                .kube_delete(existing, incoming, 2, "zone1", 17)
                 .unwrap()
         );
     }
@@ -1188,10 +1197,10 @@ pub mod tests {
                 owner_version: 2,
                 owner_zone: "zone1".into(),
                 resource_version: 3,
-                deletion_timestamp: 0
+                deletion_timestamp: 17
             }),
             AnyApplicationMerge::new()
-                .kube_delete(existing, incoming, 2, "zone1")
+                .kube_delete(existing, incoming, 2, "zone1", 17)
                 .unwrap()
         );
     }
@@ -1213,11 +1222,11 @@ pub mod tests {
                     owner_version: 2,
                     owner_zone: "zone1".into(),
                     resource_version: 2,
-                    deletion_timestamp: 0
+                    deletion_timestamp: 17
                 },
             },
             AnyApplicationMerge::new()
-                .kube_delete(current.into(), incoming, 2, "zone1")
+                .kube_delete(current.into(), incoming, 2, "zone1", 17)
                 .unwrap()
         );
     }

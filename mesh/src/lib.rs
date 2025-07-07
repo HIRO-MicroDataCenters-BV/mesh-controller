@@ -11,6 +11,7 @@ pub mod metrics;
 pub mod network;
 pub mod node;
 pub mod tracing;
+pub mod utils;
 
 pub mod built_info {
     // The file has been placed there by the build script.

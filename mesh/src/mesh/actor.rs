@@ -1,8 +1,10 @@
+use std::sync::Arc;
 use std::time::Duration;
 use std::time::SystemTime;
 
 use crate::client::kube_client::ClientError;
 use crate::config::configuration::PeriodicSnapshotConfig;
+use crate::config::configuration::TombstoneConfig;
 use crate::kube::dynamic_object_ext::DynamicObjectExt;
 use crate::kube::event::KubeEvent;
 use crate::kube::subscriptions::Subscriptions;
@@ -13,7 +15,7 @@ use crate::merge::types::Tombstone;
 use crate::mesh::event::MeshEvent;
 use crate::mesh::operation_log::OperationLog;
 use crate::mesh::operation_log::Ready;
-use anyhow::Context;
+use crate::utils::types::Clock;
 use anyhow::Result;
 use futures::StreamExt;
 use kube::api::DynamicObject;
@@ -42,8 +44,10 @@ pub struct MeshActor {
     operation_log: OperationLog,
     operations: LinkedOperations,
     partition: Partition,
+    clock: Arc<dyn Clock>,
     cancelation: CancellationToken,
     snapshot_config: PeriodicSnapshotConfig,
+    tombstone_config: TombstoneConfig,
     last_snapshot_time: SystemTime,
     own_log_id: MeshLogId,
 }
@@ -53,8 +57,10 @@ impl MeshActor {
     pub fn new(
         key: PrivateKey,
         snapshot_config: PeriodicSnapshotConfig,
+        tombstone_config: TombstoneConfig,
         instance_id: InstanceId,
         partition: Partition,
+        clock: Arc<dyn Clock>,
         cancelation: CancellationToken,
         topic_log_map: MeshTopicLogMap,
         network_tx: mpsc::Sender<Operation<Extensions>>,
@@ -65,6 +71,7 @@ impl MeshActor {
     ) -> MeshActor {
         let own_log_id = MeshLogId(instance_id.clone());
         MeshActor {
+            last_snapshot_time: clock.now(),
             operations: LinkedOperations::new(key.clone(), instance_id.clone()),
             operation_log: OperationLog::new(
                 own_log_id.clone(),
@@ -78,9 +85,10 @@ impl MeshActor {
             event_rx,
             subscriptions,
             partition,
+            clock,
             cancelation,
             snapshot_config,
-            last_snapshot_time: SystemTime::now(),
+            tombstone_config,
             own_log_id,
         }
     }
@@ -323,18 +331,15 @@ impl MeshActor {
         self.on_ready().await?;
         let truncate_size =
             self.operations.count_since_snapshot() >= self.snapshot_config.snapshot_max_log;
-        let now_seconds = SystemTime::now()
-            .duration_since(self.last_snapshot_time)
-            .context("compute duration since last snapshot time")?
-            .as_secs();
+        let now_seconds = self.clock.now_millis() / 1000;
         let snapshot_time = now_seconds > self.snapshot_config.snapshot_interval_seconds;
         if truncate_size || snapshot_time {
             self.send_snapshot().await?;
             self.operation_log.truncate_obsolete_logs().await?;
         }
 
-        let truncate_partition_time = now_seconds;
-        self.partition.drop_tombstones(truncate_partition_time);
+        self.partition
+            .drop_tombstones(self.tombstone_config.tombstone_retention_interval_seconds);
 
         Ok(())
     }
@@ -344,7 +349,7 @@ impl MeshActor {
         let event = self.partition.get_mesh_snapshot(&self.instance_id.zone);
         let operation = self.operations.next(event);
         self.on_incoming_from_network(operation).await?;
-        self.last_snapshot_time = SystemTime::now();
+        self.last_snapshot_time = self.clock.now();
         Ok(())
     }
 }

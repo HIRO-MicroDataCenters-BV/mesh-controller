@@ -71,6 +71,7 @@ pub trait MergeStrategy: Send + Sync {
         incoming: DynamicObject,
         incoming_resource_version: Version,
         incoming_zone: &str,
+        now_millis: u64,
     ) -> Result<UpdateResult>;
 
     fn mesh_update(
@@ -86,6 +87,7 @@ pub trait MergeStrategy: Send + Sync {
         current: VersionedObject,
         incoming: DynamicObject,
         incoming_zone: &str,
+        now_millis: u64,
     ) -> Result<MergeResult>;
 
     fn is_owner_zone(&self, current: &VersionedObject, zone: &str) -> bool;

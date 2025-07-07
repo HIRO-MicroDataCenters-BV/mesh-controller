@@ -7,6 +7,7 @@ use super::event::MeshEvent;
 use crate::{
     kube::subscriptions::Version,
     merge::types::{Tombstone, VersionedObject},
+    utils::types::Clock,
 };
 use crate::{
     kube::{dynamic_object_ext::DynamicObjectExt, event::KubeEvent, types::NamespacedName},
@@ -19,17 +20,19 @@ use tracing::{debug, warn};
 pub struct Partition {
     resources: BTreeMap<NamespacedName, VersionedObject>,
     merge_strategy: Arc<dyn MergeStrategy>,
+    clock: Arc<dyn Clock>,
     initialized: bool,
 }
 
 impl Partition {
-    pub fn new<M>(merge_strategy: M) -> Partition
+    pub fn new<M>(merge_strategy: M, clock: Arc<dyn Clock>) -> Partition
     where
         M: MergeStrategy + 'static,
     {
         Partition {
             resources: BTreeMap::new(),
             merge_strategy: Arc::new(merge_strategy),
+            clock,
             initialized: false,
         }
     }
@@ -66,9 +69,12 @@ impl Partition {
                     .get(&name)
                     .cloned()
                     .unwrap_or(VersionedObject::NonExisting);
-                let result = self
-                    .merge_strategy
-                    .mesh_delete(current, incoming, incoming_zone)?;
+                let result = self.merge_strategy.mesh_delete(
+                    current,
+                    incoming,
+                    incoming_zone,
+                    self.clock.now_millis(),
+                )?;
                 self.mesh_update_partition(&result);
                 Ok(vec![result])
             }
@@ -141,6 +147,7 @@ impl Partition {
                         current.clone(),
                         object.clone(),
                         incoming_zone,
+                        self.clock.now_millis(),
                     )?;
                     self.mesh_update_partition(&result);
                     results.push(result);
@@ -215,9 +222,13 @@ impl Partition {
                     .get(&name)
                     .cloned()
                     .unwrap_or(VersionedObject::NonExisting);
-                let result =
-                    self.merge_strategy
-                        .kube_delete(current, object, version, current_zone)?;
+                let result = self.merge_strategy.kube_delete(
+                    current,
+                    object,
+                    version,
+                    current_zone,
+                    self.clock.now_millis(),
+                )?;
                 self.kube_update_partition(&result)?;
                 Ok(result)
             }
@@ -370,7 +381,7 @@ impl Partition {
                             owner_version,
                             owner_zone: current_zone.to_owned(),
                             resource_version,
-                            deletion_timestamp: 0, // TODO now
+                            deletion_timestamp: self.clock.now_millis(),
                         };
                         self.resources
                             .insert(name.to_owned(), VersionedObject::Tombstone(tombstone));
@@ -408,15 +419,23 @@ impl Partition {
             .unwrap_or_default()
     }
 
-    pub fn drop_tombstones(&mut self, _truncate_older_seconds: u64) {
-        // TODO implement
-        self.resources.retain(|_, _obj| true);
+    pub fn drop_tombstones(&mut self, retention_interval_seconds: u64) {
+        let now = self.clock.now_millis();
+        let cutover_millis = now.saturating_sub(retention_interval_seconds * 1000);
+
+        self.resources.retain(|_, obj| match obj {
+            VersionedObject::Tombstone(Tombstone {
+                deletion_timestamp, ..
+            }) => *deletion_timestamp > cutover_millis,
+            VersionedObject::NonExisting => false,
+            VersionedObject::Object(_) => true,
+        });
     }
 }
 
 #[cfg(test)]
 pub mod tests {
-    use std::collections::BTreeMap;
+    use std::{collections::BTreeMap, sync::Arc};
 
     use anyapplication::{anyapplication::*, anyapplication_ext::*};
     use kube::api::{DynamicObject, ObjectMeta};
@@ -432,6 +451,7 @@ pub mod tests {
             types::{MergeResult, Tombstone},
         },
         mesh::{event::MeshEvent, partition::Partition},
+        utils::clock::FakeClock,
     };
 
     // TODO snapshot test
@@ -794,9 +814,11 @@ pub mod tests {
 
     impl ReplicationTestRunner {
         pub fn new_anyapp(zone_a: &str, zone_b: &str) -> ReplicationTestRunner {
+            let clock = Arc::new(FakeClock::new());
+            clock.set_time_millis(0);
             ReplicationTestRunner {
-                partition_a: Partition::new(AnyApplicationMerge::new()),
-                partition_b: Partition::new(AnyApplicationMerge::new()),
+                partition_a: Partition::new(AnyApplicationMerge::new(), clock.clone()),
+                partition_b: Partition::new(AnyApplicationMerge::new(), clock),
                 zone_a: zone_a.into(),
                 zone_b: zone_b.into(),
             }

@@ -8,7 +8,7 @@ use std::{
 
 use crate::config::configuration::{
     Config, KnownNode, KubeConfiguration, KubeConfigurationExternal, MergeStrategyType, MeshConfig,
-    PeriodicSnapshotConfig, ResourceConfig,
+    PeriodicSnapshotConfig, ResourceConfig, TombstoneConfig,
 };
 
 static TEST_INSTANCE_HTTP_PORT: Lazy<AtomicU16> = Lazy::new(|| AtomicU16::new(18080));
@@ -36,6 +36,9 @@ pub fn generate_config(
             snapshot_interval_seconds: 10,
             snapshot_max_log: 10,
         },
+        tombstone: TombstoneConfig {
+            tombstone_retention_interval_seconds: 100,
+        },
         resource: ResourceConfig {
             group: gvk.group.to_owned(),
             version: gvk.version.to_owned(),
@@ -52,9 +55,8 @@ pub fn configure_network(nodes: Vec<(&mut Config, &PrivateKey)>) {
     let mut nodes = nodes;
     for i in 0..nodes.len() {
         let mut known_nodes = vec![];
-        for j in 0..nodes.len() {
+        for (j, (node_config, private_key)) in nodes.iter().enumerate() {
             if i != j {
-                let (node_config, private_key) = &nodes[j];
                 known_nodes.push(KnownNode {
                     public_key: private_key.public_key(),
                     direct_addresses: vec![format!("127.0.0.1:{}", node_config.node.bind_port)],
