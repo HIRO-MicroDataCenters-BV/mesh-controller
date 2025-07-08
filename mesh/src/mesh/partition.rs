@@ -116,7 +116,7 @@ impl Partition {
         incoming_zone: &str,
         current_zone: &str,
     ) -> Result<Vec<MergeResult>> {
-        let existing: HashSet<NamespacedName> = self
+        let in_partition: HashSet<NamespacedName> = self
             .resources
             .iter()
             .filter(|(_, v)| self.merge_strategy.is_owner_zone(v, incoming_zone))
@@ -131,31 +131,23 @@ impl Partition {
 
         let to_update = incoming.clone();
         let to_delete_non_existing: HashSet<&NamespacedName> =
-            existing.difference(&incoming).collect();
+            in_partition.difference(&incoming).collect();
 
         let mut results = vec![];
 
         for name in to_delete_non_existing {
             let current = self
                 .resources
-                .get(name)
-                .unwrap_or(&VersionedObject::NonExisting);
-
-            match current {
-                VersionedObject::Object(object) => {
-                    let result = self.merge_strategy.mesh_delete(
-                        current.clone(),
-                        object.clone(),
-                        incoming_zone,
-                        self.clock.now_millis(),
-                    )?;
-                    self.mesh_update_partition(&result);
-                    results.push(result);
-                }
-                VersionedObject::NonExisting | VersionedObject::Tombstone(_) => {
-                    // Nothing to do since the object is does not exist in destination repository
-                }
-            }
+                .remove(name)
+                .unwrap_or(VersionedObject::NonExisting);
+            let Some(tombstone) = self
+                .merge_strategy
+                .tombstone(current, self.clock.now_millis())?
+            else {
+                continue;
+            };
+            self.resources
+                .insert(name.to_owned(), VersionedObject::Tombstone(tombstone));
         }
         for name in to_update {
             let current = self
@@ -340,23 +332,19 @@ impl Partition {
             snapshot: owned_snapshot,
         };
 
-        if initial {
-            // partition should reflect the state of the kubernetes for not owned resources as well
-            // this is valid only for the first snapshot, all subsequent snapshots skip this initial loading
-            let not_owned_resources: HashSet<NamespacedName> = snapshot
-                .iter()
-                .filter(|(_, v)| !self.merge_strategy.is_owner_zone_object(v, current_zone))
-                .map(|(k, _)| k.to_owned())
-                .collect();
+        // partition should reflect the state of the kubernetes for not owned resources as well
+        // we must keep partition in sync with kubernetes snapshot, for not owned resources
+        snapshot
+            .iter()
+            .filter(|(_, v)| !self.merge_strategy.is_owner_zone_object(v, current_zone))
+            .for_each(|(name, object)| {
+                if !self.resources.contains_key(name) {
+                    self.resources
+                        .insert(name.to_owned(), VersionedObject::Object(object.to_owned()));
+                }
+            });
 
-            for name in not_owned_resources.into_iter() {
-                let object = snapshot
-                    .get(&name)
-                    .expect("Invariant failure. expected object in snapshot");
-                self.resources
-                    .insert(name.to_owned(), VersionedObject::Object(object.to_owned()));
-            }
-        } else {
+        if !initial {
             let owned_by_current_zone_not_in_snapshot: HashSet<NamespacedName> = self
                 .resources
                 .iter()
@@ -419,6 +407,17 @@ impl Partition {
             .unwrap_or_default()
     }
 
+    #[cfg(test)]
+    pub fn get_tombstone(&self, name: &NamespacedName) -> Option<Tombstone> {
+        self.resources
+            .get(name)
+            .map(|v| match v {
+                VersionedObject::Tombstone(tombstone) => Some(tombstone.to_owned()),
+                VersionedObject::NonExisting | VersionedObject::Object(_) => None,
+            })
+            .unwrap_or_default()
+    }
+
     pub fn drop_tombstones(&mut self, retention_interval_seconds: u64) {
         let now = self.clock.now_millis();
         let cutover_millis = now.saturating_sub(retention_interval_seconds * 1000);
@@ -439,6 +438,7 @@ pub mod tests {
 
     use anyapplication::{anyapplication::*, anyapplication_ext::*};
     use kube::api::{DynamicObject, ObjectMeta};
+    use maplit::btreemap;
 
     use crate::{
         kube::{
@@ -447,15 +447,215 @@ pub mod tests {
         },
         merge::{
             anyapplication_strategy::AnyApplicationMerge,
-            anyapplication_test_support::tests::{anycond, anyplacements, anyspec},
-            types::{MergeResult, Tombstone},
+            anyapplication_test_support::tests::{anycond, anyplacements, anyspec, anystatus},
+            types::{MergeResult, Tombstone, UpdateResult},
         },
         mesh::{event::MeshEvent, partition::Partition},
         utils::clock::FakeClock,
     };
 
-    // TODO snapshot test
-    // TODO drop tombstones test
+    #[test]
+    fn snapshot_handling() {
+        let name_a1 = NamespacedName::new("default".into(), "nginx-app-a1".into());
+        let mut app_a1 = anyapp(
+            &name_a1,
+            1,
+            anyspec(1),
+            Some(anystatus("A", anyplacements("A", None), None)),
+        );
+        app_a1.set_resource_version(1);
+        let name_a2 = NamespacedName::new("default".into(), "nginx-app-a2".into());
+        let mut app_a2 = anyapp(
+            &name_a2,
+            1,
+            anyspec(1),
+            Some(anystatus("A", anyplacements("A", None), None)),
+        );
+        app_a2.set_resource_version(1);
+
+        let name_b1 = NamespacedName::new("default".into(), "nginx-app-b1".into());
+        let mut app_b1 = anyapp(
+            &name_b1,
+            1,
+            anyspec(1),
+            Some(anystatus("B", anyplacements("B", None), None)),
+        );
+        app_b1.set_resource_version(1);
+        app_b1.set_owner_zone("B".into());
+        let name_b2 = NamespacedName::new("default".into(), "nginx-app-b2".into());
+        let mut app_b2 = anyapp(
+            &name_b2,
+            1,
+            anyspec(1),
+            Some(anystatus("B", anyplacements("B", None), None)),
+        );
+        app_b2.set_resource_version(1);
+        app_b2.set_owner_zone("B".into());
+        let name_b3 = NamespacedName::new("default".into(), "nginx-app-b3".into());
+        let mut app_b3 = anyapp(
+            &name_b3,
+            1,
+            anyspec(1),
+            Some(anystatus("B", anyplacements("B", None), None)),
+        );
+        app_b3.set_resource_version(1);
+        app_b3.set_owner_zone("B".into());
+
+        let mut partition = Partition::new(AnyApplicationMerge::new(), Arc::new(FakeClock::new()));
+
+        // 1. Outgoing initial snapshot
+        let actual_snapshot = kube_apply_snapshot(
+            &mut partition,
+            btreemap! {
+                name_a1.clone() => app_a1.to_owned(),
+                name_a2.clone() => app_a2.to_owned(),
+                name_b1.clone() => app_b1.to_owned(),
+            },
+            1,
+        );
+
+        // app_a1 and appa2 should be in the snapshot
+        assert_eq!(actual_snapshot.get(&name_a1).unwrap(), &app_a1);
+        assert_eq!(actual_snapshot.get(&name_a2).unwrap(), &app_a2);
+
+        // app_b1 should not be in snapshot, but it should be registered in partition
+        assert_eq!(actual_snapshot.get(&name_b1), None);
+        assert_eq!(partition.get(&name_b1).unwrap(), app_b1);
+
+        // 2. Outgoing incremental snapshot
+        app_a1.set_resource_version(2);
+        let snapshot = btreemap! {
+            name_a1.clone() => app_a1.to_owned(),
+            name_b1.clone() => app_b1.to_owned(),
+            name_b2.clone() => app_b2.to_owned(),
+        };
+
+        let actual_snapshot = kube_apply_snapshot(&mut partition, snapshot, 2);
+
+        // app_a1 should be in the snapshot with updated version
+        app_a1.set_owner_version(2);
+        assert_eq!(actual_snapshot.get(&name_a1).unwrap(), &app_a1);
+
+        // app_a2 should not be in the snapshot, but partition will get tombstone for a2
+        assert_eq!(actual_snapshot.get(&name_a2), None);
+        assert_eq!(partition.get(&name_a1), None);
+
+        // app_b1 should not be in snapshot, but it should be registered in partition
+        assert_eq!(actual_snapshot.get(&name_b1), None);
+        assert_eq!(partition.get(&name_b1).unwrap(), app_b1);
+
+        // app_b2 should not be in snapshot, and it should be registered in partition
+        assert_eq!(actual_snapshot.get(&name_b2), None);
+        assert_eq!(partition.get(&name_b2).unwrap(), app_b2);
+
+        // 3. Incoming snapshot
+
+        app_b1.set_owner_version(2);
+        app_b1.unset_resource_version();
+        app_b3.unset_resource_version();
+        let snapshot = btreemap! {
+            name_b1.clone() => app_b1.to_owned(),
+            name_b3.clone() => app_b3.to_owned(),
+        };
+
+        let mut actual_merge_result = partition
+            .mesh_apply_snapshot(snapshot, "B", "A")
+            .expect("Incoming snapshot should be applied");
+        sort_merge_results(&mut actual_merge_result);
+
+        app_b1.set_resource_version(1);
+        let expected_merge_result = vec![
+            MergeResult::Create {
+                object: app_b3.to_owned(),
+            },
+            MergeResult::Update {
+                object: app_b1.to_owned(),
+            },
+        ];
+        assert_eq!(
+            actual_merge_result, expected_merge_result,
+            "Expected merge result for incoming snapshot"
+        );
+
+        app_b1.set_resource_version(1);
+        assert_eq!(partition.get(&name_b1).unwrap(), app_b1);
+
+        assert_eq!(partition.get(&name_b2), None);
+
+        assert_eq!(partition.get(&name_b3).unwrap(), app_b3);
+    }
+
+    fn kube_apply_snapshot(
+        partition: &mut Partition,
+        snapshot: BTreeMap<NamespacedName, DynamicObject>,
+        version: Version,
+    ) -> BTreeMap<NamespacedName, DynamicObject> {
+        let update_result = partition
+            .kube_apply(KubeEvent::Snapshot { version, snapshot }, "A")
+            .expect("Snapshot should be applied");
+
+        let UpdateResult::Snapshot {
+            snapshot: actual_snapshot,
+        } = update_result
+        else {
+            panic!("Expected snapshot result");
+        };
+
+        actual_snapshot
+    }
+
+    #[test]
+    fn should_drop_tombstones_periodically() {
+        let name_a1 = NamespacedName::new("default".into(), "nginx-app-a1".into());
+        let mut app_a1 = anyapp(
+            &name_a1,
+            1,
+            anyspec(1),
+            Some(anystatus("A", anyplacements("A", None), None)),
+        );
+        app_a1.set_resource_version(1);
+
+        let clock = Arc::new(FakeClock::new());
+        clock.set_time_millis(10000);
+        let mut partition = Partition::new(AnyApplicationMerge::new(), clock.to_owned());
+
+        // 1. Outgoing initial snapshot
+        let actual_snapshot = kube_apply_snapshot(
+            &mut partition,
+            btreemap! {
+                name_a1.clone() => app_a1.to_owned(),
+            },
+            1,
+        );
+
+        assert_eq!(actual_snapshot.get(&name_a1).unwrap(), &app_a1);
+
+        // 1. Applying empty snapshot and deleting object a1
+        kube_apply_snapshot(&mut partition, btreemap! {}, 1);
+
+        assert_eq!(
+            partition.get_tombstone(&name_a1).unwrap(),
+            Tombstone {
+                gvk: app_a1.get_gvk().unwrap(),
+                name: name_a1.clone(),
+                owner_version: app_a1.get_owner_version().unwrap_or(1),
+                owner_zone: "A".into(),
+                resource_version: 1,
+                deletion_timestamp: 10000,
+            }
+        );
+
+        clock.set_time_millis(19000);
+        partition.drop_tombstones(10);
+
+        assert!(partition.get_tombstone(&name_a1).is_some());
+
+        // Fast forward clock to 11 seconds
+        clock.set_time_millis(20000);
+        partition.drop_tombstones(10);
+
+        assert!(partition.get_tombstone(&name_a1).is_none());
+    }
 
     #[test]
     fn single_source_replication() {
@@ -782,14 +982,15 @@ pub mod tests {
     }
 
     pub fn anyapp(
+        name: &NamespacedName,
         owner_version: Version,
         spec: AnyApplicationSpec,
         status: Option<AnyApplicationStatus>,
     ) -> DynamicObject {
         let resource = AnyApplication {
             metadata: ObjectMeta {
-                name: Some("nginx-app".into()),
-                namespace: Some("default".into()),
+                name: Some(name.name.to_owned()),
+                namespace: Some(name.namespace.to_owned()),
                 labels: Some(BTreeMap::from([(
                     OWNER_VERSION.into(),
                     owner_version.to_string(),
@@ -1215,5 +1416,15 @@ pub mod tests {
             copy.resource_version = version;
             copy
         }
+    }
+
+    fn sort_merge_results(data: &mut Vec<MergeResult>) {
+        data.sort_by_key(|result| match result {
+            MergeResult::Skip => 0,
+            MergeResult::Create { .. } => 1,
+            MergeResult::Update { .. } => 2,
+            MergeResult::Delete(_) => 3,
+            MergeResult::Tombstone(_) => 4,
+        });
     }
 }

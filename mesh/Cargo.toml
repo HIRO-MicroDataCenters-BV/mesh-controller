@@ -60,6 +60,7 @@ anyapplication.workspace = true
 [dev-dependencies]
 figment = { workspace = true, features = ["test"] }
 once_cell.workspace = true
+maplit.workspace = true
 
 [build-dependencies]
 built.workspace = true

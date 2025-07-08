@@ -16,6 +16,7 @@ use crate::mesh::event::MeshEvent;
 use crate::mesh::operation_log::OperationLog;
 use crate::mesh::operation_log::Ready;
 use crate::utils::types::Clock;
+use anyhow::Context;
 use anyhow::Result;
 use futures::StreamExt;
 use kube::api::DynamicObject;
@@ -130,7 +131,7 @@ impl MeshActor {
 
         if let Some(event) = event {
             let operation = self.operations.next(event);
-            self.operation_log.insert(operation.clone()).await?;
+            self.operation_log.insert(operation).await?;
         }
         Ok(())
     }
@@ -331,8 +332,14 @@ impl MeshActor {
         self.on_ready().await?;
         let truncate_size =
             self.operations.count_since_snapshot() >= self.snapshot_config.snapshot_max_log;
-        let now_seconds = self.clock.now_millis() / 1000;
-        let snapshot_time = now_seconds > self.snapshot_config.snapshot_interval_seconds;
+        let duration_since_last_snapshot = self
+            .clock
+            .now()
+            .duration_since(self.last_snapshot_time)
+            .context("compute duration since last snapshot time")?
+            .as_secs();
+        let snapshot_time =
+            duration_since_last_snapshot > self.snapshot_config.snapshot_interval_seconds;
         if truncate_size || snapshot_time {
             self.send_snapshot().await?;
             self.operation_log.truncate_obsolete_logs().await?;

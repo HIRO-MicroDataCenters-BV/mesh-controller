@@ -68,6 +68,10 @@ impl MeshTopicLogMap {
     }
 
     pub fn remove_peer(&self, peer: &PublicKey) {
+        if peer == &self.inner.owner {
+            // If the peer is the owner, log update is handled via restart of application.
+            return;
+        }
         if let Some((peer, Some(log_id))) = self.inner.peers.remove(peer) {
             self.inner
                 .obsolete_logs
@@ -78,14 +82,23 @@ impl MeshTopicLogMap {
     }
 
     pub fn get_latest_log(&self, peer: &PublicKey) -> Option<MeshLogId> {
-        self.inner
-            .peers
-            .get(peer)
-            .map(|e| e.value().to_owned())
-            .unwrap_or(None)
+        if peer == &self.inner.owner {
+            // If the peer is the owner, return the log_id of the owner.
+            Some(self.inner.log_id.clone())
+        } else {
+            self.inner
+                .peers
+                .get(peer)
+                .map(|e| e.value().to_owned())
+                .unwrap_or(None)
+        }
     }
 
     pub fn update_log(&self, peer: PublicKey, log_id: MeshLogId) {
+        if peer == self.inner.owner {
+            // If the peer is the owner, log update is handled via restart of application.
+            return;
+        }
         if let Some(Some(log_id)) = self.inner.peers.insert(peer, Some(log_id)) {
             self.inner
                 .obsolete_logs
