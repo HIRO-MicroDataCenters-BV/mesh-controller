@@ -74,3 +74,5 @@ tower-service = { version = "0.3.3" }
 regex = { version = "1.11.1" }
 strum_macros = { version = "0.27.1" }
 maplit = { version = "1.0.2" }
+openssl = "=0.10.73"
+
