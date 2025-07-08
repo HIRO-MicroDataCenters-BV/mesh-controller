@@ -47,7 +47,7 @@ pub struct Tombstone {
 pub enum VersionedObject {
     NonExisting,
     Object(DynamicObject),
-    Tombstone(Tombstone), // TODO add delete timestamp
+    Tombstone(Tombstone),
 }
 
 impl From<DynamicObject> for VersionedObject {
@@ -89,6 +89,8 @@ pub trait MergeStrategy: Send + Sync {
         incoming_zone: &str,
         now_millis: u64,
     ) -> Result<MergeResult>;
+
+    fn tombstone(&self, current: VersionedObject, now_millis: u64) -> Result<Option<Tombstone>>;
 
     fn is_owner_zone(&self, current: &VersionedObject, zone: &str) -> bool;
 

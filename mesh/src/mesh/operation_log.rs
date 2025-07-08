@@ -607,7 +607,7 @@ pub mod tests {
         log.insert(remote_op23.clone()).await?;
         log.insert(remote_op24.clone()).await?;
 
-        // new log started from the last snapshot
+        // new log started from the last snapshot (version 2)
         assert_ready(
             &mut log,
             hashmap! { new_remote_mesh_log_id.clone() => vec![3]},

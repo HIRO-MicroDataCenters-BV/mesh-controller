@@ -238,6 +238,26 @@ impl MergeStrategy for AnyApplicationMerge {
             }
         }
     }
+
+    fn tombstone(&self, current: VersionedObject, now_millis: u64) -> Result<Option<Tombstone>> {
+        match current {
+            VersionedObject::Object(current) => {
+                let owner_zone = current.get_owner_zone()?;
+                let owner_version = current.get_owner_version().unwrap_or(0);
+                let tombstone = Tombstone {
+                    gvk: self.gvk.to_owned(),
+                    name: current.get_namespaced_name(),
+                    owner_version,
+                    owner_zone: owner_zone.to_owned(),
+                    resource_version: current.get_resource_version(),
+                    deletion_timestamp: now_millis,
+                };
+                Ok(Some(tombstone))
+            }
+            VersionedObject::NonExisting => Ok(None),
+            VersionedObject::Tombstone(tombstone) => Ok(Some(tombstone.clone())),
+        }
+    }
 }
 
 impl Default for AnyApplicationMerge {
