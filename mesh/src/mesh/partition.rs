@@ -407,6 +407,17 @@ impl Partition {
             .unwrap_or_default()
     }
 
+    #[cfg(test)]
+    pub fn get_tombstone(&self, name: &NamespacedName) -> Option<Tombstone> {
+        self.resources
+            .get(name)
+            .map(|v| match v {
+                VersionedObject::Tombstone(tombstone) => Some(tombstone.to_owned()),
+                VersionedObject::NonExisting | VersionedObject::Object(_) => None,
+            })
+            .unwrap_or_default()
+    }
+
     pub fn drop_tombstones(&mut self, retention_interval_seconds: u64) {
         let now = self.clock.now_millis();
         let cutover_millis = now.saturating_sub(retention_interval_seconds * 1000);
@@ -444,7 +455,7 @@ pub mod tests {
     };
 
     #[test]
-    fn snapshot_initial() {
+    fn snapshot_handling() {
         let name_a1 = NamespacedName::new("default".into(), "nginx-app-a1".into());
         let mut app_a1 = anyapp(
             &name_a1,
@@ -593,18 +604,58 @@ pub mod tests {
         actual_snapshot
     }
 
-    // TODO snapshot test
-    // TODO drop tombstones test
+    #[test]
+    fn should_drop_tombstones_periodically() {
+        let name_a1 = NamespacedName::new("default".into(), "nginx-app-a1".into());
+        let mut app_a1 = anyapp(
+            &name_a1,
+            1,
+            anyspec(1),
+            Some(anystatus("A", anyplacements("A", None), None)),
+        );
+        app_a1.set_resource_version(1);
 
-    // #[test]
-    // fn snapshot_incremental() {
+        let clock = Arc::new(FakeClock::new());
+        clock.set_time_millis(10000);
+        let mut partition = Partition::new(AnyApplicationMerge::new(), clock.to_owned());
 
-    // }
+        // 1. Outgoing initial snapshot
+        let actual_snapshot = kube_apply_snapshot(
+            &mut partition,
+            btreemap! {
+                name_a1.clone() => app_a1.to_owned(),
+            },
+            1,
+        );
 
-    // #[test]
-    // fn should_drop_tombstones_periodically() {
+        assert_eq!(actual_snapshot.get(&name_a1).unwrap(), &app_a1);
 
-    // }
+        // 1. Applying empty snapshot and deleting object a1
+        kube_apply_snapshot(&mut partition, btreemap! {}, 1);
+
+        assert_eq!(
+            partition.get_tombstone(&name_a1).unwrap(),
+            Tombstone {
+                gvk: app_a1.get_gvk().unwrap(),
+                name: name_a1.clone(),
+                owner_version: app_a1.get_owner_version().unwrap_or(1),
+                owner_zone: "A".into(),
+                resource_version: 1,
+                deletion_timestamp: 10000,
+            }
+        );
+
+        clock.set_time_millis(19000);
+        partition.drop_tombstones(10);
+
+        assert!(partition.get_tombstone(&name_a1).is_some());
+
+        // Fast forward clock to 11 seconds
+        clock.set_time_millis(20000);
+        partition.drop_tombstones(10);
+
+        assert!(partition.get_tombstone(&name_a1).is_none());
+    }
 
     #[test]
     fn single_source_replication() {
