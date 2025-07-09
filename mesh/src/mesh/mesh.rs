@@ -41,14 +41,11 @@ impl Mesh {
         network_tx: mpsc::Sender<Operation<Extensions>>,
         network_rx: mpsc::Receiver<Operation<Extensions>>,
     ) -> Result<Mesh> {
-        let resource = &config.resource;
-        let snapshot_config = config.snapshot.to_owned();
-        let tombstone_config = config.tombstone.to_owned();
-        let gvk = resource.get_gvk();
-        let namespace = &resource.namespace;
+
+        let gvk = config.resource.get_gvk();
         let clock = Arc::new(RealClock::new());
 
-        let partition = match resource.merge_strategy {
+        let partition = match config.resource.merge_strategy {
             MergeStrategyType::Default => {
                 Partition::new(DefaultMerge::new(gvk.to_owned()), clock.clone())
             }
@@ -57,12 +54,11 @@ impl Mesh {
             }
         };
         let subscriptions = Subscriptions::new(client);
-        let (subscriber_rx, _) = subscriptions.subscribe(&gvk, namespace).await?;
-        let event_rx = subscriber_rx.into_stream();
+        let (subscriber_rx, _) = subscriptions.subscribe(&gvk, &config.resource.namespace).await?;
         let actor = MeshActor::new(
             key,
-            snapshot_config,
-            tombstone_config,
+            config.snapshot.to_owned(),
+            config.tombstone.to_owned(),
             instance_id,
             partition,
             clock,
@@ -70,7 +66,7 @@ impl Mesh {
             topic_log_map,
             network_tx,
             network_rx,
-            event_rx,
+            subscriber_rx.into_stream(),
             subscriptions,
             store,
         );
