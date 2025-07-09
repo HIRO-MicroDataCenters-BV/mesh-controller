@@ -52,6 +52,7 @@ thiserror.workspace = true
 reqwest.workspace = true
 kube.workspace = true
 k8s-openapi.workspace=true
+schemars.workspace=true
 either.workspace = true
 fake-kube-api.workspace = true
 anyapplication.workspace = true
