@@ -41,7 +41,6 @@ impl Mesh {
         network_tx: mpsc::Sender<Operation<Extensions>>,
         network_rx: mpsc::Receiver<Operation<Extensions>>,
     ) -> Result<Mesh> {
-
         let gvk = config.resource.get_gvk();
         let clock = Arc::new(RealClock::new());
 
@@ -54,7 +53,9 @@ impl Mesh {
             }
         };
         let subscriptions = Subscriptions::new(client);
-        let (subscriber_rx, _) = subscriptions.subscribe(&gvk, &config.resource.namespace).await?;
+        let (subscriber_rx, _) = subscriptions
+            .subscribe(&gvk, &config.resource.namespace)
+            .await?;
         let actor = MeshActor::new(
             key,
             config.snapshot.to_owned(),

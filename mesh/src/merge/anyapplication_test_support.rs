@@ -5,9 +5,9 @@ pub mod tests {
 
     use anyapplication::{
         anyapplication::{
-            AnyApplication, AnyApplicationApplication, AnyApplicationApplicationHelm,
-            AnyApplicationSpec, AnyApplicationStatus, AnyApplicationStatusPlacements,
-            AnyApplicationStatusZones, AnyApplicationStatusZonesConditions,
+            AnyApplication, AnyApplicationSource, AnyApplicationSourceHelm, AnyApplicationSpec,
+            AnyApplicationStatus, AnyApplicationStatusPlacements, AnyApplicationStatusZones,
+            AnyApplicationStatusZonesConditions,
         },
         anyapplication_ext::OWNER_VERSION,
     };
@@ -27,19 +27,22 @@ pub mod tests {
                 ..Default::default()
             },
             spec: AnyApplicationSpec {
-                application: AnyApplicationApplication {
-                    helm: Some(AnyApplicationApplicationHelm {
+                source: AnyApplicationSource {
+                    helm: Some(AnyApplicationSourceHelm {
                         chart: "chart".into(),
                         version: "1.0.0".into(),
                         namespace: "namespace".into(),
                         repository: "repo".into(),
                         values: None,
+                        parameters: None,
+                        release_name: None,
+                        skip_crds: None,
                     }),
-                    resource_selector: None,
                 },
                 placement_strategy: None,
                 recover_strategy: None,
                 zones,
+                sync_policy: None,
             },
             status: Some(AnyApplicationStatus {
                 zones: None,
@@ -81,19 +84,22 @@ pub mod tests {
                 ..Default::default()
             },
             spec: AnyApplicationSpec {
-                application: AnyApplicationApplication {
-                    helm: Some(AnyApplicationApplicationHelm {
+                source: AnyApplicationSource {
+                    helm: Some(AnyApplicationSourceHelm {
                         chart: "chart".into(),
                         version: "1.0.0".into(),
                         namespace: "namespace".into(),
                         repository: "repo".into(),
                         values: None,
+                        parameters: None,
+                        release_name: None,
+                        skip_crds: None,
                     }),
-                    resource_selector: None,
                 },
                 placement_strategy: None,
                 recover_strategy: None,
                 zones,
+                sync_policy: None,
             },
             status: Some(AnyApplicationStatus {
                 zones: Some(zones_statuses.into()),
@@ -140,6 +146,7 @@ pub mod tests {
             status: "status".into(),
             r#type: cond_type.into(),
             zone_id: owner_zone.into(),
+            retry_attempt: None,
         }
     }
 
@@ -155,6 +162,7 @@ pub mod tests {
             status: status.into(),
             r#type: cond_type.into(),
             zone_id: owner_zone.into(),
+            retry_attempt: None,
         }
     }
 
@@ -187,19 +195,22 @@ pub mod tests {
 
     pub fn anyspec(zones: i64) -> AnyApplicationSpec {
         AnyApplicationSpec {
-            application: AnyApplicationApplication {
-                helm: Some(AnyApplicationApplicationHelm {
+            source: AnyApplicationSource {
+                helm: Some(AnyApplicationSourceHelm {
                     chart: "chart".into(),
                     version: "1.0.0".into(),
                     namespace: "namespace".into(),
                     repository: "repo".into(),
                     values: None,
+                    parameters: None,
+                    release_name: None,
+                    skip_crds: None,
                 }),
-                resource_selector: None,
             },
             placement_strategy: None,
             recover_strategy: None,
             zones,
+            sync_policy: None,
         }
     }
 }
