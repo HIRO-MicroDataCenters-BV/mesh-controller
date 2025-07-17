@@ -411,18 +411,21 @@ pub mod tests {
                 ..Default::default()
             },
             spec: AnyApplicationSpec {
-                application: AnyApplicationApplication {
-                    helm: Some(AnyApplicationApplicationHelm {
+                source: AnyApplicationSource {
+                    helm: Some(AnyApplicationSourceHelm {
                         chart: "chart".into(),
                         version: "1.0.0".into(),
                         namespace: "namespace".into(),
                         repository: "repo".into(),
                         values: None,
+                        parameters: None,
+                        release_name: None,
+                        skip_crds: None,
                     }),
-                    resource_selector: None,
                 },
                 placement_strategy: None,
                 recover_strategy: None,
+                sync_policy: None,
                 zones: 1,
             },
             status: Some(AnyApplicationStatus {

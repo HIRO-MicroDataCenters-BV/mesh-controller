@@ -7,7 +7,6 @@ mod prelude {
     pub use kube::CustomResource;
     pub use schemars::JsonSchema;
     pub use serde::{Deserialize, Serialize};
-    pub use std::collections::BTreeMap;
 }
 use self::prelude::*;
 
@@ -22,44 +21,27 @@ use self::prelude::*;
 #[kube(namespaced)]
 #[kube(status = "AnyApplicationStatus")]
 pub struct AnyApplicationSpec {
-    /// Foo is an example field of AnyApplication. Edit anyapplication_types.go to remove/update
-    pub application: AnyApplicationApplication,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        rename = "placement-strategy"
+        rename = "placementStrategy"
     )]
     pub placement_strategy: Option<AnyApplicationPlacementStrategy>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        rename = "recover-strategy"
+        rename = "recoverStrategy"
     )]
     pub recover_strategy: Option<AnyApplicationRecoverStrategy>,
-    pub zones: i64,
-}
-
-/// Foo is an example field of AnyApplication. Edit anyapplication_types.go to remove/update
-#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema, PartialEq)]
-pub struct AnyApplicationApplication {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub helm: Option<AnyApplicationApplicationHelm>,
+    /// Foo is an example field of AnyApplication. Edit anyapplication_types.go to remove/update
+    pub source: AnyApplicationSource,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        rename = "resourceSelector"
+        rename = "syncPolicy"
     )]
-    pub resource_selector: Option<BTreeMap<String, String>>,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema, PartialEq)]
-pub struct AnyApplicationApplicationHelm {
-    pub chart: String,
-    pub namespace: String,
-    pub repository: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub values: Option<String>,
-    pub version: String,
+    pub sync_policy: Option<AnyApplicationSyncPolicy>,
+    pub zones: i64,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, JsonSchema, PartialEq)]
@@ -72,15 +54,125 @@ pub struct AnyApplicationRecoverStrategy {
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        rename = "max-retries"
+        rename = "maxRetries"
     )]
     pub max_retries: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tolerance: Option<i64>,
 }
 
+/// Foo is an example field of AnyApplication. Edit anyapplication_types.go to remove/update
+#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema, PartialEq)]
+pub struct AnyApplicationSource {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub helm: Option<AnyApplicationSourceHelm>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema, PartialEq)]
+pub struct AnyApplicationSourceHelm {
+    pub chart: String,
+    pub namespace: String,
+    /// Parameters is a list of Helm parameters which are passed to the helm template command upon manifest generation
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parameters: Option<Vec<AnyApplicationSourceHelmParameters>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "releaseName"
+    )]
+    pub release_name: Option<String>,
+    pub repository: String,
+    /// SkipCrds skips custom resource definition installation step (Helm's --skip-crds)
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "skipCrds")]
+    pub skip_crds: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub values: Option<String>,
+    pub version: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema, PartialEq)]
+pub struct AnyApplicationSourceHelmParameters {
+    /// ForceString determines whether to tell Helm to interpret booleans and numbers as strings
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "forceString"
+    )]
+    pub force_string: Option<bool>,
+    /// Name is the name of the Helm parameter
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Value is the value for the Helm parameter
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema, PartialEq)]
+pub struct AnyApplicationSyncPolicy {
+    /// Automated will keep an application synced to the target revision
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub automated: Option<AnyApplicationSyncPolicyAutomated>,
+    /// Retry controls failed sync retry behavior
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry: Option<AnyApplicationSyncPolicyRetry>,
+    /// Options allow you to specify whole app sync-options
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "syncOptions"
+    )]
+    pub sync_options: Option<Vec<String>>,
+}
+
+/// Automated will keep an application synced to the target revision
+#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema, PartialEq)]
+pub struct AnyApplicationSyncPolicyAutomated {
+    /// AllowEmpty allows apps have zero live resources (default: false)
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "allowEmpty"
+    )]
+    pub allow_empty: Option<bool>,
+    /// Prune specifies whether to delete resources from the cluster that are not found in the sources anymore as part of automated sync (default: false)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prune: Option<bool>,
+    /// SelfHeal specifes whether to revert resources back to their desired state upon modification in the cluster (default: false)
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "selfHeal")]
+    pub self_heal: Option<bool>,
+}
+
+/// Retry controls failed sync retry behavior
+#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema, PartialEq)]
+pub struct AnyApplicationSyncPolicyRetry {
+    /// Backoff controls how to backoff on subsequent retries of failed syncs
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backoff: Option<AnyApplicationSyncPolicyRetryBackoff>,
+    /// Limit is the maximum number of attempts for retrying a failed sync. If set to 0, no retries will be performed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i64>,
+}
+
+/// Backoff controls how to backoff on subsequent retries of failed syncs
+#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema, PartialEq)]
+pub struct AnyApplicationSyncPolicyRetryBackoff {
+    /// Duration is the amount to back off. Default unit is seconds, but could also be a duration (e.g. "2m", "1h")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration: Option<String>,
+    /// Factor is a factor to multiply the base duration after each failed retry
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub factor: Option<i64>,
+    /// MaxDuration is the maximum amount of time allowed for the backoff strategy
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "maxDuration"
+    )]
+    pub max_duration: Option<String>,
+}
+
 /// AnyApplicationStatus defines the observed state of AnyApplication.
-#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
+#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema, PartialEq)]
 pub struct AnyApplicationStatus {
     pub owner: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -95,13 +187,13 @@ pub struct AnyApplicationStatusPlacements {
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        rename = "node-affinity"
+        rename = "nodeAffinity"
     )]
     pub node_affinity: Option<Vec<String>>,
     pub zone: String,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
+#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema, PartialEq)]
 pub struct AnyApplicationStatusZones {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub conditions: Option<Vec<AnyApplicationStatusZonesConditions>>,
@@ -118,6 +210,12 @@ pub struct AnyApplicationStatusZonesConditions {
     pub msg: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "retryAttempt"
+    )]
+    pub retry_attempt: Option<i64>,
     pub status: String,
     #[serde(rename = "type")]
     pub r#type: String,
