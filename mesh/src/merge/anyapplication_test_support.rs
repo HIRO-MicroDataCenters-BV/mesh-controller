@@ -134,6 +134,7 @@ pub mod tests {
         AnyApplicationStatusZones {
             zone_id: zone_id.into(),
             version,
+            chart_version: Some("1.0.0".into()),
             conditions: Some(conditions.into()),
         }
     }
