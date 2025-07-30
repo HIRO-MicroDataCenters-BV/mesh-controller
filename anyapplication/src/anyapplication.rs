@@ -195,6 +195,12 @@ pub struct AnyApplicationStatusPlacements {
 
 #[derive(Serialize, Deserialize, Clone, Debug, JsonSchema, PartialEq)]
 pub struct AnyApplicationStatusZones {
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "chartVersion"
+    )]
+    pub chart_version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub conditions: Option<Vec<AnyApplicationStatusZonesConditions>>,
     pub version: i64,

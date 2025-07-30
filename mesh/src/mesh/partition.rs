@@ -1200,6 +1200,7 @@ pub mod tests {
                     let zone = AnyApplicationStatusZones {
                         zone_id: zone.into(),
                         version,
+                        chart_version: Some("1.0.0".into()),
                         conditions: Some(to_set),
                     };
                     zones.push(zone);
@@ -1229,6 +1230,7 @@ pub mod tests {
                     zones.push(AnyApplicationStatusZones {
                         zone_id: condition.zone_id.to_owned(),
                         version,
+                        chart_version: Some("1.0.0".into()),
                         conditions: Some(vec![condition]),
                     });
                 }
