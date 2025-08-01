@@ -11,7 +11,7 @@ use crate::{
 };
 use anyapplication::anyapplication::{
     AnyApplication, AnyApplicationSource, AnyApplicationSourceHelm, AnyApplicationSpec,
-    AnyApplicationStatus, AnyApplicationStatusPlacements,
+    AnyApplicationStatus, AnyApplicationStatusOwnership, AnyApplicationStatusOwnershipPlacements,
 };
 use anyhow::{Context, Result};
 use kube::api::{ApiResource, DynamicObject, GroupVersionKind, ObjectMeta};
@@ -154,18 +154,21 @@ fn anyapplication(name: &str, owner_zone: &str) -> DynamicObject {
             zones: 2,
         },
         status: Some(AnyApplicationStatus {
-            owner: owner_zone.into(),
-            placements: Some(vec![
-                AnyApplicationStatusPlacements {
-                    node_affinity: None,
-                    zone: "zone1".into(),
-                },
-                AnyApplicationStatusPlacements {
-                    node_affinity: None,
-                    zone: "zone2".into(),
-                },
-            ]),
-            state: "New".into(),
+            ownership: AnyApplicationStatusOwnership {
+                epoch: 1,
+                owner: owner_zone.into(),
+                placements: Some(vec![
+                    AnyApplicationStatusOwnershipPlacements {
+                        node_affinity: None,
+                        zone: "zone1".into(),
+                    },
+                    AnyApplicationStatusOwnershipPlacements {
+                        node_affinity: None,
+                        zone: "zone2".into(),
+                    },
+                ]),
+                state: "New".into(),
+            },
             zones: None,
         }),
     };

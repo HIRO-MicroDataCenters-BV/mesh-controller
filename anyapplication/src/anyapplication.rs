@@ -174,16 +174,22 @@ pub struct AnyApplicationSyncPolicyRetryBackoff {
 /// AnyApplicationStatus defines the observed state of AnyApplication.
 #[derive(Serialize, Deserialize, Clone, Debug, JsonSchema, PartialEq)]
 pub struct AnyApplicationStatus {
-    pub owner: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub placements: Option<Vec<AnyApplicationStatusPlacements>>,
-    pub state: String,
+    pub ownership: AnyApplicationStatusOwnership,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub zones: Option<Vec<AnyApplicationStatusZones>>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, JsonSchema, PartialEq)]
-pub struct AnyApplicationStatusPlacements {
+pub struct AnyApplicationStatusOwnership {
+    pub epoch: i64,
+    pub owner: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub placements: Option<Vec<AnyApplicationStatusOwnershipPlacements>>,
+    pub state: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema, PartialEq)]
+pub struct AnyApplicationStatusOwnershipPlacements {
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",

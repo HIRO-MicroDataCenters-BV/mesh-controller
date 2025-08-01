@@ -429,9 +429,12 @@ pub mod tests {
                 zones: 1,
             },
             status: Some(AnyApplicationStatus {
-                owner: "owner".into(),
-                placements: None,
-                state: "New".into(),
+                ownership: AnyApplicationStatusOwnership {
+                    epoch: 1,
+                    owner: "owner".into(),
+                    placements: None,
+                    state: "New".into(),
+                },
                 zones: Some(vec![]),
             }),
         };
