@@ -1147,31 +1147,37 @@ pub mod tests {
         pub fn with_initial_state(&mut self, owner: &str, state: &str) {
             match self.object.status.as_mut() {
                 Some(status) => {
-                    status.owner = owner.into();
-                    status.state = state.into();
+                    status.ownership.owner = owner.into();
+                    status.ownership.state = state.into();
                 }
                 None => {
                     self.object.status = Some(AnyApplicationStatus {
-                        owner: owner.into(),
-                        state: state.into(),
+                        ownership: AnyApplicationStatusOwnership {
+                            epoch: 1,
+                            owner: owner.into(),
+                            state: state.into(),
+                            placements: None,
+                        },
                         zones: None,
-                        placements: None,
                     })
                 }
             }
         }
 
-        pub fn set_placements(&mut self, placements: Vec<AnyApplicationStatusPlacements>) {
+        pub fn set_placements(&mut self, placements: Vec<AnyApplicationStatusOwnershipPlacements>) {
             match self.object.status.as_mut() {
                 Some(status) => {
-                    status.placements = Some(placements);
+                    status.ownership.placements = Some(placements);
                 }
                 None => {
                     self.object.status = Some(AnyApplicationStatus {
-                        owner: "".into(),
-                        state: "".into(),
+                        ownership: AnyApplicationStatusOwnership {
+                            epoch: 1,
+                            owner: "".into(),
+                            state: "".into(),
+                            placements: Some(placements),
+                        },
                         zones: None,
-                        placements: Some(placements),
                     })
                 }
             }
@@ -1184,10 +1190,13 @@ pub mod tests {
             to_set: Vec<AnyApplicationStatusZonesConditions>,
         ) {
             let status = self.object.status.get_or_insert(AnyApplicationStatus {
-                owner: "".into(),
-                state: "".into(),
+                ownership: AnyApplicationStatusOwnership {
+                    epoch: 1,
+                    owner: "".into(),
+                    state: "".into(),
+                    placements: None,
+                },
                 zones: None,
-                placements: None,
             });
             let zones = status.zones.get_or_insert(vec![]);
             match zones.iter_mut().find(|z| z.zone_id == zone) {
@@ -1214,10 +1223,13 @@ pub mod tests {
             condition: AnyApplicationStatusZonesConditions,
         ) {
             let status = self.object.status.get_or_insert(AnyApplicationStatus {
-                owner: "".into(),
-                state: "".into(),
+                ownership: AnyApplicationStatusOwnership {
+                    epoch: 1,
+                    owner: "".into(),
+                    state: "".into(),
+                    placements: None,
+                },
                 zones: None,
-                placements: None,
             });
             let zones = status.zones.get_or_insert(vec![]);
             match zones.iter_mut().find(|v| v.zone_id == condition.zone_id) {
@@ -1245,10 +1257,13 @@ pub mod tests {
             cond: AnyApplicationStatusZonesConditions,
         ) {
             let status = self.object.status.get_or_insert(AnyApplicationStatus {
-                owner: "".into(),
-                state: "".into(),
+                ownership: AnyApplicationStatusOwnership {
+                    epoch: 1,
+                    owner: "".into(),
+                    state: "".into(),
+                    placements: None,
+                },
                 zones: None,
-                placements: None,
             });
             let mut updated = false;
             let zones = status.zones.get_or_insert(vec![]);
@@ -1280,10 +1295,13 @@ pub mod tests {
 
         pub fn delete_condition(&mut self, version: i64, cond_type: &str, zone_id: &str) {
             let status = self.object.status.get_or_insert(AnyApplicationStatus {
-                owner: "".into(),
-                state: "".into(),
+                ownership: AnyApplicationStatusOwnership {
+                    epoch: 1,
+                    owner: "".into(),
+                    state: "".into(),
+                    placements: None,
+                },
                 zones: None,
-                placements: None,
             });
             let zones = status.zones.get_or_insert(vec![]);
             let Some(zone) = zones.iter_mut().find(|z| z.zone_id == zone_id) else {

@@ -10,7 +10,7 @@ use anyapplication::{
     anyapplication::{
         AnyApplication, AnyApplicationSpec, AnyApplicationStatus, AnyApplicationStatusZones,
     },
-    anyapplication_ext::AnyApplicationExt,
+    anyapplication_ext::{AnyApplicationExt, AnyApplicationStatusOwnershipExt},
 };
 use anyhow::{Result, anyhow};
 use kube::api::{DynamicObject, GroupVersionKind};
@@ -608,10 +608,8 @@ impl AnyApplicationMerge {
     ) -> Option<AnyApplicationStatus> {
         match (current, incoming) {
             (Some(current), Some(incoming)) => {
-                let owner_diff = current.owner != incoming.owner;
-                let placements_diff = current.placements != incoming.placements;
-                let state_diff = current.state != incoming.state;
-                if owner_diff || placements_diff || state_diff {
+                let ownership_diff = !current.ownership.is_equal(&incoming.ownership);
+                if ownership_diff {
                     let mut target = incoming.clone();
                     target.zones = None;
                     Some(target)

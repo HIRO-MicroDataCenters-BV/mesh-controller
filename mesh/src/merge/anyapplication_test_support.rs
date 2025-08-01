@@ -6,7 +6,8 @@ pub mod tests {
     use anyapplication::{
         anyapplication::{
             AnyApplication, AnyApplicationSource, AnyApplicationSourceHelm, AnyApplicationSpec,
-            AnyApplicationStatus, AnyApplicationStatusPlacements, AnyApplicationStatusZones,
+            AnyApplicationStatus, AnyApplicationStatusOwnership,
+            AnyApplicationStatusOwnershipPlacements, AnyApplicationStatusZones,
             AnyApplicationStatusZonesConditions,
         },
         anyapplication_ext::OWNER_VERSION,
@@ -46,18 +47,21 @@ pub mod tests {
             },
             status: Some(AnyApplicationStatus {
                 zones: None,
-                owner: owner_zone.into(),
-                placements: Some(vec![
-                    AnyApplicationStatusPlacements {
-                        node_affinity: None,
-                        zone: owner_zone.into(),
-                    },
-                    AnyApplicationStatusPlacements {
-                        node_affinity: None,
-                        zone: "zone2".into(),
-                    },
-                ]),
-                state: "New".into(),
+                ownership: AnyApplicationStatusOwnership {
+                    epoch: 1,
+                    owner: owner_zone.into(),
+                    placements: Some(vec![
+                        AnyApplicationStatusOwnershipPlacements {
+                            node_affinity: None,
+                            zone: owner_zone.into(),
+                        },
+                        AnyApplicationStatusOwnershipPlacements {
+                            node_affinity: None,
+                            zone: "zone2".into(),
+                        },
+                    ]),
+                    state: "New".into(),
+                },
             }),
         };
         let resource_str = serde_json::to_value(&resource).expect("Resource is not serializable");
@@ -103,18 +107,21 @@ pub mod tests {
             },
             status: Some(AnyApplicationStatus {
                 zones: Some(zones_statuses.into()),
-                owner: owner_zone.into(),
-                placements: Some(vec![
-                    AnyApplicationStatusPlacements {
-                        node_affinity: None,
-                        zone: owner_zone.into(),
-                    },
-                    AnyApplicationStatusPlacements {
-                        node_affinity: None,
-                        zone: "zone2".into(),
-                    },
-                ]),
-                state: "New".into(),
+                ownership: AnyApplicationStatusOwnership {
+                    epoch: 1,
+                    owner: owner_zone.into(),
+                    placements: Some(vec![
+                        AnyApplicationStatusOwnershipPlacements {
+                            node_affinity: None,
+                            zone: owner_zone.into(),
+                        },
+                        AnyApplicationStatusOwnershipPlacements {
+                            node_affinity: None,
+                            zone: "zone2".into(),
+                        },
+                    ]),
+                    state: "New".into(),
+                },
             }),
         };
 
@@ -167,13 +174,16 @@ pub mod tests {
         }
     }
 
-    pub fn anyplacements(zone1: &str, zone2: Option<&str>) -> Vec<AnyApplicationStatusPlacements> {
-        let mut placements = vec![AnyApplicationStatusPlacements {
+    pub fn anyplacements(
+        zone1: &str,
+        zone2: Option<&str>,
+    ) -> Vec<AnyApplicationStatusOwnershipPlacements> {
+        let mut placements = vec![AnyApplicationStatusOwnershipPlacements {
             zone: zone1.into(),
             node_affinity: None,
         }];
         if let Some(zone2) = zone2 {
-            placements.push(AnyApplicationStatusPlacements {
+            placements.push(AnyApplicationStatusOwnershipPlacements {
                 zone: zone2.into(),
                 node_affinity: None,
             });
@@ -183,14 +193,17 @@ pub mod tests {
 
     pub fn anystatus(
         owner_zone: &str,
-        placements: Vec<AnyApplicationStatusPlacements>,
+        placements: Vec<AnyApplicationStatusOwnershipPlacements>,
         zones: Option<Vec<AnyApplicationStatusZones>>,
     ) -> AnyApplicationStatus {
         AnyApplicationStatus {
             zones,
-            owner: owner_zone.into(),
-            placements: Some(placements),
-            state: "New".into(),
+            ownership: AnyApplicationStatusOwnership {
+                epoch: 1,
+                owner: owner_zone.into(),
+                placements: Some(placements),
+                state: "New".into(),
+            },
         }
     }
 

@@ -1,6 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::anyapplication::{AnyApplicationStatusZones, AnyApplicationStatusZonesConditions};
+use crate::anyapplication::{
+    AnyApplicationStatusOwnership, AnyApplicationStatusOwnershipPlacements,
+    AnyApplicationStatusZones, AnyApplicationStatusZonesConditions,
+};
 
 use super::anyapplication::AnyApplication;
 use anyhow::Context;
@@ -59,14 +62,15 @@ impl AnyApplicationExt for AnyApplication {
     fn get_owner_zone(&self) -> String {
         self.status
             .as_ref()
-            .map(|s| s.owner.to_owned())
+            .map(|s| s.ownership.owner.to_owned())
             .unwrap_or("unknown".to_string())
     }
     fn get_placement_zones(&self) -> HashSet<String> {
         self.status
             .as_ref()
             .map(|s| {
-                s.placements
+                s.ownership
+                    .placements
                     .as_ref()
                     .map(|p| p.iter().map(|p| p.zone.to_owned()).collect())
                     .unwrap_or_default()
@@ -178,5 +182,58 @@ fn conditions_equal(
             .iter()
             .map(|(id, new_item)| (current_map.get(id), new_item))
             .all(|(old_item, new_item)| old_item.is_some() && new_item.is_equal(old_item.unwrap()))
+    }
+}
+
+pub trait AnyApplicationStatusOwnershipExt {
+    fn is_equal(&self, other: &AnyApplicationStatusOwnership) -> bool;
+}
+
+impl AnyApplicationStatusOwnershipExt for AnyApplicationStatusOwnership {
+    fn is_equal(&self, other: &AnyApplicationStatusOwnership) -> bool {
+        self.epoch == other.epoch
+            && self.owner == other.owner
+            && self.state == other.state
+            && placements_opt_equal(&self.placements, &other.placements)
+    }
+}
+
+fn placements_opt_equal(
+    current: &Option<Vec<AnyApplicationStatusOwnershipPlacements>>,
+    incoming: &Option<Vec<AnyApplicationStatusOwnershipPlacements>>,
+) -> bool {
+    match (current, incoming) {
+        (Some(current), Some(incoming)) => placements_equal(current, incoming),
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+fn placements_equal(
+    current: &[AnyApplicationStatusOwnershipPlacements],
+    incoming: &[AnyApplicationStatusOwnershipPlacements],
+) -> bool {
+    if current.len() != incoming.len() {
+        false
+    } else {
+        let current_map: HashMap<String, &AnyApplicationStatusOwnershipPlacements> =
+            current.iter().map(|v| (v.zone.clone(), v)).collect();
+        let incoming_map: HashMap<String, &AnyApplicationStatusOwnershipPlacements> =
+            incoming.iter().map(|v| (v.zone.clone(), v)).collect();
+
+        incoming_map
+            .iter()
+            .map(|(zone, new_item)| (current_map.get(zone), new_item))
+            .all(|(old_item, new_item)| old_item.is_some() && new_item.is_equal(old_item.unwrap()))
+    }
+}
+
+pub trait AnyApplicationStatusOwnershipPlacementsExt {
+    fn is_equal(&self, other: &AnyApplicationStatusOwnershipPlacements) -> bool;
+}
+
+impl AnyApplicationStatusOwnershipPlacementsExt for AnyApplicationStatusOwnershipPlacements {
+    fn is_equal(&self, other: &AnyApplicationStatusOwnershipPlacements) -> bool {
+        self.zone == other.zone && self.node_affinity == other.node_affinity
     }
 }
