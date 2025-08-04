@@ -4,7 +4,7 @@ use crate::{
         dynamic_object_ext::{DynamicObjectExt, dump_zones},
         subscriptions::Version,
     },
-    merge::types::{Tombstone, VersionedObject},
+    merge::types::{Membership, Tombstone, VersionedObject},
 };
 use anyapplication::{
     anyapplication::{
@@ -26,11 +26,11 @@ impl MergeStrategy for AnyApplicationMerge {
         current: VersionedObject,
         incoming: DynamicObject,
         incoming_zone: &str,
-        current_zone: &str,
+        node_zone: &str,
     ) -> Result<MergeResult> {
         match current {
             VersionedObject::Object(current) => {
-                self.mesh_update_update(current, incoming, incoming_zone, current_zone)
+                self.mesh_update_update(current, incoming, incoming_zone, node_zone)
             }
             VersionedObject::NonExisting => self.mesh_update_create(incoming, incoming_zone),
             VersionedObject::Tombstone(tombstone) => {
@@ -258,6 +258,14 @@ impl MergeStrategy for AnyApplicationMerge {
             VersionedObject::Tombstone(tombstone) => Ok(Some(tombstone.clone())),
         }
     }
+
+    fn mesh_membership_change(
+        &self,
+        _membership: Membership,
+        _now_millis: u64,
+    ) -> Result<Vec<MergeResult>> {
+        unimplemented!()
+    }
 }
 
 impl Default for AnyApplicationMerge {
@@ -278,10 +286,11 @@ impl AnyApplicationMerge {
         current: DynamicObject,
         incoming: DynamicObject,
         incoming_zone: &str,
-        current_zone: &str,
+        node_zone: &str,
     ) -> Result<MergeResult> {
         let mut current: AnyApplication = current.try_parse()?;
         let current_owner_version = current.get_owner_version()?;
+        let current_owner_zone = current.get_owner_zone();
 
         let incoming: AnyApplication = incoming.try_parse()?;
         let incoming_owner_version = incoming.get_owner_version()?;
@@ -290,8 +299,9 @@ impl AnyApplicationMerge {
         // Update is possible from owning zone, status zones and placement zones.
         let status_zones = incoming.get_status_zone_ids();
         let placement_zones = incoming.get_placement_zones();
-        let acceptable_zone =
-            status_zones.contains(incoming_zone) || placement_zones.contains(incoming_zone);
+        let acceptable_zone = status_zones.contains(incoming_zone)
+            || placement_zones.contains(incoming_zone)
+            || incoming_owner_zone == incoming_zone;
 
         if !acceptable_zone {
             return Ok(MergeResult::Skip);
@@ -299,6 +309,7 @@ impl AnyApplicationMerge {
 
         let merged_spec = self.merge_spec(
             current_owner_version,
+            &current_owner_zone,
             &incoming.spec,
             incoming_owner_version,
             &incoming_owner_zone,
@@ -307,11 +318,160 @@ impl AnyApplicationMerge {
         let merged_status = self.merge_status(
             &current.status,
             current_owner_version,
+            &current_owner_zone,
             &incoming.status,
             incoming_owner_version,
             &incoming_owner_zone,
             incoming_zone,
-            current_zone,
+            node_zone,
+        );
+        let mut updated = false;
+        if let Some(spec) = merged_spec {
+            current.spec = spec;
+            updated = true;
+        }
+        if let Some(status) = merged_status {
+            current.status = Some(status);
+            updated = true;
+        }
+
+        if !updated {
+            return Ok(MergeResult::Skip);
+        }
+
+        if incoming_owner_zone == current.get_owner_zone() {
+            current.set_owner_version(incoming_owner_version);
+        }
+
+        let object = current.to_object()?;
+        object.dump_status("merge_update_internal");
+        Ok(MergeResult::Update { object })
+    }
+
+    fn mesh_update_update2(
+        &self,
+        current: DynamicObject,
+        incoming: DynamicObject,
+        receive_from_zone: &str,
+        node_zone: &str,
+    ) -> Result<MergeResult> {
+        let mut current: AnyApplication = current.try_parse()?;
+        let current_owner_version = current.get_owner_version()?;
+        let current_owner_zone = current.get_owner_zone();
+        let current_owner_epoch = current.get_owner_epoch();
+
+        let incoming: AnyApplication = incoming.try_parse()?;
+        let incoming_owner_version = incoming.get_owner_version()?;
+        let incoming_owner_zone = incoming.get_owner_zone();
+        let incoming_owner_epoch = incoming.get_owner_epoch();
+        let incoming_zones = incoming.get_status_zone_ids();
+
+        // 1. Owner is merging statuses from local zones
+        // if current.ownership.zone == incoming.ownership.zone
+        //    && incoming.ownership.zone == node_zone
+        //    && zone_statuses.contain(receive_from_zone)
+        // then if incoming.ownership.epoch == current.ownership.epoch
+        //    merge zone statuses if zone status version is higher than current
+
+        if current_owner_zone == incoming_owner_zone 
+            && incoming_owner_zone == node_zone
+            && incoming_zones.contains(receive_from_zone) 
+            && incoming_owner_epoch == current_owner_epoch 
+        {
+            let maybe_zones = 
+                self.merge_zone_section(
+                    current.status
+                        .as_ref()
+                        .and_then(|v| v.zones.as_ref())
+                        .unwrap_or(&vec![]),
+                    incoming.status
+                        .as_ref()
+                        .and_then(|v| v.zones.as_ref())
+                        .unwrap_or(&vec![]),
+                );
+            match (maybe_zones, &mut current.status) {
+                (Some(zones), Some(status)) => {
+                    status.zones = Some(zones);
+                    let object = current.to_object()?;
+                    object.dump_status("merge_update_internal");
+                    return Ok(MergeResult::Update { object });
+                }
+                (Some(_), None) => (), // Should not happen
+                (None, _) => ()
+            }
+        }
+
+        // 2.1 Non owners are receiving changes from owner
+        // if current.ownership.zone == incoming.ownership.zone
+        //    && received_from_zone == incoming.ownership.zone
+        //    && incoming.ownership.owner != node_zone
+        //    if incoming ownership epoch is HIGH_OR_EQUAL to current one
+        //      merge ownership section from incoming if owner version is higher than current
+        //      merge zone statuses if zone status version is higher than current
+        //      merge spec from incoming if owner version is higher than current
+        //
+        // 2.2 Non owners are receiving changes from new owner
+        // if current.ownership.zone != incoming.ownership.zone
+        //    && received_from_zone == incoming.ownership.zone
+        //    && incoming.ownership.owner != node_zone
+        //    if incoming ownership epoch is HIGH to current one
+        //      merge ownership section from incoming
+        //      merge zone statuses if zone status version is higher than current
+        //      merge spec from incoming
+
+        
+
+        // 3. Merge owners
+        // if current.ownership.zone != incoming.ownership.zone 
+        //    && current.ownership.zone == node_zone  
+        //    && received_from_zone == incoming.ownership.zone
+        //    && incoming.ownership.zone != node_zone
+        //   if current.ownership.epoch > incoming.ownership.epoch
+        //      merge ownership section from current
+        //        - merge placements from current and incoming
+        //      merge spec from current
+        //      merge zone statuses from both if zone status version is higher than current
+        //
+        //   if current.ownership.epoch == incoming.ownership.epoch
+        //      if current.startTime is greater then incoming.startTime
+        //          merge ownership section from current
+        //          - merge placements from current and incoming
+        //          - increment epoch
+        //      merge zone statuses from both if zone status version is higher than current
+        //
+        //   if current.ownership.epoch < incoming.ownership.epoch
+        //      merge ownership section from incoming
+        //      merge zone statuses if zone status version is higher than current
+        //      merge spec from incoming
+      
+
+        let status_zones = incoming.get_status_zone_ids();
+        let placement_zones = incoming.get_placement_zones();
+        let acceptable_zone = status_zones.contains(receive_from_zone)
+            || placement_zones.contains(receive_from_zone)
+            || incoming_owner_zone == receive_from_zone;
+
+        if !acceptable_zone {
+            return Ok(MergeResult::Skip);
+        }
+
+        let merged_spec = self.merge_spec(
+            current_owner_version,
+            &current_owner_zone,
+            &incoming.spec,
+            incoming_owner_version,
+            &incoming_owner_zone,
+            receive_from_zone,
+        );
+        let merged_status = self.merge_status(
+            &current.status,
+            current_owner_version,
+            &current_owner_zone,
+            &incoming.status,
+            incoming_owner_version,
+            &incoming_owner_zone,
+            receive_from_zone,
+            node_zone,
         );
         let mut updated = false;
         if let Some(spec) = merged_spec {
@@ -339,14 +499,16 @@ impl AnyApplicationMerge {
     fn merge_spec(
         &self,
         current_owner_version: Version,
+        current_owner_zone: &str,
         incoming: &AnyApplicationSpec,
         incoming_owner_version: Version,
         incoming_owner_zone: &str,
         incoming_zone: &str,
     ) -> Option<AnyApplicationSpec> {
-        let acceptable_zone = incoming_zone == incoming_owner_zone;
+        let is_coming_from_owner = incoming_zone == incoming_owner_zone;
         let new_change = incoming_owner_version > current_owner_version;
-        if acceptable_zone && new_change {
+
+        if is_coming_from_owner && new_change {
             Some(incoming.to_owned())
         } else {
             None
@@ -358,20 +520,22 @@ impl AnyApplicationMerge {
         &self,
         current: &Option<AnyApplicationStatus>,
         current_owner_version: Version,
+        current_owner_zone: &str,
         incoming: &Option<AnyApplicationStatus>,
         incoming_owner_version: Version,
         incoming_owner_zone: &str,
         incoming_zone: &str,
-        current_zone: &str,
+        node_zone: &str,
     ) -> Option<AnyApplicationStatus> {
         let maybe_status = self.merge_ownership_section(
             current,
             current_owner_version,
+            current_owner_zone,
             incoming,
             incoming_owner_version,
             incoming_zone,
             incoming_owner_zone,
-            current_zone,
+            node_zone,
         );
 
         // let should_merge_zones = incoming_zone == incoming_owner_zone || current_zone == incoming_owner_zone;
@@ -418,6 +582,7 @@ impl AnyApplicationMerge {
         &self,
         current: &Option<AnyApplicationStatus>,
         current_owner_version: Version,
+        current_owner_zone: &str,
         incoming: &Option<AnyApplicationStatus>,
         incoming_owner_version: Version,
         incoming_zone: &str,
@@ -532,6 +697,7 @@ impl AnyApplicationMerge {
         let current_resource_version = current.get_resource_version();
         let current: AnyApplication = current.try_parse()?;
         let current_owner_version = current.get_owner_version()?;
+        let current_owner_zone = current.get_owner_zone();
 
         let name = incoming.get_namespaced_name();
         let incoming: AnyApplication = incoming.to_owned().try_parse()?;

@@ -90,9 +90,18 @@ pub trait MergeStrategy: Send + Sync {
         now_millis: u64,
     ) -> Result<MergeResult>;
 
+    fn mesh_membership_change(
+        &self,
+        membership: Membership,
+        now_millis: u64,
+    ) -> Result<Vec<MergeResult>>;
+
     fn tombstone(&self, current: VersionedObject, now_millis: u64) -> Result<Option<Tombstone>>;
 
     fn is_owner_zone(&self, current: &VersionedObject, zone: &str) -> bool;
 
     fn is_owner_zone_object(&self, current: &DynamicObject, zone: &str) -> bool;
 }
+
+#[derive(Debug, Clone)]
+pub struct Membership {}

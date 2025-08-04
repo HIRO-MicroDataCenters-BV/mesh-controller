@@ -1,7 +1,7 @@
 use super::types::{MergeResult, MergeStrategy, UpdateResult};
 use crate::{
     kube::{dynamic_object_ext::DynamicObjectExt, subscriptions::Version},
-    merge::types::{Tombstone, VersionedObject},
+    merge::types::{Membership, Tombstone, VersionedObject},
 };
 use anyhow::Result;
 use kube::api::{DynamicObject, GroupVersionKind, TypeMeta};
@@ -207,6 +207,14 @@ impl MergeStrategy for DefaultMerge {
             VersionedObject::NonExisting => Ok(None),
             VersionedObject::Tombstone(tombstone) => Ok(Some(tombstone.clone())),
         }
+    }
+
+    fn mesh_membership_change(
+        &self,
+        _membership: Membership,
+        _now_millis: u64,
+    ) -> Result<Vec<MergeResult>> {
+        unimplemented!()
     }
 }
 
