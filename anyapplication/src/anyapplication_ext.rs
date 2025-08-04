@@ -69,10 +69,7 @@ impl AnyApplicationExt for AnyApplication {
     }
 
     fn get_owner_epoch(&self) -> Epoch {
-        self.status
-            .as_ref()
-            .map(|s|s.ownership.epoch)
-            .unwrap_or(0)
+        self.status.as_ref().map(|s| s.ownership.epoch).unwrap_or(0)
     }
 
     fn get_placement_zones(&self) -> HashSet<String> {

@@ -6,7 +6,7 @@ use std::{
 use super::event::MeshEvent;
 use crate::{
     kube::subscriptions::Version,
-    merge::types::{Tombstone, VersionedObject},
+    merge::types::{Membership, Tombstone, VersionedObject},
     utils::types::Clock,
 };
 use crate::{
@@ -43,6 +43,7 @@ impl Partition {
         incoming_zone: &str,
         current_zone: &str,
     ) -> Result<Vec<MergeResult>> {
+        let membership = Membership::new();
         match incoming {
             MeshEvent::Update { object: incoming } => {
                 let name = incoming.get_namespaced_name();
@@ -57,6 +58,7 @@ impl Partition {
                     incoming,
                     incoming_zone,
                     current_zone,
+                    &membership,
                 )?;
 
                 self.mesh_update_partition(&result);
@@ -116,6 +118,7 @@ impl Partition {
         incoming_zone: &str,
         current_zone: &str,
     ) -> Result<Vec<MergeResult>> {
+        let membership = Membership::new();
         let in_partition: HashSet<NamespacedName> = self
             .resources
             .iter()
@@ -156,9 +159,13 @@ impl Partition {
                 .cloned()
                 .unwrap_or(VersionedObject::NonExisting);
             let incoming = snapshot.get(&name).cloned().unwrap();
-            let result =
-                self.merge_strategy
-                    .mesh_update(current, incoming, incoming_zone, current_zone)?;
+            let result = self.merge_strategy.mesh_update(
+                current,
+                incoming,
+                incoming_zone,
+                current_zone,
+                &membership,
+            )?;
             self.mesh_update_partition(&result);
             results.push(result);
         }

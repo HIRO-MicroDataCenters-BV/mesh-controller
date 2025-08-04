@@ -80,6 +80,7 @@ pub trait MergeStrategy: Send + Sync {
         incoming: DynamicObject,
         incoming_zone: &str,
         current_zone: &str,
+        membership: &Membership,
     ) -> Result<MergeResult>;
 
     fn mesh_delete(
@@ -92,7 +93,7 @@ pub trait MergeStrategy: Send + Sync {
 
     fn mesh_membership_change(
         &self,
-        membership: Membership,
+        membership: &Membership,
         now_millis: u64,
     ) -> Result<Vec<MergeResult>>;
 
@@ -105,3 +106,9 @@ pub trait MergeStrategy: Send + Sync {
 
 #[derive(Debug, Clone)]
 pub struct Membership {}
+
+impl Membership {
+    pub fn new() -> Membership {
+        Membership {}
+    }
+}
