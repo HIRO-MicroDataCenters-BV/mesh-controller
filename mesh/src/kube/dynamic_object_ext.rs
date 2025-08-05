@@ -1,4 +1,5 @@
 use anyapplication::anyapplication::{AnyApplication, AnyApplicationStatusZones};
+use anyapplication::anyapplication_ext::Epoch;
 use anyhow::{Context, Result, anyhow};
 use kube::ResourceExt;
 use kube::api::{DynamicObject, GroupVersionKind};
@@ -9,6 +10,7 @@ use super::types::NamespacedName;
 
 const OWNER_VERSION: &str = "dcp.hiro.io/owner-version";
 const OWNER_ZONE: &str = "dcp.hiro.io/owner-zone";
+const OWNER_EPOCH: &str = "dcp.hiro.io/owner-epoch";
 
 pub trait DynamicObjectExt {
     fn get_gvk(&self) -> Result<GroupVersionKind>;
@@ -19,6 +21,8 @@ pub trait DynamicObjectExt {
     fn set_owner_version(&mut self, version: Version);
     fn get_owner_zone(&self) -> Result<String>;
     fn set_owner_zone(&mut self, zone: String);
+    fn get_owner_epoch(&self) -> Result<Epoch>;
+    fn set_owner_epoch(&mut self, epoch: Epoch);
     fn normalize(&mut self, default_zone: &str);
     fn get_status(&self) -> Option<Value>;
     fn unset_resource_version(&mut self);
@@ -119,6 +123,23 @@ impl DynamicObjectExt for DynamicObject {
         let labels = self.metadata.labels.as_ref()?;
         let version_str = labels.get(OWNER_VERSION)?;
         version_str.parse::<Version>().map(Some).unwrap_or_default()
+    }
+
+    fn get_owner_epoch(&self) -> Result<Epoch> {
+        let labels = self
+            .metadata
+            .labels
+            .as_ref()
+            .ok_or(anyhow!("{} label not set", OWNER_EPOCH))?;
+        let epoch_str = labels
+            .get(OWNER_EPOCH)
+            .ok_or(anyhow!("{} label not set", OWNER_EPOCH))?;
+        epoch_str.parse::<Epoch>().map_err(|e| e.into())
+    }
+
+    fn set_owner_epoch(&mut self, epoch: Epoch) {
+        let labels = self.metadata.labels.get_or_insert_default();
+        labels.insert(OWNER_EPOCH.into(), epoch.to_string());
     }
 
     fn set_owner_zone(&mut self, zone: String) {
