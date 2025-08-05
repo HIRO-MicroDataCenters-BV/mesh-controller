@@ -35,6 +35,8 @@ pub trait AnyApplicationExt {
     fn set_resource_version(&mut self, version: Version);
     fn get_resource_version(&self) -> Option<Version>;
 
+    fn get_create_timestamp(&self) -> i64;
+
     fn get_status_zone_ids(&self) -> HashSet<String>;
 
     fn is_acceptable_zone(&self, incoming_zone: &str) -> bool;
@@ -123,6 +125,14 @@ impl AnyApplicationExt for AnyApplication {
 
     fn is_owned_zone(&self, incoming_zone: &str) -> bool {
         self.get_owner_zone() == incoming_zone || self.get_owner_zone() == "unknown"
+    }
+
+    fn get_create_timestamp(&self) -> i64 {
+        self.metadata
+            .creation_timestamp
+            .as_ref()
+            .map(|t| t.0.timestamp_millis())
+            .unwrap_or(0)
     }
 }
 

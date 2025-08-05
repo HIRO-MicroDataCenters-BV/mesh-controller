@@ -12,6 +12,10 @@ pub mod tests {
         },
         anyapplication_ext::{Epoch, OWNER_VERSION},
     };
+    use k8s_openapi::{
+        apimachinery::pkg::apis::meta::v1::Time,
+        chrono::{DateTime, Utc},
+    };
     use kube::api::{DynamicObject, ObjectMeta};
 
     use crate::kube::subscriptions::Version;
@@ -25,6 +29,9 @@ pub mod tests {
                     OWNER_VERSION.into(),
                     owner_version.to_string(),
                 )])),
+                creation_timestamp: Some(Time(
+                    DateTime::<Utc>::from_timestamp(1000, 0).expect("creation timestamp"),
+                )),
                 ..Default::default()
             },
             spec: AnyApplicationSpec {

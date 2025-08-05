@@ -65,19 +65,21 @@ impl MergeStrategy for AnyApplicationMerge {
                 deletion_timestamp: now_millis,
             })),
             VersionedObject::Tombstone(tombstone) => {
-                // TODO several owners merge
-                // compare owners epoch
+                let name = incoming.get_namespaced_name();
+                let incoming: AnyApplication = incoming.try_parse()?;
+                let incoming_owner_version = incoming.get_owner_version()?;
+                let incoming_timestamp = now_millis;
 
-                if tombstone.owner_zone == incoming_zone {
-                    let name = incoming.get_namespaced_name();
-                    let incoming: AnyApplication = incoming.try_parse()?;
-                    let incoming_owner_version = incoming.get_owner_version()?;
+                let is_same_zone_greater_version = tombstone.owner_zone == incoming_zone
+                    && tombstone.owner_version < incoming_owner_version;
+                let is_other_zone_greater_timestamp = tombstone.owner_zone != incoming_zone
+                    && tombstone.deletion_timestamp < incoming_timestamp;
 
-                    let version = Version::max(tombstone.owner_version, incoming_owner_version);
+                if is_same_zone_greater_version || is_other_zone_greater_timestamp {
                     Ok(MergeResult::Tombstone(Tombstone {
                         gvk: self.gvk.to_owned(),
                         name,
-                        owner_version: version,
+                        owner_version: incoming_owner_version,
                         owner_zone: incoming_zone.into(),
                         resource_version: tombstone.resource_version,
                         deletion_timestamp: now_millis,
@@ -432,7 +434,7 @@ impl AnyApplicationMerge {
                         self.merge_zone_statuses(&current.status, &incoming.status);
 
                     let merged_placements =
-                        self.merge_placements_to_current(&current.status, &incoming.status);
+                        self.merge_placements_into_current(&current.status, &incoming.status);
 
                     if let Some(zones) = maybe_merged_zones {
                         if let Some(status) = current.status.as_mut() {
@@ -466,7 +468,7 @@ impl AnyApplicationMerge {
                         let maybe_merged_zones =
                             self.merge_zone_statuses(&current.status, &incoming.status);
                         let merged_placements =
-                            self.merge_placements_to_current(&current.status, &incoming.status);
+                            self.merge_placements_into_current(&current.status, &incoming.status);
 
                         if let Some(zones) = maybe_merged_zones {
                             if let Some(status) = current.status.as_mut() {
@@ -518,7 +520,6 @@ impl AnyApplicationMerge {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn merge_status(
         &self,
         current: &Option<AnyApplicationStatus>,
@@ -566,7 +567,6 @@ impl AnyApplicationMerge {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn merge_ownership_section(
         &self,
         current: &Option<AnyApplicationStatus>,
@@ -607,7 +607,7 @@ impl AnyApplicationMerge {
         maybe_zones
     }
 
-    fn merge_placements_to_current(
+    fn merge_placements_into_current(
         &self,
         current: &Option<AnyApplicationStatus>,
         incoming: &Option<AnyApplicationStatus>,
@@ -692,19 +692,18 @@ impl AnyApplicationMerge {
 
     fn mesh_update_tombstone(
         &self,
-        tombstone: Tombstone,
+        current: Tombstone,
         incoming: DynamicObject,
         received_from_zone: &str,
     ) -> Result<MergeResult> {
-        let current_owner_version = tombstone.owner_version;
+        let current_owner_version = current.owner_version;
+        let current_owner_zone = current.owner_zone;
+        let current_delete_timestamp = current.deletion_timestamp as i64;
 
         let incoming_app: AnyApplication = incoming.clone().try_parse()?;
         let incoming_owner_version = incoming_app.get_owner_version()?;
         let incoming_owner_zone = incoming_app.get_owner_zone();
-        let _incoming_owner_epoch = incoming_app.get_owner_epoch();
-
-        // TODO several owners merge
-        // - ignore delete from owner with smalle r epoch
+        let incoming_create_timestamp = incoming_app.get_create_timestamp();
 
         // tombstone update is possible only from owning zone
         let acceptable_zone = incoming_owner_zone == received_from_zone;
@@ -712,12 +711,16 @@ impl AnyApplicationMerge {
             return Ok(MergeResult::Skip);
         }
 
-        if current_owner_version >= incoming_owner_version {
-            // tombstone is newer than incoming => ignore
-            Ok(MergeResult::Skip)
-        } else {
+        let is_same_zone_greater_version = incoming_owner_zone == current_owner_zone
+            && current_owner_version < incoming_owner_version;
+        let is_other_zone_greater_timestamp = incoming_owner_zone != current_owner_zone
+            && current_delete_timestamp < incoming_create_timestamp;
+        if is_other_zone_greater_timestamp || is_same_zone_greater_version {
             // tomstone is older than incoming => create
             self.mesh_update_create(incoming, received_from_zone)
+        } else {
+            // tombstone is newer than incoming => ignore
+            Ok(MergeResult::Skip)
         }
     }
 
@@ -876,7 +879,7 @@ pub mod tests {
     }
 
     #[test]
-    pub fn mesh_update_create_tombstone() {
+    pub fn mesh_update_create_tombstone_different_zone() {
         let membership = Membership::new();
         let incoming = anyapp(1, "zone1", 0);
         let existing = VersionedObject::Tombstone(Tombstone {
@@ -900,6 +903,30 @@ pub mod tests {
     }
 
     #[test]
+    pub fn mesh_update_create_tombstone_same_zone() {
+        let membership = Membership::new();
+        let incoming = anyapp(1, "zone1", 0);
+        let existing = VersionedObject::Tombstone(Tombstone {
+            gvk: incoming.get_gvk().expect("gvk expected"),
+            name: incoming.get_namespaced_name(),
+            owner_version: 0,
+            owner_zone: "zone1".into(),
+            resource_version: 1,
+            deletion_timestamp: 0,
+        });
+
+        let strategy = AnyApplicationMerge::new();
+        assert_eq!(
+            MergeResult::Create {
+                object: incoming.clone()
+            },
+            strategy
+                .mesh_update(existing, incoming, "zone1", "zone2", &membership)
+                .unwrap()
+        );
+    }
+
+    #[test]
     pub fn mesh_update_create_skip_if_tombstone_is_newer() {
         let membership = Membership::new();
         let incoming = anyapp(1, "zone1", 0);
@@ -909,14 +936,14 @@ pub mod tests {
             owner_version: 2,
             owner_zone: "zone2".into(),
             resource_version: 5,
-            deletion_timestamp: 0,
+            deletion_timestamp: 1000000,
         });
 
         let strategy = AnyApplicationMerge::new();
         assert_eq!(
             MergeResult::Skip,
             strategy
-                .mesh_update(existing, incoming, "zone1", "zone1", &membership)
+                .mesh_update(existing, incoming, "zone1", "zone3", &membership)
                 .unwrap()
         );
     }
@@ -1368,7 +1395,7 @@ pub mod tests {
     }
 
     #[test]
-    pub fn mesh_delete_tombstone() {
+    pub fn mesh_delete_tombstone_from_the_same_zone() {
         let incoming = anyapp(1, "zone1", 0);
         let existing = VersionedObject::Tombstone(Tombstone {
             gvk: incoming.get_gvk().expect("gvk expected"),
@@ -1396,7 +1423,7 @@ pub mod tests {
     }
 
     #[test]
-    pub fn mesh_delete_tombstone_is_newer() {
+    pub fn mesh_delete_existing_tombstone_has_higher_version() {
         let incoming = anyapp(1, "zone1", 0);
         let existing = VersionedObject::Tombstone(Tombstone {
             gvk: incoming.get_gvk().expect("gvk expected"),
@@ -1409,14 +1436,7 @@ pub mod tests {
 
         let strategy = AnyApplicationMerge::new();
         assert_eq!(
-            MergeResult::Tombstone(Tombstone {
-                gvk: incoming.get_gvk().expect("gvk expected"),
-                name: incoming.get_namespaced_name(),
-                owner_version: 2,
-                owner_zone: "zone1".into(),
-                resource_version: 5,
-                deletion_timestamp: 17
-            }),
+            MergeResult::Skip,
             strategy
                 .mesh_delete(existing, incoming, "zone1", 17)
                 .unwrap()
@@ -1424,7 +1444,7 @@ pub mod tests {
     }
 
     #[test]
-    pub fn mesh_delete_tombstone_skip_from_different_zone() {
+    pub fn mesh_delete_tombstone_different_zone_newer_timestamp() {
         let incoming = anyapp(1, "zone1", 0);
         let existing = VersionedObject::Tombstone(Tombstone {
             gvk: incoming.get_gvk().expect("gvk expected"),
@@ -1437,7 +1457,14 @@ pub mod tests {
 
         let strategy = AnyApplicationMerge::new();
         assert_eq!(
-            MergeResult::Skip,
+            MergeResult::Tombstone(Tombstone {
+                gvk: incoming.get_gvk().expect("gvk expected"),
+                name: incoming.get_namespaced_name(),
+                owner_version: 1,
+                owner_zone: "zone1".into(),
+                resource_version: 5,
+                deletion_timestamp: 17
+            }),
             strategy
                 .mesh_delete(existing, incoming, "zone1", 17)
                 .unwrap()
