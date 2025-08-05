@@ -17,7 +17,7 @@ impl MergeStrategy for DefaultMerge {
         incoming: DynamicObject,
         incoming_zone: &str,
         _current_zone: &str,
-        membership: &Membership,
+        _membership: &Membership,
     ) -> Result<MergeResult> {
         match current {
             VersionedObject::Object(current) => {
@@ -298,7 +298,7 @@ impl DefaultMerge {
 
 #[cfg(test)]
 pub mod tests {
-    use std::{mem, time::SystemTime};
+    use std::time::SystemTime;
 
     use k8s_openapi::apimachinery::pkg::apis::meta::v1::Time;
     use kube::api::DynamicObject;

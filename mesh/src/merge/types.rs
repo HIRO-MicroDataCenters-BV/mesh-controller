@@ -1,9 +1,12 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use anyhow::Result;
 use kube::api::{DynamicObject, GroupVersionKind};
 
-use crate::kube::{subscriptions::Version, types::NamespacedName};
+use crate::{
+    kube::{subscriptions::Version, types::NamespacedName},
+    mesh::topic::InstanceId,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum MergeResult {
@@ -105,10 +108,17 @@ pub trait MergeStrategy: Send + Sync {
 }
 
 #[derive(Debug, Clone)]
-pub struct Membership {}
+pub struct Membership {
+    instances: HashMap<String, InstanceId>,
+}
 
 impl Membership {
     pub fn new() -> Membership {
-        Membership {}
+        Membership {
+            instances: HashMap::new(),
+        }
+    }
+    pub fn get_instance(&self, zone: &str) -> Option<&InstanceId> {
+        self.instances.get(zone)
     }
 }
