@@ -10,7 +10,7 @@ pub mod tests {
             AnyApplicationStatusOwnershipPlacements, AnyApplicationStatusZones,
             AnyApplicationStatusZonesConditions,
         },
-        anyapplication_ext::OWNER_VERSION,
+        anyapplication_ext::{Epoch, OWNER_VERSION},
     };
     use kube::api::{DynamicObject, ObjectMeta};
 
@@ -74,9 +74,18 @@ pub mod tests {
         owner_version: Version,
         resource_version: Version,
         owner_zone: &str,
+        owner_epoch: Epoch,
         zones: i64,
+        placements: &[&str],
         zones_statuses: &[AnyApplicationStatusZones],
     ) -> DynamicObject {
+        let placements_vec = placements
+            .iter()
+            .map(|zone| AnyApplicationStatusOwnershipPlacements {
+                node_affinity: None,
+                zone: (*zone).into(),
+            })
+            .collect();
         let mut object = AnyApplication {
             metadata: ObjectMeta {
                 name: Some("nginx-app".into()),
@@ -108,18 +117,9 @@ pub mod tests {
             status: Some(AnyApplicationStatus {
                 zones: Some(zones_statuses.into()),
                 ownership: AnyApplicationStatusOwnership {
-                    epoch: 1,
+                    epoch: owner_epoch,
                     owner: owner_zone.into(),
-                    placements: Some(vec![
-                        AnyApplicationStatusOwnershipPlacements {
-                            node_affinity: None,
-                            zone: owner_zone.into(),
-                        },
-                        AnyApplicationStatusOwnershipPlacements {
-                            node_affinity: None,
-                            zone: "zone2".into(),
-                        },
-                    ]),
+                    placements: Some(placements_vec),
                     state: "New".into(),
                 },
             }),

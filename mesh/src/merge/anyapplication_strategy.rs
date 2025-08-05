@@ -386,10 +386,7 @@ impl AnyApplicationMerge {
             }
 
             if updated {
-                if incoming_owner_zone == current.get_owner_zone() {
-                    current.set_owner_version(incoming_owner_version);
-                }
-
+                current.set_owner_version(incoming_owner_version);
                 let object = current.to_object()?;
                 object.dump_status("merge_update_internal - non owner merge");
                 return Ok(MergeResult::Update { object });
@@ -425,62 +422,25 @@ impl AnyApplicationMerge {
             && incoming_owner_zone != node_zone
         {
             let mut updated = false;
-            if current_owner_epoch > incoming_owner_epoch {
-                //      merge ownership section from current
-                //        - merge placements from current and incoming
-                //      merge spec from current
-                //      merge zone statuses from both if zone status version is higher than current
+            match current_owner_epoch.cmp(&incoming_owner_epoch) {
+                std::cmp::Ordering::Greater => {
+                    //      merge ownership section from current
+                    //        - merge placements from current and incoming
+                    //      merge spec from current
+                    //      merge zone statuses from both if zone status version is higher than current
+                    let maybe_merged_zones =
+                        self.merge_zone_statuses(&current.status, &incoming.status);
 
-                let maybe_merged_zones =
-                    self.merge_zone_statuses(&current.status, &incoming.status);
+                    let merged_placements =
+                        self.merge_placements_to_current(&current.status, &incoming.status);
 
-                let merged_placements =
-                    self.merge_placements_to_current(&current.status, &incoming.status);
-
-                if let Some(zones) = maybe_merged_zones {
-                    if let Some(status) = current.status.as_mut() {
-                        status.zones = Some(zones);
-                        updated = true;
-                    };
-                }
-
-                if let Some(placements) = merged_placements {
-                    if let Some(status) = current.status.as_mut() {
-                        status.ownership.placements = Some(placements);
-                        updated = true;
-                    };
-                }
-            } else if current_owner_epoch == incoming_owner_epoch {
-                //      if current.startTime is greater then incoming.startTime
-                //          merge ownership section from current
-                //          - merge placements from current and incoming
-                //          - increment epoch
-                //      merge zone statuses from both if zone status version is higher than current
-
-                let maybe_merged_zones =
-                    self.merge_zone_statuses(&current.status, &incoming.status);
-                let merged_placements =
-                    self.merge_placements_to_current(&current.status, &incoming.status);
-
-                if let Some(zones) = maybe_merged_zones {
-                    if let Some(status) = current.status.as_mut() {
-                        status.zones = Some(zones);
-                        updated = true;
-                    };
-                }
-
-                let current_instance = membership.get_instance(&current_owner_zone);
-                let incoming_instance = membership.get_instance(&incoming_owner_zone);
-                let current_has_priority = match (current_instance, incoming_instance) {
-                    (Some(current), Some(incoming)) => current.start_time < incoming.start_time,
-                    (Some(_), None) | (None, None) => true,
-                    (None, Some(_)) => false,
-                };
-                if current_has_priority {
-                    if let Some(status) = current.status.as_mut() {
-                        status.ownership.epoch += 1;
-                        updated = true;
+                    if let Some(zones) = maybe_merged_zones {
+                        if let Some(status) = current.status.as_mut() {
+                            status.zones = Some(zones);
+                            updated = true;
+                        };
                     }
+
                     if let Some(placements) = merged_placements {
                         if let Some(status) = current.status.as_mut() {
                             status.ownership.placements = Some(placements);
@@ -488,23 +448,61 @@ impl AnyApplicationMerge {
                         };
                     }
                 }
-            } else {
-                // current_owner_epoch < incoming_owner_epoch
-                current.spec = incoming.spec.clone();
-                current.status = incoming.status.clone();
-                updated = true;
+                std::cmp::Ordering::Equal => {
+                    //      if current.startTime is greater then incoming.startTime
+                    //          merge ownership section from current
+                    //          - merge placements from current and incoming
+                    //          - increment epoch
+                    //      merge zone statuses from both if zone status version is higher than current
+
+                    let current_instance = membership.get_instance(&current_owner_zone);
+                    let incoming_instance = membership.get_instance(&incoming_owner_zone);
+                    let current_has_priority = match (current_instance, incoming_instance) {
+                        (Some(current), Some(incoming)) => current.start_time < incoming.start_time,
+                        (Some(_), None) | (None, None) => true,
+                        (None, Some(_)) => false,
+                    };
+                    if current_has_priority {
+                        let maybe_merged_zones =
+                            self.merge_zone_statuses(&current.status, &incoming.status);
+                        let merged_placements =
+                            self.merge_placements_to_current(&current.status, &incoming.status);
+
+                        if let Some(zones) = maybe_merged_zones {
+                            if let Some(status) = current.status.as_mut() {
+                                status.zones = Some(zones);
+                                updated = true;
+                            };
+                        }
+
+                        if let Some(status) = current.status.as_mut() {
+                            status.ownership.epoch += 1;
+                            updated = true;
+                        }
+                        if let Some(placements) = merged_placements {
+                            if let Some(status) = current.status.as_mut() {
+                                status.ownership.placements = Some(placements);
+                                updated = true;
+                            };
+                        }
+                    }
+                }
+                std::cmp::Ordering::Less => {
+                    current.spec = incoming.spec.clone();
+                    current.status = incoming.status.clone();
+                    current.set_owner_version(incoming_owner_version);
+                    updated = true;
+                }
             }
 
             if updated {
-                current.set_owner_version(incoming_owner_version);
-
                 let object = current.to_object()?;
                 object.dump_status("merge_update_internal - owner merge");
                 return Ok(MergeResult::Update { object });
             }
         }
 
-        return Ok(MergeResult::Skip);
+        Ok(MergeResult::Skip)
     }
 
     fn merge_spec(
@@ -528,7 +526,7 @@ impl AnyApplicationMerge {
         incoming: &Option<AnyApplicationStatus>,
         incoming_owner_version: Version,
     ) -> Option<AnyApplicationStatus> {
-        let maybe_status = self.merge_ownership_section2(
+        let maybe_status = self.merge_ownership_section(
             current,
             current_owner_version,
             incoming,
@@ -569,7 +567,7 @@ impl AnyApplicationMerge {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn merge_ownership_section2(
+    fn merge_ownership_section(
         &self,
         current: &Option<AnyApplicationStatus>,
         current_owner_version: Version,
@@ -624,7 +622,7 @@ impl AnyApplicationMerge {
             .and_then(|v| v.ownership.placements.as_ref())
             .unwrap_or(&empty_vec);
         let mut updated = false;
-        let mut target = vec![];
+        let mut target = current_placements.clone();
 
         for incom in incoming_placements.iter() {
             let found = current_placements.iter().find(|v| v.zone == incom.zone);
@@ -853,6 +851,7 @@ pub mod tests {
     use crate::merge::types::Tombstone;
     use crate::merge::types::UpdateResult;
     use crate::merge::types::VersionedObject;
+    use crate::mesh::topic::InstanceId;
 
     #[test]
     pub fn mesh_update_create_non_existing() {
@@ -1038,6 +1037,317 @@ pub mod tests {
     }
 
     #[test]
+    pub fn mesh_update_the_same_owner_greater_epoch() {
+        let membership = Membership::new();
+
+        let current = make_anyapplication_with_conditions(
+            1,
+            1,
+            "zone1",
+            1,
+            0,
+            &["zone1", "zone2"],
+            &[
+                anyzone("zone1", 2, &[anycond("zone1", "type")]),
+                anyzone("zone2", 3, &[anycond("zone2", "type")]),
+            ],
+        );
+        let incoming = make_anyapplication_with_conditions(
+            2,
+            1,
+            "zone1",
+            2,
+            1,
+            &["zone1", "zone2"],
+            &[
+                anyzone("zone1", 3, &[anycond("zone1", "type")]),
+                anyzone("zone2", 4, &[anycond("zone2", "type")]),
+            ],
+        );
+
+        let expected = make_anyapplication_with_conditions(
+            2,
+            1,
+            "zone1",
+            2,
+            1,
+            &["zone1", "zone2"],
+            &[
+                anyzone("zone1", 3, &[anycond("zone1", "type")]),
+                anyzone("zone2", 4, &[anycond("zone2", "type")]),
+            ],
+        );
+
+        let strategy = AnyApplicationMerge::new();
+        assert_eq!(
+            MergeResult::Update { object: expected },
+            strategy
+                .mesh_update(current.into(), incoming, "zone1", "zone3", &membership)
+                .unwrap()
+        );
+    }
+
+    #[test]
+    pub fn mesh_update_different_owner_greater_epoch() {
+        let membership = Membership::new();
+
+        let current = make_anyapplication_with_conditions(
+            1,
+            1,
+            "zone1",
+            1,
+            0,
+            &["zone1", "zone2"],
+            &[
+                anyzone("zone1", 2, &[anycond("zone1", "type")]),
+                anyzone("zone2", 3, &[anycond("zone2", "type")]),
+            ],
+        );
+        let incoming = make_anyapplication_with_conditions(
+            2,
+            3,
+            "zone2",
+            2,
+            1,
+            &["zone1", "zone2"],
+            &[
+                anyzone("zone1", 3, &[anycond("zone1", "type")]),
+                anyzone("zone2", 4, &[anycond("zone2", "type")]),
+            ],
+        );
+
+        let expected = make_anyapplication_with_conditions(
+            2,
+            1,
+            "zone2",
+            2,
+            1,
+            &["zone1", "zone2"],
+            &[
+                anyzone("zone1", 3, &[anycond("zone1", "type")]),
+                anyzone("zone2", 4, &[anycond("zone2", "type")]),
+            ],
+        );
+
+        let strategy = AnyApplicationMerge::new();
+        assert_eq!(
+            MergeResult::Update { object: expected },
+            strategy
+                .mesh_update(current.into(), incoming, "zone2", "zone3", &membership)
+                .unwrap()
+        );
+    }
+
+    #[test]
+    pub fn mesh_update_ownership_conflict_greater_epoch() {
+        let membership = Membership::new();
+
+        let current = make_anyapplication_with_conditions(
+            2,
+            1,
+            "zone1",
+            2,
+            0,
+            &["zone1", "zone2"],
+            &[
+                anyzone("zone1", 2, &[anycond("zone1", "type")]),
+                anyzone("zone2", 3, &[anycond("zone2", "type")]),
+            ],
+        );
+        let incoming = make_anyapplication_with_conditions(
+            1,
+            3,
+            "zone3",
+            1,
+            1,
+            &["zone2", "zone3"],
+            &[
+                anyzone("zone2", 4, &[anycond("zone2", "type")]),
+                anyzone("zone3", 4, &[anycond("zone3", "type")]),
+            ],
+        );
+
+        let expected = make_anyapplication_with_conditions(
+            2,
+            1,
+            "zone1",
+            2,
+            0,
+            &["zone1", "zone2", "zone3"],
+            &[
+                anyzone("zone1", 2, &[anycond("zone1", "type")]),
+                anyzone("zone2", 4, &[anycond("zone2", "type")]),
+                anyzone("zone3", 4, &[anycond("zone3", "type")]),
+            ],
+        );
+
+        let strategy = AnyApplicationMerge::new();
+        assert_eq!(
+            MergeResult::Update { object: expected },
+            strategy
+                .mesh_update(current.into(), incoming, "zone3", "zone1", &membership)
+                .unwrap()
+        );
+    }
+
+    #[test]
+    pub fn mesh_update_ownership_conflict_equal_epoch_current_owner() {
+        let mut membership = Membership::new();
+        membership.add(InstanceId {
+            zone: "zone1".into(),
+            start_time: 1,
+        });
+        membership.add(InstanceId {
+            zone: "zone3".into(),
+            start_time: 2,
+        });
+
+        let current = make_anyapplication_with_conditions(
+            2,
+            1,
+            "zone1",
+            1,
+            0,
+            &["zone1", "zone2"],
+            &[
+                anyzone("zone1", 2, &[anycond("zone1", "type")]),
+                anyzone("zone2", 3, &[anycond("zone2", "type")]),
+            ],
+        );
+        let incoming = make_anyapplication_with_conditions(
+            1,
+            3,
+            "zone3",
+            1,
+            1,
+            &["zone2", "zone3"],
+            &[
+                anyzone("zone2", 4, &[anycond("zone2", "type")]),
+                anyzone("zone3", 4, &[anycond("zone3", "type")]),
+            ],
+        );
+
+        let expected = make_anyapplication_with_conditions(
+            2,
+            1,
+            "zone1",
+            2,
+            0,
+            &["zone1", "zone2", "zone3"],
+            &[
+                anyzone("zone1", 2, &[anycond("zone1", "type")]),
+                anyzone("zone2", 4, &[anycond("zone2", "type")]),
+                anyzone("zone3", 4, &[anycond("zone3", "type")]),
+            ],
+        );
+
+        let strategy = AnyApplicationMerge::new();
+        assert_eq!(
+            MergeResult::Update { object: expected },
+            strategy
+                .mesh_update(current.into(), incoming, "zone3", "zone1", &membership)
+                .unwrap()
+        );
+    }
+
+    #[test]
+    pub fn mesh_update_ownership_conflict_equal_epoch_incoming_owner() {
+        let mut membership = Membership::new();
+        membership.add(InstanceId {
+            zone: "zone1".into(),
+            start_time: 2,
+        });
+        membership.add(InstanceId {
+            zone: "zone3".into(),
+            start_time: 1,
+        });
+
+        let current = make_anyapplication_with_conditions(
+            2,
+            1,
+            "zone1",
+            1,
+            0,
+            &["zone1", "zone2"],
+            &[
+                anyzone("zone1", 2, &[anycond("zone1", "type")]),
+                anyzone("zone2", 3, &[anycond("zone2", "type")]),
+            ],
+        );
+        let incoming = make_anyapplication_with_conditions(
+            1,
+            3,
+            "zone3",
+            1,
+            1,
+            &["zone2", "zone3"],
+            &[
+                anyzone("zone2", 4, &[anycond("zone2", "type")]),
+                anyzone("zone3", 4, &[anycond("zone3", "type")]),
+            ],
+        );
+
+        let strategy = AnyApplicationMerge::new();
+        assert_eq!(
+            MergeResult::Skip,
+            strategy
+                .mesh_update(current.into(), incoming, "zone3", "zone1", &membership)
+                .unwrap()
+        );
+    }
+
+    #[test]
+    pub fn mesh_update_ownership_conflict_less_epoch() {
+        let membership = Membership::new();
+
+        let current = make_anyapplication_with_conditions(
+            2,
+            1,
+            "zone1",
+            1,
+            0,
+            &["zone1", "zone2"],
+            &[
+                anyzone("zone1", 2, &[anycond("zone1", "type")]),
+                anyzone("zone2", 3, &[anycond("zone2", "type")]),
+            ],
+        );
+        let incoming = make_anyapplication_with_conditions(
+            1,
+            3,
+            "zone3",
+            2,
+            1,
+            &["zone2", "zone3"],
+            &[
+                anyzone("zone2", 4, &[anycond("zone2", "type")]),
+                anyzone("zone3", 4, &[anycond("zone3", "type")]),
+            ],
+        );
+
+        let expected = make_anyapplication_with_conditions(
+            1,
+            1,
+            "zone3",
+            2,
+            1,
+            &["zone2", "zone3"],
+            &[
+                anyzone("zone2", 4, &[anycond("zone2", "type")]),
+                anyzone("zone3", 4, &[anycond("zone3", "type")]),
+            ],
+        );
+
+        let strategy = AnyApplicationMerge::new();
+        assert_eq!(
+            MergeResult::Update { object: expected },
+            strategy
+                .mesh_update(current.into(), incoming, "zone3", "zone1", &membership)
+                .unwrap()
+        );
+    }
+
+    #[test]
     pub fn mesh_delete_non_existing_delete() {
         let incoming = anyapp(1, "zone1", 0);
 
@@ -1178,7 +1488,9 @@ pub mod tests {
             1,
             1,
             "zone1",
+            1,
             0,
+            &["zone1", "zone2"],
             &[
                 anyzone("zone1", 2, &[anycond("zone1", "type")]),
                 anyzone("zone2", 3, &[anycond("zone2", "type")]),
@@ -1189,6 +1501,8 @@ pub mod tests {
             1,
             "zone1",
             1,
+            1,
+            &["zone1", "zone2"],
             &[
                 anyzone("zone1", 3, &[anycond("zone1", "type")]),
                 anyzone("zone2", 4, &[anycond("zone2", "type")]),
@@ -1199,7 +1513,9 @@ pub mod tests {
             1,
             1,
             "zone1",
+            1,
             0,
+            &["zone1", "zone2"],
             &[
                 anyzone("zone1", 3, &[anycond("zone1", "type")]),
                 anyzone("zone2", 4, &[anycond("zone2", "type")]),
@@ -1222,7 +1538,9 @@ pub mod tests {
             1,
             1,
             "zone1",
+            1,
             0,
+            &["zone1", "zone2"],
             &[anyzone("zone1", 2, &[anycond("zone1", "type")])],
         );
         let incoming = make_anyapplication_with_conditions(
@@ -1230,6 +1548,8 @@ pub mod tests {
             1,
             "zone1",
             1,
+            1,
+            &["zone1", "zone2"],
             &[
                 anyzone("zone1", 2, &[anycond("zone1", "type")]),
                 anyzone("zone2", 4, &[anycond("zone2", "type")]),
@@ -1240,7 +1560,9 @@ pub mod tests {
             1,
             1,
             "zone1",
+            1,
             0,
+            &["zone1", "zone2"],
             &[
                 anyzone("zone1", 2, &[anycond("zone1", "type")]),
                 anyzone("zone2", 4, &[anycond("zone2", "type")]),
@@ -1263,7 +1585,9 @@ pub mod tests {
             1,
             1,
             "zone1",
+            1,
             0,
+            &["zone1", "zone2"],
             &[
                 anyzone("zone1", 2, &[anycond("zone1", "type")]),
                 anyzone("zone2", 2, &[anycond("zone2", "type")]),
@@ -1274,6 +1598,8 @@ pub mod tests {
             1,
             "zone1",
             1,
+            1,
+            &["zone1", "zone2"],
             &[
                 anyzone("zone1", 2, &[anycond("zone1", "type")]),
                 anyzone("zone2", 3, &[]),
@@ -1284,7 +1610,9 @@ pub mod tests {
             1,
             1,
             "zone1",
+            1,
             0,
+            &["zone1", "zone2"],
             &[
                 anyzone("zone1", 2, &[anycond("zone1", "type")]),
                 anyzone("zone2", 3, &[]),
@@ -1302,7 +1630,7 @@ pub mod tests {
 
     #[test]
     pub fn local_update_create_non_existing() {
-        let incoming = make_anyapplication_with_conditions(1, 1, "zone1", 0, &[]);
+        let incoming = make_anyapplication_with_conditions(1, 1, "zone1", 1, 0, &["zone1"], &[]);
 
         assert_eq!(
             UpdateResult::Create {
@@ -1316,7 +1644,7 @@ pub mod tests {
 
     #[test]
     pub fn local_update_create_tombstone() {
-        let incoming = make_anyapplication_with_conditions(1, 1, "zone1", 0, &[]);
+        let incoming = make_anyapplication_with_conditions(1, 1, "zone1", 1, 0, &["zone1"], &[]);
         let existing = VersionedObject::Tombstone(Tombstone {
             gvk: incoming.get_gvk().expect("gvk expected"),
             name: incoming.get_namespaced_name(),
@@ -1338,7 +1666,7 @@ pub mod tests {
 
     #[test]
     pub fn local_update_skip_create_tombstone_is_newer() {
-        let incoming = make_anyapplication_with_conditions(1, 1, "zone1", 0, &[]);
+        let incoming = make_anyapplication_with_conditions(1, 1, "zone1", 1, 0, &["zone1"], &[]);
 
         let existing = VersionedObject::Tombstone(Tombstone {
             gvk: incoming.get_gvk().expect("gvk expected"),
@@ -1359,9 +1687,9 @@ pub mod tests {
 
     #[test]
     pub fn local_update_skip_old_version() {
-        let incoming = make_anyapplication_with_conditions(1, 1, "zone1", 0, &[]);
+        let incoming = make_anyapplication_with_conditions(1, 1, "zone1", 1, 0, &["zone1"], &[]);
 
-        let existing = make_anyapplication_with_conditions(2, 2, "zone1", 0, &[]);
+        let existing = make_anyapplication_with_conditions(2, 2, "zone1", 1, 0, &["zone1"], &[]);
 
         assert_eq!(
             UpdateResult::Skip,
@@ -1373,8 +1701,8 @@ pub mod tests {
 
     #[test]
     pub fn local_update_incoming_has_diff() {
-        let incoming = make_anyapplication_with_conditions(1, 2, "zone1", 2, &[]);
-        let existing = make_anyapplication_with_conditions(1, 1, "zone1", 0, &[]);
+        let incoming = make_anyapplication_with_conditions(1, 2, "zone1", 1, 2, &["zone1"], &[]);
+        let existing = make_anyapplication_with_conditions(1, 1, "zone1", 1, 0, &["zone1"], &[]);
 
         let mut expected = incoming.clone();
         expected.set_owner_version(2);
@@ -1462,8 +1790,8 @@ pub mod tests {
 
     #[test]
     pub fn local_delete_incoming_resource_version_greater() {
-        let current = make_anyapplication_with_conditions(1, 1, "zone1", 1, &[]);
-        let incoming = make_anyapplication_with_conditions(1, 2, "zone1", 1, &[]);
+        let current = make_anyapplication_with_conditions(1, 1, "zone1", 1, 1, &["zone1"], &[]);
+        let incoming = make_anyapplication_with_conditions(1, 2, "zone1", 1, 1, &["zone1"], &[]);
 
         let mut expected = incoming.clone();
         expected.set_owner_version(2);
@@ -1493,6 +1821,8 @@ pub mod tests {
             1,
             "zone1",
             1,
+            1,
+            &["zone1", "zone2"],
             &[
                 anyzone("zone1", 2, &[anycond("zone1", "type")]),
                 anyzone("zone2", 3, &[anycond("zone2", "type")]),
@@ -1503,6 +1833,8 @@ pub mod tests {
             1,
             "zone1",
             1,
+            1,
+            &["zone1", "zone2"],
             &[
                 anyzone("zone1", 2, &[anycond("zone1", "type")]),
                 anyzone("zone2", 4, &[anycond_status("zone2", "type", "updated")]),
@@ -1514,6 +1846,8 @@ pub mod tests {
             5,
             "zone1",
             1,
+            1,
+            &["zone1", "zone2"],
             &[
                 anyzone("zone1", 2, &[anycond("zone1", "type")]),
                 anyzone("zone2", 4, &[anycond_status("zone2", "type", "updated")]),
@@ -1535,7 +1869,9 @@ pub mod tests {
             1,
             1,
             "zone1",
+            1,
             0,
+            &["zone1", "zone2"],
             &[anyzone("zone1", 2, &[anycond("zone1", "type")])],
         );
         let incoming = make_anyapplication_with_conditions(
@@ -1543,6 +1879,8 @@ pub mod tests {
             1,
             "zone1",
             1,
+            1,
+            &["zone1", "zone2"],
             &[
                 anyzone("zone1", 3, &[anycond("zone1", "type")]),
                 anyzone("zone2", 4, &[anycond("zone2", "type")]),
@@ -1553,7 +1891,9 @@ pub mod tests {
             1,
             5,
             "zone1",
+            1,
             0,
+            &["zone1", "zone2"],
             &[
                 anyzone("zone1", 3, &[anycond("zone1", "type")]),
                 anyzone("zone2", 4, &[anycond("zone2", "type")]),
@@ -1575,7 +1915,9 @@ pub mod tests {
             1,
             1,
             "zone1",
+            1,
             0,
+            &["zone1", "zone2"],
             &[
                 anyzone("zone1", 2, &[anycond("zone1", "type")]),
                 anyzone("zone2", 3, &[anycond("zone2", "type")]),
@@ -1587,6 +1929,8 @@ pub mod tests {
             1,
             "zone1",
             1,
+            1,
+            &["zone1", "zone2"],
             &[
                 anyzone("zone1", 2, &[anycond("zone1", "type")]),
                 anyzone("zone2", 4, &[]),
@@ -1597,7 +1941,9 @@ pub mod tests {
             1,
             4,
             "zone1",
+            1,
             0,
+            &["zone1", "zone2"],
             &[
                 anyzone("zone1", 2, &[anycond("zone1", "type")]),
                 anyzone("zone2", 4, &[]),

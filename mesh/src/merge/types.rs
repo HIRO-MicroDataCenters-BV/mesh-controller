@@ -112,12 +112,23 @@ pub struct Membership {
     instances: HashMap<String, InstanceId>,
 }
 
+impl Default for Membership {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Membership {
     pub fn new() -> Membership {
         Membership {
             instances: HashMap::new(),
         }
     }
+
+    pub fn add(&mut self, instance: InstanceId) {
+        self.instances.insert(instance.zone.to_owned(), instance);
+    }
+
     pub fn get_instance(&self, zone: &str) -> Option<&InstanceId> {
         self.instances.get(zone)
     }
