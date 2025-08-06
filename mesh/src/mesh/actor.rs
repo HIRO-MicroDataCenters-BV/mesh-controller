@@ -45,6 +45,7 @@ pub struct MeshActor {
     operation_log: OperationLog,
     operations: LinkedOperations,
     partition: Partition,
+    topic_log_map: MeshTopicLogMap,
     clock: Arc<dyn Clock>,
     cancelation: CancellationToken,
     snapshot_config: PeriodicSnapshotConfig,
@@ -80,6 +81,7 @@ impl MeshActor {
                 topic_log_map.clone(),
                 store.clone(),
             ),
+            topic_log_map,
             instance_id,
             network_tx,
             network_rx,
@@ -150,6 +152,7 @@ impl MeshActor {
     }
 
     async fn on_ready_incoming(&mut self, ready: &mut Ready) -> Result<(), anyhow::Error> {
+        let membership = self.topic_log_map.get_membership();
         for (log_id, ops) in ready.take_incoming().into_iter() {
             for operation in ops.into_iter() {
                 let pointer = operation.header.seq_num;
@@ -159,6 +162,7 @@ impl MeshActor {
                         mesh_event,
                         &log_id.0.zone,
                         &self.instance_id.zone,
+                        &membership,
                     )?;
                     for merge_result in merge_results.into_iter() {
                         match self.on_merge_result(merge_result).await {
