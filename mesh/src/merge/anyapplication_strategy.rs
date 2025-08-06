@@ -5,6 +5,7 @@ use crate::{
         subscriptions::Version,
     },
     merge::types::{Membership, Tombstone, VersionedObject},
+    mesh::{event::MeshEvent, topic::InstanceId},
 };
 use anyapplication::{
     anyapplication::{
@@ -15,7 +16,7 @@ use anyapplication::{
 };
 use anyhow::{Result, anyhow};
 use kube::api::{DynamicObject, GroupVersionKind};
-use tracing::error;
+use tracing::{error, info};
 
 pub struct AnyApplicationMerge {
     gvk: GroupVersionKind,
@@ -113,7 +114,7 @@ impl MergeStrategy for AnyApplicationMerge {
         current: VersionedObject,
         incoming: DynamicObject,
         incoming_resource_version: Version,
-        incoming_zone: &str,
+        node_zone: &str,
     ) -> Result<UpdateResult> {
         // Object is in deleting state
         if incoming.metadata.deletion_timestamp.is_some() {
@@ -122,12 +123,12 @@ impl MergeStrategy for AnyApplicationMerge {
 
         let mut incoming: AnyApplication = incoming.clone().try_parse()?;
 
-        let is_acceptable_zone = incoming.is_acceptable_zone(incoming_zone);
+        let is_acceptable_zone = incoming.is_acceptable_zone(node_zone);
         if !is_acceptable_zone {
             return Ok(UpdateResult::Skip);
         }
 
-        let is_owned_zone = incoming.is_owned_zone(incoming_zone);
+        let is_owned_zone = incoming.is_owned_zone(node_zone);
         match current {
             VersionedObject::Object(current) => {
                 let mut current: AnyApplication = current.clone().try_parse()?;
@@ -199,19 +200,19 @@ impl MergeStrategy for AnyApplicationMerge {
         current: VersionedObject,
         incoming: DynamicObject,
         incoming_version: Version,
-        incoming_zone: &str,
+        node_zone: &str,
         now_millis: u64,
     ) -> Result<UpdateResult> {
         let name = incoming.get_namespaced_name();
         let mut incoming: AnyApplication = incoming.clone().try_parse()?;
         // Delete is allowed only from owning zone
-        let is_owning_zone = incoming.get_owner_zone() == incoming_zone;
-        if !is_owning_zone {
+        let is_owned_zone = incoming.is_owned_zone(node_zone);
+        if !is_owned_zone {
             return Ok(UpdateResult::Skip);
         }
 
         match current {
-            VersionedObject::Object(_current) => {
+            VersionedObject::Object(_) => {
                 incoming.set_owner_version(incoming_version);
                 let mut object = incoming.to_object()?;
 
@@ -222,7 +223,7 @@ impl MergeStrategy for AnyApplicationMerge {
                         gvk: self.gvk.to_owned(),
                         name,
                         owner_version: incoming_version,
-                        owner_zone: incoming_zone.to_owned(),
+                        owner_zone: node_zone.to_owned(),
                         resource_version: incoming_version,
                         deletion_timestamp: now_millis,
                     },
@@ -232,7 +233,7 @@ impl MergeStrategy for AnyApplicationMerge {
                 gvk: self.gvk.to_owned(),
                 name,
                 owner_version: incoming_version,
-                owner_zone: incoming_zone.to_owned(),
+                owner_zone: node_zone.to_owned(),
                 resource_version: incoming_version,
                 deletion_timestamp: now_millis,
             })),
@@ -242,7 +243,7 @@ impl MergeStrategy for AnyApplicationMerge {
                     gvk: self.gvk.to_owned(),
                     name,
                     owner_version: max_version,
-                    owner_zone: incoming_zone.to_owned(),
+                    owner_zone: node_zone.to_owned(),
                     resource_version: tombstone.resource_version,
                     deletion_timestamp: now_millis,
                 }))
@@ -272,10 +273,43 @@ impl MergeStrategy for AnyApplicationMerge {
 
     fn mesh_membership_change(
         &self,
-        _membership: &Membership,
-        _now_millis: u64,
-    ) -> Result<Vec<MergeResult>> {
-        unimplemented!()
+        current: VersionedObject,
+        membership: &Membership,
+        node_zone: &str,
+    ) -> Result<Vec<MeshEvent>> {
+        match current {
+            VersionedObject::Object(current) => {
+                let mut current: AnyApplication = current.try_parse()?;
+                let maybe_instance = membership.get_instance(&current.get_owner_zone());
+                let None = maybe_instance else {
+                    return Ok(vec![]);
+                };
+
+                let mut placement_zones: Vec<&InstanceId> = current
+                    .get_placement_zones()
+                    .iter()
+                    .flat_map(|zone| membership.get_instance(zone))
+                    .collect();
+                placement_zones.sort_by_key(|x| x.start_time);
+                if let Some(instance) = placement_zones
+                    .first()
+                    .cloned()
+                    .or(membership.default_owner())
+                {
+                    if instance.zone == node_zone {
+                        if let Some(status) = &mut current.status {
+                            status.ownership.owner = instance.zone.to_owned();
+                            status.ownership.epoch += 1;
+                            let mut object = current.to_object()?;
+                            object.unset_resource_version();
+                            return Ok(vec![MeshEvent::Update { object }]);
+                        }
+                    }
+                }
+                Ok(vec![])
+            }
+            VersionedObject::NonExisting | VersionedObject::Tombstone(_) => Ok(vec![]),
+        }
     }
 }
 
@@ -334,7 +368,10 @@ impl AnyApplicationMerge {
             if updated {
                 let object = current.to_object()?;
                 object.dump_status("merge_update_internal - merging local zone statuses");
-                return Ok(MergeResult::Update { object });
+                return Ok(MergeResult::Update {
+                    object,
+                    force_send: false,
+                });
             }
         }
 
@@ -391,7 +428,10 @@ impl AnyApplicationMerge {
                 current.set_owner_version(incoming_owner_version);
                 let object = current.to_object()?;
                 object.dump_status("merge_update_internal - non owner merge");
-                return Ok(MergeResult::Update { object });
+                return Ok(MergeResult::Update {
+                    object,
+                    force_send: false,
+                });
             }
         }
 
@@ -424,8 +464,10 @@ impl AnyApplicationMerge {
             && incoming_owner_zone != node_zone
         {
             let mut updated = false;
+            let mut force_send = false;
             match current_owner_epoch.cmp(&incoming_owner_epoch) {
                 std::cmp::Ordering::Greater => {
+                    info!("merging owners - greater");
                     //      merge ownership section from current
                     //        - merge placements from current and incoming
                     //      merge spec from current
@@ -456,7 +498,7 @@ impl AnyApplicationMerge {
                     //          - merge placements from current and incoming
                     //          - increment epoch
                     //      merge zone statuses from both if zone status version is higher than current
-
+                    info!("merging owners - equal");
                     let current_instance = membership.get_instance(&current_owner_zone);
                     let incoming_instance = membership.get_instance(&incoming_owner_zone);
                     let current_has_priority = match (current_instance, incoming_instance) {
@@ -480,6 +522,7 @@ impl AnyApplicationMerge {
                         if let Some(status) = current.status.as_mut() {
                             status.ownership.epoch += 1;
                             updated = true;
+                            force_send = true;
                         }
                         if let Some(placements) = merged_placements {
                             if let Some(status) = current.status.as_mut() {
@@ -490,6 +533,7 @@ impl AnyApplicationMerge {
                     }
                 }
                 std::cmp::Ordering::Less => {
+                    info!("merging owners - less");
                     current.spec = incoming.spec.clone();
                     current.status = incoming.status.clone();
                     current.set_owner_version(incoming_owner_version);
@@ -500,7 +544,7 @@ impl AnyApplicationMerge {
             if updated {
                 let object = current.to_object()?;
                 object.dump_status("merge_update_internal - owner merge");
-                return Ok(MergeResult::Update { object });
+                return Ok(MergeResult::Update { object, force_send });
             }
         }
 
@@ -1002,7 +1046,8 @@ pub mod tests {
         let strategy = AnyApplicationMerge::new();
         assert_eq!(
             MergeResult::Update {
-                object: incoming.to_owned()
+                object: incoming.to_owned(),
+                force_send: false,
             },
             strategy
                 .mesh_update(
@@ -1033,7 +1078,8 @@ pub mod tests {
         let strategy = AnyApplicationMerge::new();
         assert_eq!(
             MergeResult::Update {
-                object: incoming.to_owned()
+                object: incoming.to_owned(),
+                force_send: false,
             },
             strategy
                 .mesh_update(current.into(), incoming, "zone1", "zone2", &membership)
@@ -1050,7 +1096,8 @@ pub mod tests {
         let strategy = AnyApplicationMerge::new();
         assert_eq!(
             MergeResult::Update {
-                object: incoming.to_owned()
+                object: incoming.to_owned(),
+                force_send: false,
             },
             strategy
                 .mesh_update(current.into(), incoming, "zone1", "zone2", &membership)
@@ -1117,7 +1164,10 @@ pub mod tests {
 
         let strategy = AnyApplicationMerge::new();
         assert_eq!(
-            MergeResult::Update { object: expected },
+            MergeResult::Update {
+                object: expected,
+                force_send: false,
+            },
             strategy
                 .mesh_update(current.into(), incoming, "zone1", "zone3", &membership)
                 .unwrap()
@@ -1168,7 +1218,10 @@ pub mod tests {
 
         let strategy = AnyApplicationMerge::new();
         assert_eq!(
-            MergeResult::Update { object: expected },
+            MergeResult::Update {
+                object: expected,
+                force_send: false,
+            },
             strategy
                 .mesh_update(current.into(), incoming, "zone2", "zone3", &membership)
                 .unwrap()
@@ -1220,7 +1273,10 @@ pub mod tests {
 
         let strategy = AnyApplicationMerge::new();
         assert_eq!(
-            MergeResult::Update { object: expected },
+            MergeResult::Update {
+                object: expected,
+                force_send: false,
+            },
             strategy
                 .mesh_update(current.into(), incoming, "zone3", "zone1", &membership)
                 .unwrap()
@@ -1280,7 +1336,10 @@ pub mod tests {
 
         let strategy = AnyApplicationMerge::new();
         assert_eq!(
-            MergeResult::Update { object: expected },
+            MergeResult::Update {
+                object: expected,
+                force_send: true,
+            },
             strategy
                 .mesh_update(current.into(), incoming, "zone3", "zone1", &membership)
                 .unwrap()
@@ -1377,7 +1436,10 @@ pub mod tests {
 
         let strategy = AnyApplicationMerge::new();
         assert_eq!(
-            MergeResult::Update { object: expected },
+            MergeResult::Update {
+                object: expected,
+                force_send: false,
+            },
             strategy
                 .mesh_update(current.into(), incoming, "zone3", "zone1", &membership)
                 .unwrap()
@@ -1561,7 +1623,10 @@ pub mod tests {
 
         let strategy = AnyApplicationMerge::new();
         assert_eq!(
-            MergeResult::Update { object: expected },
+            MergeResult::Update {
+                object: expected,
+                force_send: false,
+            },
             strategy
                 .mesh_update(current.into(), incoming, "zone2", "zone1", &membership)
                 .unwrap()
@@ -1608,7 +1673,10 @@ pub mod tests {
 
         let strategy = AnyApplicationMerge::new();
         assert_eq!(
-            MergeResult::Update { object: expected },
+            MergeResult::Update {
+                object: expected,
+                force_send: false,
+            },
             strategy
                 .mesh_update(current.into(), incoming, "zone2", "zone1", &membership)
                 .unwrap()
@@ -1658,7 +1726,10 @@ pub mod tests {
 
         let strategy = AnyApplicationMerge::new();
         assert_eq!(
-            MergeResult::Update { object: expected },
+            MergeResult::Update {
+                object: expected,
+                force_send: false,
+            },
             strategy
                 .mesh_update(current.into(), incoming, "zone2", "zone1", &membership)
                 .unwrap()

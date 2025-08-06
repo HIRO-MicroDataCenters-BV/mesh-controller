@@ -5,13 +5,18 @@ use kube::api::{DynamicObject, GroupVersionKind};
 
 use crate::{
     kube::{subscriptions::Version, types::NamespacedName},
-    mesh::topic::InstanceId,
+    mesh::{event::MeshEvent, topic::InstanceId},
 };
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum MergeResult {
-    Create { object: DynamicObject },
-    Update { object: DynamicObject },
+    Create {
+        object: DynamicObject,
+    },
+    Update {
+        object: DynamicObject,
+        force_send: bool,
+    },
     Delete(Tombstone),
     Tombstone(Tombstone),
     Skip,
@@ -65,7 +70,7 @@ pub trait MergeStrategy: Send + Sync {
         current: VersionedObject,
         incoming: DynamicObject,
         incoming_resource_version: Version,
-        incoming_zone: &str,
+        node_zone: &str,
     ) -> Result<UpdateResult>;
 
     fn kube_delete(
@@ -73,7 +78,7 @@ pub trait MergeStrategy: Send + Sync {
         current: VersionedObject,
         incoming: DynamicObject,
         incoming_resource_version: Version,
-        incoming_zone: &str,
+        node_zone: &str,
         now_millis: u64,
     ) -> Result<UpdateResult>;
 
@@ -96,9 +101,10 @@ pub trait MergeStrategy: Send + Sync {
 
     fn mesh_membership_change(
         &self,
+        current: VersionedObject,
         membership: &Membership,
-        now_millis: u64,
-    ) -> Result<Vec<MergeResult>>;
+        node_zone: &str,
+    ) -> Result<Vec<MeshEvent>>;
 
     fn tombstone(&self, current: VersionedObject, now_millis: u64) -> Result<Option<Tombstone>>;
 
@@ -131,5 +137,9 @@ impl Membership {
 
     pub fn get_instance(&self, zone: &str) -> Option<&InstanceId> {
         self.instances.get(zone)
+    }
+
+    pub fn default_owner(&self) -> Option<&InstanceId> {
+        None
     }
 }

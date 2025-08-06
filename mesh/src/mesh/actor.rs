@@ -10,6 +10,7 @@ use crate::kube::event::KubeEvent;
 use crate::kube::subscriptions::Subscriptions;
 use crate::kube::subscriptions::Version;
 use crate::kube::types::NamespacedName;
+use crate::merge::types::Membership;
 use crate::merge::types::MergeResult;
 use crate::merge::types::Tombstone;
 use crate::mesh::event::MeshEvent;
@@ -26,6 +27,7 @@ use p2panda_core::{Operation, PrivateKey};
 use p2panda_store::MemoryStore;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
+use tracing::info;
 use tracing::{debug, error, trace, warn};
 
 use super::operations::LinkedOperations;
@@ -121,6 +123,18 @@ impl MeshActor {
         Ok(())
     }
 
+    async fn _on_membership_change(&mut self, membership: &Membership) -> Result<()> {
+        let mesh_events = self
+            .partition
+            .mesh_membership_change(membership, &self.instance_id.zone)?;
+        for event in mesh_events {
+            let operation = self.operations.next(event);
+            self.operation_log.insert(operation).await?;
+        }
+        self.on_ready().await?;
+        Ok(())
+    }
+
     async fn on_outgoing_to_network(&mut self, event: KubeEvent) -> Result<()> {
         self.on_event(event).await?;
         self.on_ready().await?;
@@ -130,6 +144,7 @@ impl MeshActor {
     async fn on_event(&mut self, event: KubeEvent) -> Result<()> {
         let update_result = self.partition.kube_apply(event, &self.instance_id.zone)?;
         let event: Option<MeshEvent> = update_result.into();
+        info!("kube event => mesh event {:?}", event);
 
         if let Some(event) = event {
             let operation = self.operations.next(event);
@@ -164,21 +179,7 @@ impl MeshActor {
                         &self.instance_id.zone,
                         &membership,
                     )?;
-                    for merge_result in merge_results.into_iter() {
-                        match self.on_merge_result(merge_result).await {
-                            Ok(PersistenceResult::Persisted) => (),
-                            Ok(PersistenceResult::Conflict {
-                                gvk,
-                                name,
-                                operation_type,
-                            }) => {
-                                self.forced_sync(gvk, name, operation_type).await?;
-                            }
-                            Err(err) => {
-                                error!("error while merging {err}");
-                            }
-                        }
-                    }
+                    self.on_merge_results(merge_results).await;
                     self.operation_log.advance_log_pointer(&log_id, pointer + 1);
                 } else {
                     error!("event has no body");
@@ -186,6 +187,23 @@ impl MeshActor {
             }
         }
         Ok(())
+    }
+
+    async fn on_merge_results(&mut self, merge_results: Vec<MergeResult>) {
+        for merge_result in merge_results.into_iter() {
+            let ok_or_error = match self.on_merge_result(merge_result).await {
+                Ok(PersistenceResult::Persisted) => Ok(()),
+                Ok(PersistenceResult::Conflict {
+                    gvk,
+                    name,
+                    operation_type,
+                }) => self.forced_sync(gvk, name, operation_type).await,
+                Err(err) => Err(err),
+            };
+            if let Err(err) = ok_or_error {
+                error!("error while merging {err}");
+            }
+        }
     }
 
     async fn on_ready_outgoing(&mut self, ready: &mut Ready) {
@@ -202,20 +220,17 @@ impl MeshActor {
         merge_result: MergeResult,
     ) -> Result<PersistenceResult> {
         match merge_result {
-            MergeResult::Create { object } | MergeResult::Update { object } => {
-                return self.kube_patch_apply(object).await;
+            MergeResult::Create { object } | MergeResult::Update { object, .. } => {
+                self.kube_patch_apply(object).await
             }
             MergeResult::Delete(Tombstone {
                 gvk,
                 name,
                 resource_version,
                 ..
-            }) => {
-                return self.kube_delete(&gvk, &name, resource_version).await;
-            }
-            MergeResult::Skip | MergeResult::Tombstone { .. } => (),
+            }) => self.kube_delete(&gvk, &name, resource_version).await,
+            MergeResult::Skip | MergeResult::Tombstone { .. } => Ok(PersistenceResult::Persisted),
         }
-        Ok(PersistenceResult::Persisted)
     }
 
     async fn kube_patch_apply(&mut self, mut object: DynamicObject) -> Result<PersistenceResult> {

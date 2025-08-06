@@ -58,7 +58,7 @@ impl Partition {
                     incoming,
                     incoming_zone,
                     current_zone,
-                    &membership,
+                    membership,
                 )?;
 
                 self.mesh_update_partition(&result);
@@ -88,7 +88,7 @@ impl Partition {
 
     fn mesh_update_partition(&mut self, result: &MergeResult) {
         match &result {
-            MergeResult::Create { object } | MergeResult::Update { object } => {
+            MergeResult::Create { object } | MergeResult::Update { object, .. } => {
                 self.resources.insert(
                     object.get_namespaced_name(),
                     VersionedObject::Object(object.clone()),
@@ -164,7 +164,7 @@ impl Partition {
                 incoming,
                 incoming_zone,
                 current_zone,
-                &membership,
+                membership,
             )?;
             self.mesh_update_partition(&result);
             results.push(result);
@@ -193,6 +193,23 @@ impl Partition {
             snapshot.insert(name, object.to_owned());
         }
         MeshEvent::Snapshot { snapshot }
+    }
+
+    pub fn mesh_membership_change(
+        &mut self,
+        membership: &Membership,
+        node_zone: &str,
+    ) -> Result<Vec<MeshEvent>> {
+        let mut out = vec![];
+        for (_, current) in self.resources.iter() {
+            let mut merge_results = self.merge_strategy.mesh_membership_change(
+                current.to_owned(),
+                membership,
+                node_zone,
+            )?;
+            out.append(&mut merge_results);
+        }
+        Ok(out)
     }
 
     pub fn kube_apply(&mut self, event: KubeEvent, current_zone: &str) -> Result<UpdateResult> {
@@ -578,6 +595,7 @@ pub mod tests {
             },
             MergeResult::Update {
                 object: app_b1.to_owned(),
+                force_send: false,
             },
         ];
         assert_eq!(
@@ -1394,7 +1412,6 @@ pub mod tests {
         fn merge_cre(&self) -> MergeResult {
             let mut object = self.object();
             object.unset_resource_version();
-            // object.set_resource_version(self.resource_version);
             MergeResult::Create { object }
         }
 
@@ -1403,6 +1420,7 @@ pub mod tests {
             object.set_resource_version(self.resource_version);
             MergeResult::Update {
                 object: object.to_owned(),
+                force_send: false,
             }
         }
 

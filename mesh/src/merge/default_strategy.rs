@@ -2,6 +2,7 @@ use super::types::{MergeResult, MergeStrategy, UpdateResult};
 use crate::{
     kube::{dynamic_object_ext::DynamicObjectExt, subscriptions::Version},
     merge::types::{Membership, Tombstone, VersionedObject},
+    mesh::event::MeshEvent,
 };
 use anyhow::Result;
 use kube::api::{DynamicObject, GroupVersionKind, TypeMeta};
@@ -212,10 +213,11 @@ impl MergeStrategy for DefaultMerge {
 
     fn mesh_membership_change(
         &self,
+        _current: VersionedObject,
         _membership: &Membership,
-        _now_millis: u64,
-    ) -> Result<Vec<MergeResult>> {
-        unimplemented!()
+        _node_zone: &str,
+    ) -> Result<Vec<MeshEvent>> {
+        Ok(vec![])
     }
 }
 
@@ -247,7 +249,10 @@ impl DefaultMerge {
                 api_version: self.gvk.api_version(),
                 kind: self.gvk.kind.to_owned(),
             });
-            Ok(MergeResult::Update { object })
+            Ok(MergeResult::Update {
+                object,
+                force_send: false,
+            })
         } else {
             Ok(MergeResult::Skip)
         }
@@ -418,7 +423,8 @@ pub mod tests {
 
         assert_eq!(
             MergeResult::Update {
-                object: incoming.to_owned()
+                object: incoming.to_owned(),
+                force_send: false
             },
             DefaultMerge::new(gvk)
                 .mesh_update(current.into(), incoming, "test", "test", &membership)
