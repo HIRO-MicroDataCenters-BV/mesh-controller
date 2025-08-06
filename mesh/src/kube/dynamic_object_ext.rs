@@ -1,4 +1,6 @@
-use anyapplication::anyapplication::{AnyApplication, AnyApplicationStatusZones};
+use anyapplication::anyapplication::{
+    AnyApplication, AnyApplicationStatusOwnership, AnyApplicationStatusZones,
+};
 use anyapplication::anyapplication_ext::Epoch;
 use anyhow::{Context, Result, anyhow};
 use kube::ResourceExt;
@@ -183,11 +185,19 @@ impl DynamicObjectExt for DynamicObject {
     fn dump_status(&self, context: &str) {
         let app: AnyApplication = self.clone().try_parse().unwrap();
         let Some(status) = app.status else { return };
+        dump_ownership(context, &status.ownership);
         let Some(zones) = status.zones else { return };
         dump_zones(context, &zones);
     }
 }
-
+pub fn dump_ownership(context: &str, ownership: &AnyApplicationStatusOwnership) {
+    let mut out = format!("- ownership update - ({})\n", context);
+    out += format!(" epoch: {}\n", ownership.epoch).as_str();
+    out += format!(" owner: {}\n", ownership.owner).as_str();
+    out += format!(" state: {}\n", ownership.state).as_str();
+    out += format!(" place: {:?}\n", ownership.placements).as_str();
+    println!("{}", out);
+}
 pub fn dump_zones(context: &str, zones: &[AnyApplicationStatusZones]) {
     let mut out = format!("- status update - ({})\n", context);
 
