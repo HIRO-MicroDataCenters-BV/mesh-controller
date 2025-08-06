@@ -734,28 +734,38 @@ impl AnyApplicationMerge {
         let current_resource_version = current.get_resource_version();
         let current: AnyApplication = current.try_parse()?;
         let current_owner_version = current.get_owner_version()?;
-        let _current_owner_zone = current.get_owner_zone();
-        let _current_owner_epoch = current.get_owner_epoch();
+        let current_owner_zone = current.get_owner_zone();
+        let current_owner_epoch = current.get_owner_epoch();
 
         let name = incoming.get_namespaced_name();
         let incoming: AnyApplication = incoming.to_owned().try_parse()?;
         let incoming_owner_version = incoming.get_owner_version()?;
         let incoming_owner_zone = incoming.get_owner_zone();
-        let _incoming_owner_epoch = incoming.get_owner_epoch();
+        let incoming_owner_epoch = incoming.get_owner_epoch();
 
         let acceptable_zone = received_from_zone == incoming_owner_zone;
-        let new_change = incoming_owner_version > current_owner_version;
-        // TODO several owners merge
-        // - ignore delete from owner with smaller epoch
+        if !acceptable_zone {
+            return Ok(MergeResult::Skip);
+        }
 
-        if acceptable_zone && new_change {
+        let is_same_zone_greater_version = incoming_owner_zone == current_owner_zone
+            && current_owner_version < incoming_owner_version;
+        let is_other_zone_greater_epoch =
+            incoming_owner_zone != current_owner_zone && current_owner_epoch < incoming_owner_epoch;
+
+        if is_same_zone_greater_version || is_other_zone_greater_epoch {
+            let deletion_timestamp = incoming
+                .metadata
+                .deletion_timestamp
+                .map(|t| t.0.timestamp_millis() as u64)
+                .unwrap_or(now_millis);
             Ok(MergeResult::Delete(Tombstone {
                 gvk: self.gvk.to_owned(),
                 name,
                 owner_version: incoming_owner_version,
                 owner_zone: incoming_owner_zone,
                 resource_version: current_resource_version,
-                deletion_timestamp: now_millis,
+                deletion_timestamp,
             }))
         } else {
             Ok(MergeResult::Skip)
