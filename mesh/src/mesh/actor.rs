@@ -204,9 +204,9 @@ impl MeshActor {
             None
         };
 
-        let probe_ok_or_error = self.kube_apply(merge_result).await;
+        let initial_ok_or_error = self.kube_apply(merge_result).await;
 
-        let final_ok_or_result = match probe_ok_or_error {
+        let final_ok_or_result = match initial_ok_or_error {
             Ok(PersistenceResult::Conflict {
                 gvk,
                 name,
@@ -233,8 +233,55 @@ impl MeshActor {
                 resource_version,
                 ..
             }) => self.kube_delete(&gvk, &name, resource_version).await,
-            MergeResult::Skip | MergeResult::Tombstone { .. } => Ok(PersistenceResult::Persisted),
+            MergeResult::Skip | MergeResult::Tombstone { .. } => Ok(PersistenceResult::Skipped),
         }
+    }
+
+    async fn forced_sync(
+        &mut self,
+        gvk: GroupVersionKind,
+        name: NamespacedName,
+        operation_type: OperationType,
+    ) -> Result<PersistenceResult> {
+        let mut attempts = 10;
+        let mut persistence_result = PersistenceResult::Skipped;
+        while attempts > 0 {
+            if let Some(object) = self.subscriptions.client().get(&gvk, &name).await? {
+                let version = object.get_resource_version();
+                let name = object.get_namespaced_name();
+                let event = match operation_type {
+                    OperationType::Update => KubeEvent::Update { version, object },
+                    OperationType::Delete => KubeEvent::Delete { version, object },
+                };
+                if let Err(err) = self.on_event(event).await {
+                    error!("on_event error during forced sync {err}");
+                }
+                self.partition.update_resource_version(&name, version);
+                if let Some(current) = self.partition.get(&name) {
+                    persistence_result = match operation_type {
+                        OperationType::Update => self.kube_patch_apply(current).await?,
+                        OperationType::Delete => {
+                            self.kube_delete(&gvk, &name, current.get_resource_version())
+                                .await?
+                        }
+                    };
+                    let PersistenceResult::Conflict { .. } = persistence_result else {
+                        return Ok(persistence_result);
+                    };
+                } else {
+                    return Ok(PersistenceResult::Skipped);
+                }
+            } else {
+                warn!("object {gvk:?} is no longer present");
+                return Ok(PersistenceResult::Skipped);
+            }
+            attempts -= 1;
+        }
+        warn!(
+            "Conflicts: Number of attempts (10) is exhausted while updating object {}",
+            name
+        );
+        Ok(persistence_result)
     }
 
     async fn kube_patch_apply(&mut self, mut object: DynamicObject) -> Result<PersistenceResult> {
@@ -308,53 +355,7 @@ impl MeshActor {
         Ok(PersistenceResult::Persisted)
     }
 
-    async fn forced_sync(
-        &mut self,
-        gvk: GroupVersionKind,
-        name: NamespacedName,
-        operation_type: OperationType,
-    ) -> Result<PersistenceResult> {
-        let mut attempts = 10;
-        let mut persistence_result = PersistenceResult::Persisted;
-        while attempts > 0 {
-            if let Some(object) = self.subscriptions.client().get(&gvk, &name).await? {
-                let version = object.get_resource_version();
-                let name = object.get_namespaced_name();
-                let event = match operation_type {
-                    OperationType::Update => KubeEvent::Update { version, object },
-                    OperationType::Delete => KubeEvent::Delete { version, object },
-                };
-                if let Err(err) = self.on_event(event).await {
-                    error!("on_event error during forced sync {err}");
-                }
-                self.partition.update_resource_version(&name, version);
-                if let Some(current) = self.partition.get(&name) {
-                    persistence_result = match operation_type {
-                        OperationType::Update => self.kube_patch_apply(current).await?,
-                        OperationType::Delete => {
-                            self.kube_delete(&gvk, &name, current.get_resource_version())
-                                .await?
-                        }
-                    };
-                    let PersistenceResult::Conflict { .. } = persistence_result else {
-                        return Ok(persistence_result);
-                    };
-                } else {
-                    return Ok(PersistenceResult::Skipped);
-                }
-            } else {
-                warn!("object is no longer present");
-                return Ok(PersistenceResult::Skipped);
-            }
-            attempts -= 1;
-        }
-        warn!(
-            "Conflicts: Number of attempts (10) is exhausted while updating object {}",
-            name
-        );
-        Ok(persistence_result)
-    }
-
+ 
     async fn on_ready_outgoing(&mut self, ready: &mut Ready) {
         for operation in ready.take_outgoing().into_iter() {
             let pointer = operation.header.seq_num;
