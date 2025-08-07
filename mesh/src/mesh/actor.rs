@@ -36,7 +36,7 @@ use super::topic::MeshTopicLogMap;
 use super::{operations::Extensions, topic::MeshLogId};
 
 const DEFAULT_TICK_INTERVAL: Duration = Duration::from_secs(1);
-const FORCED_SYNC_MAX_ATTEMPTS: usize = 10;
+const DEFAULT_FORCED_SYNC_MAX_ATTEMPTS: usize = 10;
 
 pub struct MeshActor {
     instance_id: InstanceId,
@@ -244,7 +244,7 @@ impl MeshActor {
         name: NamespacedName,
         operation_type: OperationType,
     ) -> Result<PersistenceResult> {
-        let mut attempts = FORCED_SYNC_MAX_ATTEMPTS;
+        let mut attempts = DEFAULT_FORCED_SYNC_MAX_ATTEMPTS;
         let mut persistence_result = PersistenceResult::Skipped;
         while attempts > 0 {
             if let Some(object) = self.subscriptions.client().get(&gvk, &name).await? {
@@ -279,7 +279,7 @@ impl MeshActor {
             attempts -= 1;
         }
         warn!(
-            "Conflicts: Number of attempts ({FORCED_SYNC_MAX_ATTEMPTS}) is exhausted while updating object {}",
+            "Conflicts: Number of attempts ({DEFAULT_FORCED_SYNC_MAX_ATTEMPTS}) is exhausted while updating object {}",
             name
         );
         Ok(persistence_result)

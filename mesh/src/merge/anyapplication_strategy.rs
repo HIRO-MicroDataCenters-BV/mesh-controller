@@ -281,7 +281,7 @@ impl MergeStrategy for AnyApplicationMerge {
             VersionedObject::Object(current) => {
                 let mut current: AnyApplication = current.try_parse()?;
                 let maybe_instance = membership.get_instance(&current.get_owner_zone());
-                let None = maybe_instance else {
+                if maybe_instance.is_some() {
                     return Ok(vec![]);
                 };
 
