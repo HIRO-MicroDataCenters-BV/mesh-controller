@@ -1288,7 +1288,9 @@ pub mod tests {
         assert_eq!(
             MergeResult::Update {
                 object: expected,
-                event: Some(MeshEvent::Update { object: expected_event }),
+                event: Some(MeshEvent::Update {
+                    object: expected_event
+                }),
             },
             strategy
                 .mesh_update(current.into(), incoming, "zone3", "zone1", &membership)
@@ -1353,7 +1355,9 @@ pub mod tests {
         assert_eq!(
             MergeResult::Update {
                 object: expected,
-                event: Some(MeshEvent::Update { object: expected_event }),
+                event: Some(MeshEvent::Update {
+                    object: expected_event
+                }),
             },
             strategy
                 .mesh_update(current.into(), incoming, "zone3", "zone1", &membership)
