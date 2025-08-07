@@ -16,7 +16,7 @@ use anyapplication::{
 };
 use anyhow::{Result, anyhow};
 use kube::api::{DynamicObject, GroupVersionKind};
-use tracing::{error, info};
+use tracing::error;
 
 pub struct AnyApplicationMerge {
     gvk: GroupVersionKind,
@@ -467,29 +467,11 @@ impl AnyApplicationMerge {
             let mut force_send = false;
             match current_owner_epoch.cmp(&incoming_owner_epoch) {
                 std::cmp::Ordering::Greater => {
-                    info!("merging owners - greater");
-                    //      merge ownership section from current
-                    //        - merge placements from current and incoming
-                    //      merge spec from current
-                    //      merge zone statuses from both if zone status version is higher than current
-                    let maybe_merged_zones =
-                        self.merge_zone_statuses(&current.status, &incoming.status);
-
-                    let merged_placements =
-                        self.merge_placements_into_current(&current.status, &incoming.status);
-
-                    if let Some(zones) = maybe_merged_zones {
-                        if let Some(status) = current.status.as_mut() {
-                            status.zones = Some(zones);
-                            updated = true;
-                        };
-                    }
-
-                    if let Some(placements) = merged_placements {
-                        if let Some(status) = current.status.as_mut() {
-                            status.ownership.placements = Some(placements);
-                            updated = true;
-                        };
+                    if let Some(merged_current) =
+                        self.merge_owners_current_greater(&current, &incoming)
+                    {
+                        current = merged_current;
+                        updated = true;
                     }
                     force_send = true;
                 }
@@ -499,7 +481,6 @@ impl AnyApplicationMerge {
                     //          - merge placements from current and incoming
                     //          - increment epoch
                     //      merge zone statuses from both if zone status version is higher than current
-                    info!("merging owners - equal");
                     let current_instance = membership.get_instance(&current_owner_zone);
                     let incoming_instance = membership.get_instance(&incoming_owner_zone);
                     let current_has_priority = match (current_instance, incoming_instance) {
@@ -508,33 +489,20 @@ impl AnyApplicationMerge {
                         (None, Some(_)) => false,
                     };
                     if current_has_priority {
-                        let maybe_merged_zones =
-                            self.merge_zone_statuses(&current.status, &incoming.status);
-                        let merged_placements =
-                            self.merge_placements_into_current(&current.status, &incoming.status);
-
-                        if let Some(zones) = maybe_merged_zones {
-                            if let Some(status) = current.status.as_mut() {
-                                status.zones = Some(zones);
-                                updated = true;
-                            };
+                        if let Some(merged_current) =
+                            self.merge_owners_current_greater(&current, &incoming)
+                        {
+                            current = merged_current;
+                            updated = true;
                         }
-
                         if let Some(status) = current.status.as_mut() {
                             status.ownership.epoch += 1;
                             updated = true;
-                        }
-                        if let Some(placements) = merged_placements {
-                            if let Some(status) = current.status.as_mut() {
-                                status.ownership.placements = Some(placements);
-                                updated = true;
-                            };
                         }
                         force_send = true;
                     }
                 }
                 std::cmp::Ordering::Less => {
-                    info!("merging owners - less");
                     current.spec = incoming.spec.clone();
                     current.status = incoming.status.clone();
                     current.set_owner_version(incoming_owner_version);
@@ -559,6 +527,41 @@ impl AnyApplicationMerge {
         }
 
         Ok(MergeResult::Skip)
+    }
+
+    fn merge_owners_current_greater(
+        &self,
+        current: &AnyApplication,
+        incoming: &AnyApplication,
+    ) -> Option<AnyApplication> {
+        //      merge ownership section from current
+        //        - merge placements from current and incoming
+        //      merge spec from current
+        //      merge zone statuses from both if zone status version is higher than current
+
+        let mut updated = false;
+        let mut current = current.clone();
+
+        let maybe_merged_zones = self.merge_zone_statuses(&current.status, &incoming.status);
+
+        let merged_placements =
+            self.merge_placements_into_current(&current.status, &incoming.status);
+
+        if let Some(zones) = maybe_merged_zones {
+            if let Some(status) = current.status.as_mut() {
+                status.zones = Some(zones);
+                updated = true;
+            };
+        }
+
+        if let Some(placements) = merged_placements {
+            if let Some(status) = current.status.as_mut() {
+                status.ownership.placements = Some(placements);
+                updated = true;
+            };
+        }
+
+        if updated { Some(current) } else { None }
     }
 
     fn merge_spec(
