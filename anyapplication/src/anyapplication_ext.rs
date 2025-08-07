@@ -14,11 +14,13 @@ use serde::Serialize;
 pub const OWNER_VERSION: &str = "dcp.hiro.io/owner-version";
 
 pub type Version = u64;
+pub type Epoch = i64;
 
 pub trait AnyApplicationExt {
     fn get_owner_version(&self) -> Result<Version>;
     fn set_owner_version(&mut self, version: Version);
     fn get_owner_zone(&self) -> String;
+    fn get_owner_epoch(&self) -> Epoch;
     fn to_object(self) -> Result<DynamicObject>
     where
         Self: Sized + Serialize,
@@ -32,6 +34,8 @@ pub trait AnyApplicationExt {
 
     fn set_resource_version(&mut self, version: Version);
     fn get_resource_version(&self) -> Option<Version>;
+
+    fn get_create_timestamp(&self) -> i64;
 
     fn get_status_zone_ids(&self) -> HashSet<String>;
 
@@ -65,6 +69,11 @@ impl AnyApplicationExt for AnyApplication {
             .map(|s| s.ownership.owner.to_owned())
             .unwrap_or("unknown".to_string())
     }
+
+    fn get_owner_epoch(&self) -> Epoch {
+        self.status.as_ref().map(|s| s.ownership.epoch).unwrap_or(0)
+    }
+
     fn get_placement_zones(&self) -> HashSet<String> {
         self.status
             .as_ref()
@@ -116,6 +125,14 @@ impl AnyApplicationExt for AnyApplication {
 
     fn is_owned_zone(&self, incoming_zone: &str) -> bool {
         self.get_owner_zone() == incoming_zone || self.get_owner_zone() == "unknown"
+    }
+
+    fn get_create_timestamp(&self) -> i64 {
+        self.metadata
+            .creation_timestamp
+            .as_ref()
+            .map(|t| t.0.timestamp_millis())
+            .unwrap_or(0)
     }
 }
 

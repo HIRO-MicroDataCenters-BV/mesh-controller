@@ -6,7 +6,7 @@ use std::{
 use super::event::MeshEvent;
 use crate::{
     kube::subscriptions::Version,
-    merge::types::{Tombstone, VersionedObject},
+    merge::types::{Membership, Tombstone, VersionedObject},
     utils::types::Clock,
 };
 use crate::{
@@ -42,6 +42,7 @@ impl Partition {
         incoming: MeshEvent,
         incoming_zone: &str,
         current_zone: &str,
+        membership: &Membership,
     ) -> Result<Vec<MergeResult>> {
         match incoming {
             MeshEvent::Update { object: incoming } => {
@@ -57,6 +58,7 @@ impl Partition {
                     incoming,
                     incoming_zone,
                     current_zone,
+                    membership,
                 )?;
 
                 self.mesh_update_partition(&result);
@@ -79,14 +81,14 @@ impl Partition {
                 Ok(vec![result])
             }
             MeshEvent::Snapshot { snapshot } => {
-                self.mesh_apply_snapshot(snapshot, incoming_zone, current_zone)
+                self.mesh_apply_snapshot(snapshot, incoming_zone, current_zone, membership)
             }
         }
     }
 
     fn mesh_update_partition(&mut self, result: &MergeResult) {
         match &result {
-            MergeResult::Create { object } | MergeResult::Update { object } => {
+            MergeResult::Create { object } | MergeResult::Update { object, .. } => {
                 self.resources.insert(
                     object.get_namespaced_name(),
                     VersionedObject::Object(object.clone()),
@@ -115,6 +117,7 @@ impl Partition {
         snapshot: BTreeMap<NamespacedName, DynamicObject>,
         incoming_zone: &str,
         current_zone: &str,
+        membership: &Membership,
     ) -> Result<Vec<MergeResult>> {
         let in_partition: HashSet<NamespacedName> = self
             .resources
@@ -156,9 +159,13 @@ impl Partition {
                 .cloned()
                 .unwrap_or(VersionedObject::NonExisting);
             let incoming = snapshot.get(&name).cloned().unwrap();
-            let result =
-                self.merge_strategy
-                    .mesh_update(current, incoming, incoming_zone, current_zone)?;
+            let result = self.merge_strategy.mesh_update(
+                current,
+                incoming,
+                incoming_zone,
+                current_zone,
+                membership,
+            )?;
             self.mesh_update_partition(&result);
             results.push(result);
         }
@@ -186,6 +193,23 @@ impl Partition {
             snapshot.insert(name, object.to_owned());
         }
         MeshEvent::Snapshot { snapshot }
+    }
+
+    pub fn mesh_membership_change(
+        &mut self,
+        membership: &Membership,
+        node_zone: &str,
+    ) -> Result<Vec<MeshEvent>> {
+        let mut out = vec![];
+        for (_, current) in self.resources.iter() {
+            let mut merge_results = self.merge_strategy.mesh_membership_change(
+                current.to_owned(),
+                membership,
+                node_zone,
+            )?;
+            out.append(&mut merge_results);
+        }
+        Ok(out)
     }
 
     pub fn kube_apply(&mut self, event: KubeEvent, current_zone: &str) -> Result<UpdateResult> {
@@ -448,7 +472,7 @@ pub mod tests {
         merge::{
             anyapplication_strategy::AnyApplicationMerge,
             anyapplication_test_support::tests::{anycond, anyplacements, anyspec, anystatus},
-            types::{MergeResult, Tombstone, UpdateResult},
+            types::{Membership, MergeResult, Tombstone, UpdateResult},
         },
         mesh::{event::MeshEvent, partition::Partition},
         utils::clock::FakeClock,
@@ -456,6 +480,7 @@ pub mod tests {
 
     #[test]
     fn snapshot_handling() {
+        let membership = Membership::new();
         let name_a1 = NamespacedName::new("default".into(), "nginx-app-a1".into());
         let mut app_a1 = anyapp(
             &name_a1,
@@ -559,7 +584,7 @@ pub mod tests {
         };
 
         let mut actual_merge_result = partition
-            .mesh_apply_snapshot(snapshot, "B", "A")
+            .mesh_apply_snapshot(snapshot, "B", "A", &membership)
             .expect("Incoming snapshot should be applied");
         sort_merge_results(&mut actual_merge_result);
 
@@ -570,6 +595,7 @@ pub mod tests {
             },
             MergeResult::Update {
                 object: app_b1.to_owned(),
+                event: None,
             },
         ];
         assert_eq!(
@@ -1011,17 +1037,20 @@ pub mod tests {
         partition_b: Partition,
         zone_a: String,
         zone_b: String,
+        membership: Membership,
     }
 
     impl ReplicationTestRunner {
         pub fn new_anyapp(zone_a: &str, zone_b: &str) -> ReplicationTestRunner {
             let clock = Arc::new(FakeClock::new());
             clock.set_time_millis(0);
+            let membership = Membership::new();
             ReplicationTestRunner {
                 partition_a: Partition::new(AnyApplicationMerge::new(), clock.clone()),
                 partition_b: Partition::new(AnyApplicationMerge::new(), clock),
                 zone_a: zone_a.into(),
                 zone_b: zone_b.into(),
+                membership,
             }
         }
 
@@ -1050,7 +1079,12 @@ pub mod tests {
 
             let actual_merge_result = self
                 .partition_b
-                .mesh_apply(actual_mesh_event.unwrap(), &self.zone_a, &self.zone_b)
+                .mesh_apply(
+                    actual_mesh_event.unwrap(),
+                    &self.zone_a,
+                    &self.zone_b,
+                    &self.membership,
+                )
                 .expect("partition_b.mesh_apply() succeeds");
             assert_eq!(actual_merge_result, merge_result_b, "merge result");
         }
@@ -1074,7 +1108,12 @@ pub mod tests {
 
             let actual_merge_result = self
                 .partition_a
-                .mesh_apply(actual_mesh_event.unwrap(), &self.zone_b, &self.zone_a)
+                .mesh_apply(
+                    actual_mesh_event.unwrap(),
+                    &self.zone_b,
+                    &self.zone_a,
+                    &self.membership,
+                )
                 .expect("partition_a.mesh_apply() succeeds");
             assert_eq!(actual_merge_result, merge_result_a, "merge result");
         }
@@ -1373,7 +1412,6 @@ pub mod tests {
         fn merge_cre(&self) -> MergeResult {
             let mut object = self.object();
             object.unset_resource_version();
-            // object.set_resource_version(self.resource_version);
             MergeResult::Create { object }
         }
 
@@ -1382,6 +1420,7 @@ pub mod tests {
             object.set_resource_version(self.resource_version);
             MergeResult::Update {
                 object: object.to_owned(),
+                event: None,
             }
         }
 

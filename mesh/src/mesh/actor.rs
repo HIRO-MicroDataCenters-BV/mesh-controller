@@ -10,6 +10,7 @@ use crate::kube::event::KubeEvent;
 use crate::kube::subscriptions::Subscriptions;
 use crate::kube::subscriptions::Version;
 use crate::kube::types::NamespacedName;
+use crate::merge::types::Membership;
 use crate::merge::types::MergeResult;
 use crate::merge::types::Tombstone;
 use crate::mesh::event::MeshEvent;
@@ -35,6 +36,7 @@ use super::topic::MeshTopicLogMap;
 use super::{operations::Extensions, topic::MeshLogId};
 
 const DEFAULT_TICK_INTERVAL: Duration = Duration::from_secs(1);
+const DEFAULT_FORCED_SYNC_MAX_ATTEMPTS: usize = 10;
 
 pub struct MeshActor {
     instance_id: InstanceId,
@@ -45,6 +47,7 @@ pub struct MeshActor {
     operation_log: OperationLog,
     operations: LinkedOperations,
     partition: Partition,
+    topic_log_map: MeshTopicLogMap,
     clock: Arc<dyn Clock>,
     cancelation: CancellationToken,
     snapshot_config: PeriodicSnapshotConfig,
@@ -80,6 +83,7 @@ impl MeshActor {
                 topic_log_map.clone(),
                 store.clone(),
             ),
+            topic_log_map,
             instance_id,
             network_tx,
             network_rx,
@@ -119,6 +123,18 @@ impl MeshActor {
         Ok(())
     }
 
+    async fn _on_membership_change(&mut self, membership: &Membership) -> Result<()> {
+        let mesh_events = self
+            .partition
+            .mesh_membership_change(membership, &self.instance_id.zone)?;
+        for event in mesh_events {
+            let operation = self.operations.next(event);
+            self.operation_log.insert(operation).await?;
+        }
+        self.on_ready().await?;
+        Ok(())
+    }
+
     async fn on_outgoing_to_network(&mut self, event: KubeEvent) -> Result<()> {
         self.on_event(event).await?;
         self.on_ready().await?;
@@ -128,6 +144,7 @@ impl MeshActor {
     async fn on_event(&mut self, event: KubeEvent) -> Result<()> {
         let update_result = self.partition.kube_apply(event, &self.instance_id.zone)?;
         let event: Option<MeshEvent> = update_result.into();
+        // info!("kube event => mesh event {:?}", event);
 
         if let Some(event) = event {
             let operation = self.operations.next(event);
@@ -150,6 +167,7 @@ impl MeshActor {
     }
 
     async fn on_ready_incoming(&mut self, ready: &mut Ready) -> Result<(), anyhow::Error> {
+        let membership = self.topic_log_map.get_membership();
         for (log_id, ops) in ready.take_incoming().into_iter() {
             for operation in ops.into_iter() {
                 let pointer = operation.header.seq_num;
@@ -159,22 +177,9 @@ impl MeshActor {
                         mesh_event,
                         &log_id.0.zone,
                         &self.instance_id.zone,
+                        &membership,
                     )?;
-                    for merge_result in merge_results.into_iter() {
-                        match self.on_merge_result(merge_result).await {
-                            Ok(PersistenceResult::Persisted) => (),
-                            Ok(PersistenceResult::Conflict {
-                                gvk,
-                                name,
-                                operation_type,
-                            }) => {
-                                self.forced_sync(gvk, name, operation_type).await?;
-                            }
-                            Err(err) => {
-                                error!("error while merging {err}");
-                            }
-                        }
-                    }
+                    self.on_merge_results(merge_results).await;
                     self.operation_log.advance_log_pointer(&log_id, pointer + 1);
                 } else {
                     error!("event has no body");
@@ -184,34 +189,100 @@ impl MeshActor {
         Ok(())
     }
 
-    async fn on_ready_outgoing(&mut self, ready: &mut Ready) {
-        for operation in ready.take_outgoing().into_iter() {
-            let pointer = operation.header.seq_num;
-            self.network_tx.send(operation).await.ok();
-            self.operation_log
-                .advance_log_pointer(&self.own_log_id, pointer + 1);
+    async fn on_merge_results(&mut self, merge_results: Vec<MergeResult>) {
+        for merge_result in merge_results.into_iter() {
+            let ok_or_error = self.on_merge_result(merge_result).await;
+            if let Err(err) = ok_or_error {
+                error!("error while merging {err}");
+            }
         }
     }
 
-    pub async fn on_merge_result(
-        &mut self,
-        merge_result: MergeResult,
-    ) -> Result<PersistenceResult> {
+    async fn on_merge_result(&mut self, merge_result: MergeResult) -> Result<()> {
+        let event = if let MergeResult::Update { event, .. } = &merge_result {
+            event.clone()
+        } else {
+            None
+        };
+
+        let initial_ok_or_error = self.kube_apply(merge_result).await;
+
+        let final_ok_or_result = match initial_ok_or_error {
+            Ok(PersistenceResult::Conflict {
+                gvk,
+                name,
+                operation_type,
+            }) => self.forced_sync(gvk, name, operation_type).await,
+            Ok(ok) => Ok(ok),
+            Err(err) => Err(err),
+        };
+
+        if let (Ok(PersistenceResult::Persisted), Some(event)) = (&final_ok_or_result, event) {
+            let operation = self.operations.next(event);
+            self.operation_log.insert(operation).await?;
+        }
+        final_ok_or_result.map(|_| ())
+    }
+
+    async fn kube_apply(&mut self, merge_result: MergeResult) -> Result<PersistenceResult> {
         match merge_result {
-            MergeResult::Create { object } | MergeResult::Update { object } => {
-                return self.kube_patch_apply(object).await;
-            }
+            MergeResult::Create { object } => self.kube_patch_apply(object).await,
+            MergeResult::Update { object, .. } => self.kube_patch_apply(object).await,
             MergeResult::Delete(Tombstone {
                 gvk,
                 name,
                 resource_version,
                 ..
-            }) => {
-                return self.kube_delete(&gvk, &name, resource_version).await;
-            }
-            MergeResult::Skip | MergeResult::Tombstone { .. } => (),
+            }) => self.kube_delete(&gvk, &name, resource_version).await,
+            MergeResult::Skip | MergeResult::Tombstone { .. } => Ok(PersistenceResult::Skipped),
         }
-        Ok(PersistenceResult::Persisted)
+    }
+
+    async fn forced_sync(
+        &mut self,
+        gvk: GroupVersionKind,
+        name: NamespacedName,
+        operation_type: OperationType,
+    ) -> Result<PersistenceResult> {
+        let mut attempts = DEFAULT_FORCED_SYNC_MAX_ATTEMPTS;
+        let mut persistence_result = PersistenceResult::Skipped;
+        while attempts > 0 {
+            if let Some(object) = self.subscriptions.client().get(&gvk, &name).await? {
+                let version = object.get_resource_version();
+                let name = object.get_namespaced_name();
+                let event = match operation_type {
+                    OperationType::Update => KubeEvent::Update { version, object },
+                    OperationType::Delete => KubeEvent::Delete { version, object },
+                };
+                if let Err(err) = self.on_event(event).await {
+                    error!("on_event error during forced sync {err}");
+                }
+                self.partition.update_resource_version(&name, version);
+                if let Some(current) = self.partition.get(&name) {
+                    persistence_result = match operation_type {
+                        OperationType::Update => self.kube_patch_apply(current).await?,
+                        OperationType::Delete => {
+                            self.kube_delete(&gvk, &name, current.get_resource_version())
+                                .await?
+                        }
+                    };
+                    let PersistenceResult::Conflict { .. } = persistence_result else {
+                        return Ok(persistence_result);
+                    };
+                } else {
+                    return Ok(PersistenceResult::Skipped);
+                }
+            } else {
+                warn!("object {gvk:?} is no longer present");
+                return Ok(PersistenceResult::Skipped);
+            }
+            attempts -= 1;
+        }
+        warn!(
+            "Conflicts: Number of attempts ({DEFAULT_FORCED_SYNC_MAX_ATTEMPTS}) is exhausted while updating object {}",
+            name
+        );
+        Ok(persistence_result)
     }
 
     async fn kube_patch_apply(&mut self, mut object: DynamicObject) -> Result<PersistenceResult> {
@@ -285,47 +356,13 @@ impl MeshActor {
         Ok(PersistenceResult::Persisted)
     }
 
-    async fn forced_sync(
-        &mut self,
-        gvk: GroupVersionKind,
-        name: NamespacedName,
-        operation_type: OperationType,
-    ) -> Result<()> {
-        let mut attempts = 10;
-        while attempts > 0 {
-            if let Some(object) = self.subscriptions.client().get(&gvk, &name).await? {
-                let version = object.get_resource_version();
-                let name = object.get_namespaced_name();
-                let event = match operation_type {
-                    OperationType::Update => KubeEvent::Update { version, object },
-                    OperationType::Delete => KubeEvent::Delete { version, object },
-                };
-                if let Err(err) = self.on_event(event).await {
-                    error!("on_event error during forced sync {err}");
-                }
-                self.partition.update_resource_version(&name, version);
-                if let Some(current) = self.partition.get(&name) {
-                    let persistence_result = match operation_type {
-                        OperationType::Update => self.kube_patch_apply(current).await?,
-                        OperationType::Delete => {
-                            self.kube_delete(&gvk, &name, current.get_resource_version())
-                                .await?
-                        }
-                    };
-                    let PersistenceResult::Conflict { .. } = persistence_result else {
-                        return Ok(());
-                    };
-                    attempts -= 1;
-                } else {
-                    return Ok(());
-                }
-            }
+    async fn on_ready_outgoing(&mut self, ready: &mut Ready) {
+        for operation in ready.take_outgoing().into_iter() {
+            let pointer = operation.header.seq_num;
+            self.network_tx.send(operation).await.ok();
+            self.operation_log
+                .advance_log_pointer(&self.own_log_id, pointer + 1);
         }
-        warn!(
-            "Conflicts: Number of attempts (10) is exhausted while updating object {}",
-            name
-        );
-        Ok(())
     }
 
     async fn on_tick(&mut self) -> Result<()> {
@@ -375,4 +412,5 @@ pub enum PersistenceResult {
         name: NamespacedName,
         operation_type: OperationType,
     },
+    Skipped,
 }

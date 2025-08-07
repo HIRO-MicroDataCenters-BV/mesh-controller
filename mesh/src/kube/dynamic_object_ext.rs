@@ -1,4 +1,7 @@
-use anyapplication::anyapplication::{AnyApplication, AnyApplicationStatusZones};
+use anyapplication::anyapplication::{
+    AnyApplication, AnyApplicationStatusOwnership, AnyApplicationStatusZones,
+};
+use anyapplication::anyapplication_ext::Epoch;
 use anyhow::{Context, Result, anyhow};
 use kube::ResourceExt;
 use kube::api::{DynamicObject, GroupVersionKind};
@@ -9,6 +12,7 @@ use super::types::NamespacedName;
 
 const OWNER_VERSION: &str = "dcp.hiro.io/owner-version";
 const OWNER_ZONE: &str = "dcp.hiro.io/owner-zone";
+const OWNER_EPOCH: &str = "dcp.hiro.io/owner-epoch";
 
 pub trait DynamicObjectExt {
     fn get_gvk(&self) -> Result<GroupVersionKind>;
@@ -19,6 +23,8 @@ pub trait DynamicObjectExt {
     fn set_owner_version(&mut self, version: Version);
     fn get_owner_zone(&self) -> Result<String>;
     fn set_owner_zone(&mut self, zone: String);
+    fn get_owner_epoch(&self) -> Result<Epoch>;
+    fn set_owner_epoch(&mut self, epoch: Epoch);
     fn normalize(&mut self, default_zone: &str);
     fn get_status(&self) -> Option<Value>;
     fn unset_resource_version(&mut self);
@@ -121,6 +127,23 @@ impl DynamicObjectExt for DynamicObject {
         version_str.parse::<Version>().map(Some).unwrap_or_default()
     }
 
+    fn get_owner_epoch(&self) -> Result<Epoch> {
+        let labels = self
+            .metadata
+            .labels
+            .as_ref()
+            .ok_or(anyhow!("{} label not set", OWNER_EPOCH))?;
+        let epoch_str = labels
+            .get(OWNER_EPOCH)
+            .ok_or(anyhow!("{} label not set", OWNER_EPOCH))?;
+        epoch_str.parse::<Epoch>().map_err(|e| e.into())
+    }
+
+    fn set_owner_epoch(&mut self, epoch: Epoch) {
+        let labels = self.metadata.labels.get_or_insert_default();
+        labels.insert(OWNER_EPOCH.into(), epoch.to_string());
+    }
+
     fn set_owner_zone(&mut self, zone: String) {
         let labels = self.metadata.labels.get_or_insert_default();
         labels.insert(OWNER_ZONE.into(), zone.to_string());
@@ -162,11 +185,19 @@ impl DynamicObjectExt for DynamicObject {
     fn dump_status(&self, context: &str) {
         let app: AnyApplication = self.clone().try_parse().unwrap();
         let Some(status) = app.status else { return };
+        dump_ownership(context, &status.ownership);
         let Some(zones) = status.zones else { return };
         dump_zones(context, &zones);
     }
 }
-
+pub fn dump_ownership(context: &str, ownership: &AnyApplicationStatusOwnership) {
+    let mut out = format!("- ownership update - ({})\n", context);
+    out += format!(" epoch: {}\n", ownership.epoch).as_str();
+    out += format!(" owner: {}\n", ownership.owner).as_str();
+    out += format!(" state: {}\n", ownership.state).as_str();
+    out += format!(" place: {:?}\n", ownership.placements).as_str();
+    println!("{}", out);
+}
 pub fn dump_zones(context: &str, zones: &[AnyApplicationStatusZones]) {
     let mut out = format!("- status update - ({})\n", context);
 

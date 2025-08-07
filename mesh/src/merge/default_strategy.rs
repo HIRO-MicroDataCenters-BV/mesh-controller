@@ -1,7 +1,8 @@
 use super::types::{MergeResult, MergeStrategy, UpdateResult};
 use crate::{
     kube::{dynamic_object_ext::DynamicObjectExt, subscriptions::Version},
-    merge::types::{Tombstone, VersionedObject},
+    merge::types::{Membership, Tombstone, VersionedObject},
+    mesh::event::MeshEvent,
 };
 use anyhow::Result;
 use kube::api::{DynamicObject, GroupVersionKind, TypeMeta};
@@ -17,6 +18,7 @@ impl MergeStrategy for DefaultMerge {
         incoming: DynamicObject,
         incoming_zone: &str,
         _current_zone: &str,
+        _membership: &Membership,
     ) -> Result<MergeResult> {
         match current {
             VersionedObject::Object(current) => {
@@ -208,6 +210,15 @@ impl MergeStrategy for DefaultMerge {
             VersionedObject::Tombstone(tombstone) => Ok(Some(tombstone.clone())),
         }
     }
+
+    fn mesh_membership_change(
+        &self,
+        _current: VersionedObject,
+        _membership: &Membership,
+        _node_zone: &str,
+    ) -> Result<Vec<MeshEvent>> {
+        Ok(vec![])
+    }
 }
 
 impl DefaultMerge {
@@ -238,7 +249,10 @@ impl DefaultMerge {
                 api_version: self.gvk.api_version(),
                 kind: self.gvk.kind.to_owned(),
             });
-            Ok(MergeResult::Update { object })
+            Ok(MergeResult::Update {
+                object,
+                event: None,
+            })
         } else {
             Ok(MergeResult::Skip)
         }
@@ -299,6 +313,7 @@ pub mod tests {
 
     #[test]
     pub fn mesh_update_non_existing_create() {
+        let membership = Membership::new();
         let gvk = GroupVersionKind::gvk("", "v1", "Secret");
         let incoming = make_object("test", 2, "value");
 
@@ -307,13 +322,20 @@ pub mod tests {
                 object: incoming.clone()
             },
             DefaultMerge::new(gvk)
-                .mesh_update(VersionedObject::NonExisting, incoming, "test", "test")
+                .mesh_update(
+                    VersionedObject::NonExisting,
+                    incoming,
+                    "test",
+                    "test",
+                    &membership
+                )
                 .unwrap()
         );
     }
 
     #[test]
     pub fn mesh_update_tombstone_create() {
+        let membership = Membership::new();
         let gvk = GroupVersionKind::gvk("", "v1", "Secret");
         let incoming = make_object("test", 2, "value");
         let existing = VersionedObject::Tombstone(Tombstone {
@@ -330,13 +352,14 @@ pub mod tests {
                 object: incoming.clone()
             },
             DefaultMerge::new(gvk)
-                .mesh_update(existing, incoming, "test", "test")
+                .mesh_update(existing, incoming, "test", "test", &membership)
                 .unwrap()
         );
     }
 
     #[test]
     pub fn mesh_update_tombstone_skip_create_if_obsolete() {
+        let membership = Membership::new();
         let gvk = GroupVersionKind::gvk("", "v1", "Secret");
         let incoming = make_object("test", 2, "value");
         let existing = VersionedObject::Tombstone(Tombstone {
@@ -351,26 +374,34 @@ pub mod tests {
         assert_eq!(
             MergeResult::Skip,
             DefaultMerge::new(gvk)
-                .mesh_update(existing, incoming, "test", "test")
+                .mesh_update(existing, incoming, "test", "test", &membership)
                 .unwrap()
         );
     }
 
     #[test]
     pub fn mesh_update_non_existing_other_zone() {
+        let membership = Membership::new();
         let gvk = GroupVersionKind::gvk("", "v1", "Secret");
         let incoming = make_object("other", 2, "value");
 
         assert_eq!(
             MergeResult::Skip,
             DefaultMerge::new(gvk)
-                .mesh_update(VersionedObject::NonExisting, incoming, "test", "test")
+                .mesh_update(
+                    VersionedObject::NonExisting,
+                    incoming,
+                    "test",
+                    "test",
+                    &membership
+                )
                 .unwrap()
         );
     }
 
     #[test]
     pub fn mesh_update_versions_equal() {
+        let membership = Membership::new();
         let gvk = GroupVersionKind::gvk("", "v1", "Secret");
         let current = make_object("test", 1, "value");
         let incoming = make_object("test", 1, "value");
@@ -378,29 +409,32 @@ pub mod tests {
         assert_eq!(
             MergeResult::Skip,
             DefaultMerge::new(gvk)
-                .mesh_update(current.into(), incoming, "test", "test")
+                .mesh_update(current.into(), incoming, "test", "test", &membership)
                 .unwrap()
         );
     }
 
     #[test]
     pub fn mesh_update_incoming_version_greater() {
+        let membership = Membership::new();
         let gvk = GroupVersionKind::gvk("", "v1", "Secret");
         let current = make_object("test", 1, "value");
         let incoming = make_object("test", 2, "updated");
 
         assert_eq!(
             MergeResult::Update {
-                object: incoming.to_owned()
+                object: incoming.to_owned(),
+                event: None,
             },
             DefaultMerge::new(gvk)
-                .mesh_update(current.into(), incoming, "test", "test")
+                .mesh_update(current.into(), incoming, "test", "test", &membership)
                 .unwrap()
         );
     }
 
     #[test]
     pub fn mesh_update_other_zone() {
+        let membership = Membership::new();
         let gvk = GroupVersionKind::gvk("", "v1", "Secret");
         let current = make_object("test", 1, "value");
         let incoming = make_object("other", 2, "updated");
@@ -408,7 +442,7 @@ pub mod tests {
         assert_eq!(
             MergeResult::Skip,
             DefaultMerge::new(gvk)
-                .mesh_update(current.into(), incoming, "test", "test")
+                .mesh_update(current.into(), incoming, "test", "test", &membership)
                 .unwrap()
         );
     }
