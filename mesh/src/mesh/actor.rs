@@ -27,7 +27,6 @@ use p2panda_core::{Operation, PrivateKey};
 use p2panda_store::MemoryStore;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
-use tracing::info;
 use tracing::{debug, error, trace, warn};
 
 use super::operations::LinkedOperations;
@@ -144,7 +143,7 @@ impl MeshActor {
     async fn on_event(&mut self, event: KubeEvent) -> Result<()> {
         let update_result = self.partition.kube_apply(event, &self.instance_id.zone)?;
         let event: Option<MeshEvent> = update_result.into();
-        info!("kube event => mesh event {:?}", event);
+        // info!("kube event => mesh event {:?}", event);
 
         if let Some(event) = event {
             let operation = self.operations.next(event);
@@ -220,8 +219,14 @@ impl MeshActor {
         merge_result: MergeResult,
     ) -> Result<PersistenceResult> {
         match merge_result {
-            MergeResult::Create { object } | MergeResult::Update { object, .. } => {
-                self.kube_patch_apply(object).await
+            MergeResult::Create { object } => self.kube_patch_apply(object).await,
+            MergeResult::Update { object, event, .. } => {
+                let apply_result = self.kube_patch_apply(object).await;
+                if let (Ok(PersistenceResult::Persisted), Some(event)) = (&apply_result, event) {
+                    let operation = self.operations.next(event);
+                    self.operation_log.insert(operation).await?;
+                }
+                apply_result
             }
             MergeResult::Delete(Tombstone {
                 gvk,

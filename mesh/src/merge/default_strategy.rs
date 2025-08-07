@@ -251,7 +251,7 @@ impl DefaultMerge {
             });
             Ok(MergeResult::Update {
                 object,
-                force_send: false,
+                event: None,
             })
         } else {
             Ok(MergeResult::Skip)
@@ -424,7 +424,7 @@ pub mod tests {
         assert_eq!(
             MergeResult::Update {
                 object: incoming.to_owned(),
-                force_send: false
+                event: None,
             },
             DefaultMerge::new(gvk)
                 .mesh_update(current.into(), incoming, "test", "test", &membership)

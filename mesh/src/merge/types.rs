@@ -15,7 +15,7 @@ pub enum MergeResult {
     },
     Update {
         object: DynamicObject,
-        force_send: bool,
+        event: Option<MeshEvent>,
     },
     Delete(Tombstone),
     Tombstone(Tombstone),

@@ -370,7 +370,7 @@ impl AnyApplicationMerge {
                 object.dump_status("merge_update_internal - merging local zone statuses");
                 return Ok(MergeResult::Update {
                     object,
-                    force_send: false,
+                    event: None,
                 });
             }
         }
@@ -430,7 +430,7 @@ impl AnyApplicationMerge {
                 object.dump_status("merge_update_internal - non owner merge");
                 return Ok(MergeResult::Update {
                     object,
-                    force_send: false,
+                    event: None,
                 });
             }
         }
@@ -491,6 +491,7 @@ impl AnyApplicationMerge {
                             updated = true;
                         };
                     }
+                    force_send = true;
                 }
                 std::cmp::Ordering::Equal => {
                     //      if current.startTime is greater then incoming.startTime
@@ -522,7 +523,6 @@ impl AnyApplicationMerge {
                         if let Some(status) = current.status.as_mut() {
                             status.ownership.epoch += 1;
                             updated = true;
-                            force_send = true;
                         }
                         if let Some(placements) = merged_placements {
                             if let Some(status) = current.status.as_mut() {
@@ -530,6 +530,7 @@ impl AnyApplicationMerge {
                                 updated = true;
                             };
                         }
+                        force_send = true;
                     }
                 }
                 std::cmp::Ordering::Less => {
@@ -544,7 +545,16 @@ impl AnyApplicationMerge {
             if updated {
                 let object = current.to_object()?;
                 object.dump_status("merge_update_internal - owner merge");
-                return Ok(MergeResult::Update { object, force_send });
+                let mut object_event = object.clone();
+                let event = if force_send {
+                    object_event.unset_resource_version();
+                    Some(MeshEvent::Update {
+                        object: object_event,
+                    })
+                } else {
+                    None
+                };
+                return Ok(MergeResult::Update { object, event });
             }
         }
 
@@ -908,6 +918,7 @@ pub mod tests {
     use crate::merge::types::Tombstone;
     use crate::merge::types::UpdateResult;
     use crate::merge::types::VersionedObject;
+    use crate::mesh::event::MeshEvent;
     use crate::mesh::topic::InstanceId;
 
     #[test]
@@ -1047,7 +1058,7 @@ pub mod tests {
         assert_eq!(
             MergeResult::Update {
                 object: incoming.to_owned(),
-                force_send: false,
+                event: None,
             },
             strategy
                 .mesh_update(
@@ -1079,7 +1090,7 @@ pub mod tests {
         assert_eq!(
             MergeResult::Update {
                 object: incoming.to_owned(),
-                force_send: false,
+                event: None,
             },
             strategy
                 .mesh_update(current.into(), incoming, "zone1", "zone2", &membership)
@@ -1097,7 +1108,7 @@ pub mod tests {
         assert_eq!(
             MergeResult::Update {
                 object: incoming.to_owned(),
-                force_send: false,
+                event: None,
             },
             strategy
                 .mesh_update(current.into(), incoming, "zone1", "zone2", &membership)
@@ -1166,7 +1177,7 @@ pub mod tests {
         assert_eq!(
             MergeResult::Update {
                 object: expected,
-                force_send: false,
+                event: None,
             },
             strategy
                 .mesh_update(current.into(), incoming, "zone1", "zone3", &membership)
@@ -1220,7 +1231,7 @@ pub mod tests {
         assert_eq!(
             MergeResult::Update {
                 object: expected,
-                force_send: false,
+                event: None,
             },
             strategy
                 .mesh_update(current.into(), incoming, "zone2", "zone3", &membership)
@@ -1270,12 +1281,14 @@ pub mod tests {
                 anyzone("zone3", 4, &[anycond("zone3", "type")]),
             ],
         );
+        let mut expected_event = expected.clone();
+        expected_event.unset_resource_version();
 
         let strategy = AnyApplicationMerge::new();
         assert_eq!(
             MergeResult::Update {
                 object: expected,
-                force_send: false,
+                event: Some(MeshEvent::Update { object: expected_event }),
             },
             strategy
                 .mesh_update(current.into(), incoming, "zone3", "zone1", &membership)
@@ -1333,12 +1346,14 @@ pub mod tests {
                 anyzone("zone3", 4, &[anycond("zone3", "type")]),
             ],
         );
+        let mut expected_event = expected.clone();
+        expected_event.unset_resource_version();
 
         let strategy = AnyApplicationMerge::new();
         assert_eq!(
             MergeResult::Update {
                 object: expected,
-                force_send: true,
+                event: Some(MeshEvent::Update { object: expected_event }),
             },
             strategy
                 .mesh_update(current.into(), incoming, "zone3", "zone1", &membership)
@@ -1438,7 +1453,7 @@ pub mod tests {
         assert_eq!(
             MergeResult::Update {
                 object: expected,
-                force_send: false,
+                event: None,
             },
             strategy
                 .mesh_update(current.into(), incoming, "zone3", "zone1", &membership)
@@ -1625,7 +1640,7 @@ pub mod tests {
         assert_eq!(
             MergeResult::Update {
                 object: expected,
-                force_send: false,
+                event: None,
             },
             strategy
                 .mesh_update(current.into(), incoming, "zone2", "zone1", &membership)
@@ -1675,7 +1690,7 @@ pub mod tests {
         assert_eq!(
             MergeResult::Update {
                 object: expected,
-                force_send: false,
+                event: None,
             },
             strategy
                 .mesh_update(current.into(), incoming, "zone2", "zone1", &membership)
@@ -1728,7 +1743,7 @@ pub mod tests {
         assert_eq!(
             MergeResult::Update {
                 object: expected,
-                force_send: false,
+                event: None,
             },
             strategy
                 .mesh_update(current.into(), incoming, "zone2", "zone1", &membership)

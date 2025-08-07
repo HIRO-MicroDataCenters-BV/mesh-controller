@@ -595,7 +595,7 @@ pub mod tests {
             },
             MergeResult::Update {
                 object: app_b1.to_owned(),
-                force_send: false,
+                event: None,
             },
         ];
         assert_eq!(
@@ -1420,7 +1420,7 @@ pub mod tests {
             object.set_resource_version(self.resource_version);
             MergeResult::Update {
                 object: object.to_owned(),
-                force_send: false,
+                event: None,
             }
         }
 
