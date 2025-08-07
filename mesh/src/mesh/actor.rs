@@ -355,7 +355,6 @@ impl MeshActor {
         Ok(PersistenceResult::Persisted)
     }
 
- 
     async fn on_ready_outgoing(&mut self, ready: &mut Ready) {
         for operation in ready.take_outgoing().into_iter() {
             let pointer = operation.header.seq_num;
