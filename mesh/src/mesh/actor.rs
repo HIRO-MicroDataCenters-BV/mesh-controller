@@ -74,15 +74,17 @@ impl MeshActor {
         store: MemoryStore<MeshLogId, Extensions>,
     ) -> MeshActor {
         let own_log_id = MeshLogId(instance_id.clone());
+        let operations = LinkedOperations::new(key.clone(), instance_id.clone());
+        let operation_log = OperationLog::new(
+            own_log_id.clone(),
+            key.public_key(),
+            topic_log_map.clone(),
+            store.clone(),
+        );
         MeshActor {
             last_snapshot_time: clock.now(),
-            operations: LinkedOperations::new(key.clone(), instance_id.clone()),
-            operation_log: OperationLog::new(
-                own_log_id.clone(),
-                key.public_key(),
-                topic_log_map.clone(),
-                store.clone(),
-            ),
+            operations,
+            operation_log,
             topic_log_map,
             instance_id,
             network_tx,

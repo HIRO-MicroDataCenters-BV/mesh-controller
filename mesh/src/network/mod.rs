@@ -1,4 +1,5 @@
 mod actor;
+pub mod discovery;
 pub mod membership;
 pub mod message;
 pub mod types;
