@@ -1,0 +1,86 @@
+use std::collections::HashMap;
+
+use crate::mesh::topic::InstanceId;
+
+pub type Timestamp = u64;
+
+#[derive(Debug, Clone)]
+pub struct Membership {
+    timestamp: Timestamp,
+    instances: HashMap<String, InstanceId>,
+}
+
+impl Default for Membership {
+    fn default() -> Self {
+        Self::new(0)
+    }
+}
+
+impl Membership {
+    pub fn new(timestamp: Timestamp) -> Membership {
+        Membership {
+            instances: HashMap::new(),
+            timestamp,
+        }
+    }
+
+    pub fn add(&mut self, instance: InstanceId) {
+        self.instances.insert(instance.zone.to_owned(), instance);
+    }
+
+    pub fn get_timestamp(&self) -> Timestamp {
+        self.timestamp
+    }
+
+    pub fn get_instance(&self, zone: &str) -> Option<&InstanceId> {
+        self.instances.get(zone)
+    }
+
+    pub fn default_owner(&self) -> Option<&InstanceId> {
+        let mut instances: Vec<&InstanceId> = self.instances.values().collect();
+        instances.sort_by_key(|inst| inst.start_time);
+        instances.first().map(|inst| *inst)
+    }
+}
+
+#[cfg(test)]
+pub mod tests {
+
+    use super::*;
+
+    #[test]
+    pub fn get_default_owner() {
+        let mut membership = Membership::default();
+        assert_eq!(membership.default_owner(), None);
+
+        let i1 = InstanceId {
+            zone: "z1".into(),
+            start_time: 5,
+        };
+        let i2 = InstanceId {
+            zone: "z2".into(),
+            start_time: 4,
+        };
+        let i3 = InstanceId {
+            zone: "z2".into(),
+            start_time: 3,
+        };
+
+        let i2_2 = InstanceId {
+            zone: "z2".into(),
+            start_time: 2,
+        };
+
+        membership.add(i1.to_owned());
+        assert_eq!(membership.default_owner(), Some(&i1));
+
+        membership.add(i2.to_owned());
+        assert_eq!(membership.default_owner(), Some(&i2));
+
+        membership.add(i3.to_owned());
+        assert_eq!(membership.default_owner(), Some(&i3));
+
+        membership.add(i2_2.to_owned());
+        assert_eq!(membership.default_owner(), Some(&i2_2));
+    }
+}

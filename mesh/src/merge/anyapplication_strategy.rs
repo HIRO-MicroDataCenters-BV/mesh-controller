@@ -4,8 +4,9 @@ use crate::{
         dynamic_object_ext::{DynamicObjectExt, dump_zones},
         subscriptions::Version,
     },
-    merge::types::{Membership, Tombstone, VersionedObject},
+    merge::types::{Tombstone, VersionedObject},
     mesh::{event::MeshEvent, topic::InstanceId},
+    network::discovery::types::Membership,
 };
 use anyapplication::{
     anyapplication::{
@@ -908,6 +909,7 @@ impl AnyApplicationMerge {
 #[cfg(test)]
 pub mod tests {
 
+    use super::*;
     use crate::kube::dynamic_object_ext::DynamicObjectExt;
     use crate::merge::anyapplication_strategy::AnyApplicationMerge;
     use crate::merge::anyapplication_test_support::tests::anyapp;
@@ -915,7 +917,6 @@ pub mod tests {
     use crate::merge::anyapplication_test_support::tests::anycond_status;
     use crate::merge::anyapplication_test_support::tests::anyzone;
     use crate::merge::anyapplication_test_support::tests::make_anyapplication_with_conditions;
-    use crate::merge::types::Membership;
     use crate::merge::types::MergeResult;
     use crate::merge::types::MergeStrategy;
     use crate::merge::types::Tombstone;
@@ -926,7 +927,7 @@ pub mod tests {
 
     #[test]
     pub fn mesh_update_create_non_existing() {
-        let membership = Membership::new();
+        let membership = Membership::default();
         let incoming = anyapp(1, "zone1", 0);
 
         let strategy = AnyApplicationMerge::new();
@@ -948,7 +949,7 @@ pub mod tests {
 
     #[test]
     pub fn mesh_update_create_tombstone_different_zone() {
-        let membership = Membership::new();
+        let membership = Membership::default();
         let incoming = anyapp(1, "zone1", 0);
         let existing = VersionedObject::Tombstone(Tombstone {
             gvk: incoming.get_gvk().expect("gvk expected"),
@@ -972,7 +973,7 @@ pub mod tests {
 
     #[test]
     pub fn mesh_update_create_tombstone_same_zone() {
-        let membership = Membership::new();
+        let membership = Membership::default();
         let incoming = anyapp(1, "zone1", 0);
         let existing = VersionedObject::Tombstone(Tombstone {
             gvk: incoming.get_gvk().expect("gvk expected"),
@@ -996,7 +997,7 @@ pub mod tests {
 
     #[test]
     pub fn mesh_update_create_skip_if_tombstone_is_newer() {
-        let membership = Membership::new();
+        let membership = Membership::default();
         let incoming = anyapp(1, "zone1", 0);
         let existing = VersionedObject::Tombstone(Tombstone {
             gvk: incoming.get_gvk().expect("gvk expected"),
@@ -1018,7 +1019,7 @@ pub mod tests {
 
     #[test]
     pub fn mesh_update_non_existing_other_zone() {
-        let membership = Membership::new();
+        let membership = Membership::default();
         let incoming = anyapp(1, "zone1", 0);
 
         let strategy = AnyApplicationMerge::new();
@@ -1038,7 +1039,7 @@ pub mod tests {
 
     #[test]
     pub fn mesh_update_same_version() {
-        let membership = Membership::new();
+        let membership = Membership::default();
         let current = anyapp(1, "zone1", 0);
         let incoming = anyapp(1, "zone1", 1);
 
@@ -1053,7 +1054,7 @@ pub mod tests {
 
     #[test]
     pub fn mesh_update_greater_version_spec() {
-        let membership = Membership::new();
+        let membership = Membership::default();
         let current = anyapp(1, "zone1", 0);
         let incoming = anyapp(2, "zone1", 1);
 
@@ -1085,7 +1086,7 @@ pub mod tests {
 
     #[test]
     pub fn mesh_update_greater_version_status_ownership() {
-        let membership = Membership::new();
+        let membership = Membership::default();
         let current = anyapp(1, "zone1", 0);
         let incoming = anyapp(2, "zone1", 1);
 
@@ -1103,7 +1104,7 @@ pub mod tests {
 
     #[test]
     pub fn mesh_update_greater_version_status_conditions() {
-        let membership = Membership::new();
+        let membership = Membership::default();
         let current = anyapp(1, "zone1", 0);
         let incoming = anyapp(2, "zone1", 1);
 
@@ -1121,7 +1122,7 @@ pub mod tests {
 
     #[test]
     pub fn mesh_update_greater_version_unacceptable_zone() {
-        let membership = Membership::new();
+        let membership = Membership::default();
         let current = anyapp(1, "zone1", 0);
         let incoming = anyapp(2, "unacceptable", 1);
 
@@ -1136,7 +1137,7 @@ pub mod tests {
 
     #[test]
     pub fn mesh_update_the_same_owner_greater_epoch() {
-        let membership = Membership::new();
+        let membership = Membership::default();
 
         let current = make_anyapplication_with_conditions(
             1,
@@ -1190,7 +1191,7 @@ pub mod tests {
 
     #[test]
     pub fn mesh_update_different_owner_greater_epoch() {
-        let membership = Membership::new();
+        let membership = Membership::default();
 
         let current = make_anyapplication_with_conditions(
             1,
@@ -1244,7 +1245,7 @@ pub mod tests {
 
     #[test]
     pub fn mesh_update_ownership_conflict_greater_epoch() {
-        let membership = Membership::new();
+        let membership = Membership::default();
 
         let current = make_anyapplication_with_conditions(
             2,
@@ -1303,7 +1304,7 @@ pub mod tests {
 
     #[test]
     pub fn mesh_update_ownership_conflict_equal_epoch_current_owner() {
-        let mut membership = Membership::new();
+        let mut membership = Membership::default();
         membership.add(InstanceId {
             zone: "zone1".into(),
             start_time: 1,
@@ -1370,7 +1371,7 @@ pub mod tests {
 
     #[test]
     pub fn mesh_update_ownership_conflict_equal_epoch_incoming_owner() {
-        let mut membership = Membership::new();
+        let mut membership = Membership::default();
         membership.add(InstanceId {
             zone: "zone1".into(),
             start_time: 2,
@@ -1416,7 +1417,7 @@ pub mod tests {
 
     #[test]
     pub fn mesh_update_ownership_conflict_less_epoch() {
-        let membership = Membership::new();
+        let membership = Membership::default();
 
         let current = make_anyapplication_with_conditions(
             2,
@@ -1604,7 +1605,7 @@ pub mod tests {
 
     #[test]
     pub fn mesh_update_condition_from_replica_zone() {
-        let membership = Membership::new();
+        let membership = Membership::default();
         let current = make_anyapplication_with_conditions(
             1,
             1,
@@ -1657,7 +1658,7 @@ pub mod tests {
 
     #[test]
     pub fn mesh_create_condition_from_replica_zone() {
-        let membership = Membership::new();
+        let membership = Membership::default();
         let current = make_anyapplication_with_conditions(
             1,
             1,
@@ -1707,7 +1708,7 @@ pub mod tests {
 
     #[test]
     pub fn mesh_delete_condition_from_replica_zone() {
-        let membership = Membership::new();
+        let membership = Membership::default();
         let current = make_anyapplication_with_conditions(
             1,
             1,

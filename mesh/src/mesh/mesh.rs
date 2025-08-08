@@ -10,6 +10,7 @@ use crate::config::configuration::MergeStrategyType;
 use crate::config::configuration::MeshConfig;
 use crate::merge::anyapplication_strategy::AnyApplicationMerge;
 use crate::merge::default_strategy::DefaultMerge;
+use crate::network::discovery::event::MembershipEvent;
 use crate::utils::clock::RealClock;
 use crate::{JoinErrToStr, kube::subscriptions::Subscriptions};
 use anyhow::Result;
@@ -17,6 +18,7 @@ use futures::future::{MapErr, Shared};
 use futures::{FutureExt, TryFutureExt};
 use p2panda_core::{Operation, PrivateKey};
 use p2panda_store::MemoryStore;
+use tokio::sync::broadcast;
 use tokio::sync::mpsc;
 use tokio::task::JoinError;
 use tokio_util::sync::CancellationToken;
@@ -40,6 +42,7 @@ impl Mesh {
         store: MemoryStore<MeshLogId, Extensions>,
         network_tx: mpsc::Sender<Operation<Extensions>>,
         network_rx: mpsc::Receiver<Operation<Extensions>>,
+        membership_rx: broadcast::Receiver<MembershipEvent>,
     ) -> Result<Mesh> {
         let gvk = config.resource.get_gvk();
         let clock = Arc::new(RealClock::new());
@@ -68,6 +71,7 @@ impl Mesh {
             network_tx,
             network_rx,
             subscriber_rx.into_stream(),
+            membership_rx,
             subscriptions,
             store,
         );

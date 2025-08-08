@@ -8,11 +8,11 @@ use crate::http::api::MeshApiImpl;
 use crate::api::server::MeshHTTPServer;
 use crate::mesh::mesh::Mesh;
 use crate::mesh::operations::Extensions;
-use crate::mesh::peer_discovery::PeerDiscovery;
 use crate::mesh::topic::{InstanceId, MeshLogId};
 use crate::mesh::topic::{MeshTopic, MeshTopicLogMap};
 use crate::network::Panda;
-use crate::network::membership::Membership;
+use crate::network::discovery::membership::MembershipDiscovery;
+use crate::network::discovery::static_lookup::StaticLookup;
 use crate::node::mesh::{MeshNode, NodeOptions};
 use anyhow::{Context as AnyhowContext, Result, anyhow};
 use p2panda_core::{PrivateKey, PublicKey};
@@ -124,6 +124,10 @@ impl ContextBuilder {
             MeshTopicLogMap::new(private_key.public_key(), MeshLogId(instance_id.clone()));
         let log_store = MemoryStore::<MeshLogId, Extensions>::new();
 
+        let membership_discovery =
+            MembershipDiscovery::new(topic_log_map.clone(), cancelation.child_token());
+        let membership_events_rx = membership_discovery.subscribe_events().await?;
+
         let (mesh_tx, network_rx) = mpsc::channel(512);
         let (network_tx, mesh_rx) = mpsc::channel(512);
 
@@ -137,6 +141,7 @@ impl ContextBuilder {
             log_store.clone(),
             network_tx,
             network_rx,
+            membership_events_rx,
         )
         .await?;
 
@@ -146,7 +151,7 @@ impl ContextBuilder {
         let mut builder = NetworkBuilder::from_config(p2p_network_config)
             .private_key(private_key.clone())
             .sync(sync_config)
-            .discovery(Membership::new(
+            .discovery(StaticLookup::new(
                 &config.node.known_nodes,
                 config.node.discovery.to_owned().unwrap_or_default(),
             ));
@@ -155,7 +160,10 @@ impl ContextBuilder {
         }
 
         let network = builder.build().await?;
-        let peer_discovery = PeerDiscovery::start(network.events().await?, topic_log_map.clone());
+
+        membership_discovery
+            .consume_system_events(network.events().await?)
+            .await?;
 
         let node_id = network.node_id();
         let direct_addresses = network
@@ -171,7 +179,8 @@ impl ContextBuilder {
             node_config,
         };
 
-        let node = MeshNode::new(panda, mesh, peer_discovery, mesh_tx, options.clone()).await?;
+        let node =
+            MeshNode::new(panda, mesh, membership_discovery, mesh_tx, options.clone()).await?;
         node.subscribe(MeshTopic::default()).await?;
         node.publish_operations(mesh_rx).await.ok();
         Ok(node)

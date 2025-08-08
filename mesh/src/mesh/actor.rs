@@ -10,12 +10,13 @@ use crate::kube::event::KubeEvent;
 use crate::kube::subscriptions::Subscriptions;
 use crate::kube::subscriptions::Version;
 use crate::kube::types::NamespacedName;
-use crate::merge::types::Membership;
 use crate::merge::types::MergeResult;
 use crate::merge::types::Tombstone;
 use crate::mesh::event::MeshEvent;
 use crate::mesh::operation_log::OperationLog;
 use crate::mesh::operation_log::Ready;
+use crate::network::discovery::event::MembershipEvent;
+use crate::network::discovery::types::Membership;
 use crate::utils::types::Clock;
 use anyhow::Context;
 use anyhow::Result;
@@ -25,6 +26,7 @@ use kube::api::GroupVersionKind;
 use loole::RecvStream;
 use p2panda_core::{Operation, PrivateKey};
 use p2panda_store::MemoryStore;
+use tokio::sync::broadcast;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, trace, warn};
@@ -43,17 +45,18 @@ pub struct MeshActor {
     network_tx: mpsc::Sender<Operation<Extensions>>,
     network_rx: mpsc::Receiver<Operation<Extensions>>,
     event_rx: RecvStream<KubeEvent>,
+    membership_rx: broadcast::Receiver<MembershipEvent>,
     subscriptions: Subscriptions,
     operation_log: OperationLog,
     operations: LinkedOperations,
     partition: Partition,
-    topic_log_map: MeshTopicLogMap,
     clock: Arc<dyn Clock>,
     cancelation: CancellationToken,
     snapshot_config: PeriodicSnapshotConfig,
     tombstone_config: TombstoneConfig,
     last_snapshot_time: SystemTime,
     own_log_id: MeshLogId,
+    membership: Membership,
 }
 
 impl MeshActor {
@@ -70,6 +73,7 @@ impl MeshActor {
         network_tx: mpsc::Sender<Operation<Extensions>>,
         network_rx: mpsc::Receiver<Operation<Extensions>>,
         event_rx: RecvStream<KubeEvent>,
+        membership_rx: broadcast::Receiver<MembershipEvent>,
         subscriptions: Subscriptions,
         store: MemoryStore<MeshLogId, Extensions>,
     ) -> MeshActor {
@@ -81,15 +85,17 @@ impl MeshActor {
             topic_log_map.clone(),
             store.clone(),
         );
+        // TODO initialization
+        let membership = Membership::default();
         MeshActor {
             last_snapshot_time: clock.now(),
             operations,
             operation_log,
-            topic_log_map,
             instance_id,
             network_tx,
             network_rx,
             event_rx,
+            membership_rx,
             subscriptions,
             partition,
             clock,
@@ -97,6 +103,7 @@ impl MeshActor {
             snapshot_config,
             tombstone_config,
             own_log_id,
+            membership,
         }
     }
 
@@ -110,6 +117,12 @@ impl MeshActor {
                         error!("error on tick, {}", err);
                     }
                 },
+                Ok(event) = self.membership_rx.recv() => {
+                    let MembershipEvent::Update(membership) = event;
+                    if let Err(err) = self.on_membership_change(membership).await {
+                        error!("error while processing kube event, {}", err);
+                    }
+                }
                 Some(event) = self.event_rx.next() => {
                     if let Err(err) = self.on_outgoing_to_network(event).await {
                         error!("error while processing kube event, {}", err);
@@ -125,10 +138,11 @@ impl MeshActor {
         Ok(())
     }
 
-    async fn _on_membership_change(&mut self, membership: &Membership) -> Result<()> {
+    async fn on_membership_change(&mut self, membership: Membership) -> Result<()> {
+        self.membership = membership;
         let mesh_events = self
             .partition
-            .mesh_membership_change(membership, &self.instance_id.zone)?;
+            .mesh_membership_change(&self.membership, &self.instance_id.zone)?;
         for event in mesh_events {
             let operation = self.operations.next(event);
             self.operation_log.insert(operation).await?;
@@ -169,7 +183,6 @@ impl MeshActor {
     }
 
     async fn on_ready_incoming(&mut self, ready: &mut Ready) -> Result<(), anyhow::Error> {
-        let membership = self.topic_log_map.get_membership();
         for (log_id, ops) in ready.take_incoming().into_iter() {
             for operation in ops.into_iter() {
                 let pointer = operation.header.seq_num;
@@ -179,7 +192,7 @@ impl MeshActor {
                         mesh_event,
                         &log_id.0.zone,
                         &self.instance_id.zone,
-                        &membership,
+                        &self.membership,
                     )?;
                     self.on_merge_results(merge_results).await;
                     self.operation_log.advance_log_pointer(&log_id, pointer + 1);
