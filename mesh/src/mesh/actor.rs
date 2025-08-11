@@ -178,7 +178,7 @@ impl MeshActor {
     }
 
     async fn on_incoming_from_network(&mut self, operation: Operation<Extensions>) -> Result<()> {
-        self.operation_log.insert(operation.clone()).await?;
+        self.operation_log.insert(operation).await?;
         self.on_ready().await
     }
 

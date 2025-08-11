@@ -11,7 +11,7 @@ use crate::config::configuration::MeshConfig;
 use crate::merge::anyapplication_strategy::AnyApplicationMerge;
 use crate::merge::default_strategy::DefaultMerge;
 use crate::network::discovery::event::MembershipEvent;
-use crate::utils::clock::RealClock;
+use crate::utils::types::Clock;
 use crate::{JoinErrToStr, kube::subscriptions::Subscriptions};
 use anyhow::Result;
 use futures::future::{MapErr, Shared};
@@ -38,6 +38,7 @@ impl Mesh {
         instance_id: InstanceId,
         cancelation: CancellationToken,
         client: KubeClient,
+        clock: Arc<dyn Clock>,
         topic_log_map: MeshTopicLogMap,
         store: MemoryStore<MeshLogId, Extensions>,
         network_tx: mpsc::Sender<Operation<Extensions>>,
@@ -45,7 +46,6 @@ impl Mesh {
         membership_rx: broadcast::Receiver<MembershipEvent>,
     ) -> Result<Mesh> {
         let gvk = config.resource.get_gvk();
-        let clock = Arc::new(RealClock::new());
 
         let partition = match config.resource.merge_strategy {
             MergeStrategyType::Default => {

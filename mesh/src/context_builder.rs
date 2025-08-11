@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::client::kube_client::KubeClient;
 use crate::config::private_key::load_private_key_from_file;
@@ -12,8 +13,10 @@ use crate::mesh::topic::{InstanceId, MeshLogId};
 use crate::mesh::topic::{MeshTopic, MeshTopicLogMap};
 use crate::network::Panda;
 use crate::network::discovery::membership::MembershipDiscovery;
+use crate::network::discovery::nodes::Nodes;
 use crate::network::discovery::static_lookup::StaticLookup;
 use crate::node::mesh::{MeshNode, NodeOptions};
+use crate::utils::clock::RealClock;
 use anyhow::{Context as AnyhowContext, Result, anyhow};
 use p2panda_core::{PrivateKey, PublicKey};
 use p2panda_net::{NetworkBuilder, ResyncConfiguration, SyncConfiguration};
@@ -124,8 +127,18 @@ impl ContextBuilder {
             MeshTopicLogMap::new(private_key.public_key(), MeshLogId(instance_id.clone()));
         let log_store = MemoryStore::<MeshLogId, Extensions>::new();
 
-        let membership_discovery =
-            MembershipDiscovery::new(topic_log_map.clone(), cancelation.child_token());
+        let clock = Arc::new(RealClock::new());
+        let nodes = Nodes::new(
+            private_key.public_key(),
+            MeshLogId(instance_id.clone()),
+            Duration::from_secs(120), // TODO config
+        );
+        let membership_discovery = MembershipDiscovery::new(
+            topic_log_map.clone(),
+            nodes,
+            clock.clone(),
+            cancelation.child_token(),
+        );
         let membership_events_rx = membership_discovery.subscribe_events().await?;
 
         let (mesh_tx, network_rx) = mpsc::channel(512);
@@ -137,6 +150,7 @@ impl ContextBuilder {
             instance_id,
             cancelation,
             client,
+            clock,
             topic_log_map.clone(),
             log_store.clone(),
             network_tx,

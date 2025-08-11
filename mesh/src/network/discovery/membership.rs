@@ -1,13 +1,10 @@
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
-use dashmap::DashMap;
 use futures::{
     FutureExt, StreamExt, TryFutureExt,
     future::{MapErr, Shared},
     stream::SelectAll,
 };
-use iroh_base::{NodeAddr, PublicKey};
-use p2panda_discovery::{BoxedStream, Discovery, DiscoveryEvent};
 use p2panda_net::SystemEvent;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc;
@@ -15,12 +12,16 @@ use tokio::sync::oneshot;
 use tokio::task::JoinError;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
-use tracing::trace;
 
 use crate::{
     JoinErrToStr,
     mesh::topic::{MeshTopic, MeshTopicLogMap},
-    network::discovery::{event::MembershipEvent, peers::Peers},
+    network::discovery::{
+        event::MembershipEvent,
+        nodes::{Nodes, PeerEvent},
+        types::Membership,
+    },
+    utils::types::Clock,
 };
 use anyhow::Result;
 
@@ -45,10 +46,13 @@ pub struct MembershipDiscovery {
 impl MembershipDiscovery {
     pub fn new(
         topic_log_map: MeshTopicLogMap,
+        nodes: Nodes,
+        clock: Arc<dyn Clock>,
         cancelation: CancellationToken,
     ) -> MembershipDiscovery {
         let (actor_tx, inbox) = mpsc::channel::<ToMembershipDiscoveryActor>(512);
-        let mut inner = MembershipDiscoveryActor::new(topic_log_map, inbox, cancelation);
+        let mut inner =
+            MembershipDiscoveryActor::new(topic_log_map, nodes, clock, inbox, cancelation);
         let handle = tokio::spawn(async move {
             inner.run().await;
         });
@@ -80,8 +84,9 @@ impl MembershipDiscovery {
 }
 
 pub struct MembershipDiscoveryActor {
-    peers: Peers,
     topic_log_map: MeshTopicLogMap,
+    nodes: Nodes,
+    clock: Arc<dyn Clock>,
     cancelation: CancellationToken,
     inbox: mpsc::Receiver<ToMembershipDiscoveryActor>,
     system_events_rx: SelectAll<BroadcastStream<SystemEvent<MeshTopic>>>,
@@ -91,12 +96,15 @@ pub struct MembershipDiscoveryActor {
 impl MembershipDiscoveryActor {
     fn new(
         topic_log_map: MeshTopicLogMap,
+        nodes: Nodes,
+        clock: Arc<dyn Clock>,
         inbox: mpsc::Receiver<ToMembershipDiscoveryActor>,
         cancelation: CancellationToken,
     ) -> MembershipDiscoveryActor {
         MembershipDiscoveryActor {
-            peers: Peers::new(),
             topic_log_map,
+            nodes,
+            clock,
             cancelation,
             inbox,
             system_events_rx: SelectAll::new(),
@@ -151,7 +159,17 @@ impl MembershipDiscoveryActor {
     }
 
     fn on_state_update_tick(&mut self) {
-        // self.peers.tick(self.clock.now_millis())
+        self.distribute_membeship_event(self.nodes.on_event(PeerEvent::Tick {
+            now: self.clock.now_millis(),
+        }));
+    }
+
+    fn distribute_membeship_event(&mut self, maybe_updated_membership: Option<Membership>) {
+        if let Some(membership) = maybe_updated_membership {
+            if let Some(events_tx) = &mut self.membership_events {
+                events_tx.send(MembershipEvent::Update(membership)).ok();
+            }
+        }
     }
 
     fn on_system_event(&mut self, event: SystemEvent<MeshTopic>) {
@@ -180,12 +198,24 @@ impl MembershipDiscoveryActor {
         }
     }
 
-    fn on_peer_down(&self, peer: p2panda_core::PublicKey) {
-        // self.peers.on_peer_down(&peer);
+    fn on_peer_down(&mut self, peer: p2panda_core::PublicKey) {
+        self.distribute_membeship_event(self.nodes.on_event(PeerEvent::PeerDown {
+            peer,
+            now: self.clock.now_millis(),
+        }));
         self.topic_log_map.remove_peer(&peer);
     }
-    fn on_peer_up(&self, peer: p2panda_core::PublicKey) {}
-    fn on_peer_discovered(&self, peer: p2panda_core::PublicKey) {
+    fn on_peer_up(&self, peer: p2panda_core::PublicKey) {
+        self.nodes.on_event(PeerEvent::PeerUp {
+            peer,
+            now: self.clock.now_millis(),
+        });
+    }
+    fn on_peer_discovered(&mut self, peer: p2panda_core::PublicKey) {
+        self.distribute_membeship_event(self.nodes.on_event(PeerEvent::PeerUp {
+            peer,
+            now: self.clock.now_millis(),
+        }));
         if !self.topic_log_map.has_peer(&peer) {
             tracing::info!("PeerDiscovered: {}", peer.to_hex());
             self.topic_log_map.add_peer(peer);
