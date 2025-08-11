@@ -34,7 +34,7 @@ impl Nodes {
                 let mut entry = self
                     .inner
                     .peers
-                    .entry(peer.clone())
+                    .entry(*peer)
                     .or_insert_with(|| PeerState::new(self.timeout));
                 entry.value_mut().on_event(event)
             }
@@ -42,7 +42,7 @@ impl Nodes {
                 let mut entry = self
                     .inner
                     .peers
-                    .entry(peer.clone())
+                    .entry(*peer)
                     .or_insert_with(|| PeerState::new(self.timeout));
                 entry.value_mut().on_event(event)
             }
@@ -50,12 +50,12 @@ impl Nodes {
                 .inner
                 .peers
                 .iter_mut()
-                .map(|mut entry| entry.value_mut().on_event(event.clone()))
+                .map(|mut entry| entry.value_mut().on_event(event))
                 .reduce(|left, right| left | right)
                 .unwrap_or(false),
         };
         if updated {
-            return Some(self.get_membership(now));
+            Some(self.get_membership(now))
         } else {
             None
         }

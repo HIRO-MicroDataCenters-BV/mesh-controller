@@ -9,8 +9,8 @@ use crate::http::api::MeshApiImpl;
 use crate::api::server::MeshHTTPServer;
 use crate::mesh::mesh::Mesh;
 use crate::mesh::operations::Extensions;
+use crate::mesh::topic::MeshTopic;
 use crate::mesh::topic::{InstanceId, MeshLogId};
-use crate::mesh::topic::{MeshTopic, MeshTopicLogMap};
 use crate::network::Panda;
 use crate::network::discovery::membership::MembershipDiscovery;
 use crate::network::discovery::nodes::Nodes;
@@ -123,8 +123,6 @@ impl ContextBuilder {
 
         let resync_config = ContextBuilder::to_resync_config(&config);
         let instance_id = InstanceId::new(config.mesh.zone.to_owned());
-        let topic_log_map =
-            MeshTopicLogMap::new(private_key.public_key(), MeshLogId(instance_id.clone()));
         let log_store = MemoryStore::<MeshLogId, Extensions>::new();
 
         let clock = Arc::new(RealClock::new());
@@ -133,12 +131,8 @@ impl ContextBuilder {
             MeshLogId(instance_id.clone()),
             Duration::from_secs(120), // TODO config
         );
-        let membership_discovery = MembershipDiscovery::new(
-            topic_log_map.clone(),
-            nodes,
-            clock.clone(),
-            cancelation.child_token(),
-        );
+        let membership_discovery =
+            MembershipDiscovery::new(nodes.clone(), clock.clone(), cancelation.child_token());
         let membership_events_rx = membership_discovery.subscribe_events().await?;
 
         let (mesh_tx, network_rx) = mpsc::channel(512);
@@ -151,7 +145,7 @@ impl ContextBuilder {
             cancelation,
             client,
             clock,
-            topic_log_map.clone(),
+            nodes.clone(),
             log_store.clone(),
             network_tx,
             network_rx,
@@ -159,7 +153,7 @@ impl ContextBuilder {
         )
         .await?;
 
-        let sync_protocol = LogSyncProtocol::new(topic_log_map.clone(), log_store);
+        let sync_protocol = LogSyncProtocol::new(nodes, log_store);
         let sync_config = SyncConfiguration::new(sync_protocol).resync(resync_config);
 
         let mut builder = NetworkBuilder::from_config(p2p_network_config)

@@ -39,7 +39,7 @@ impl Membership {
     pub fn default_owner(&self) -> Option<&InstanceId> {
         let mut instances: Vec<&InstanceId> = self.instances.values().collect();
         instances.sort_by_key(|inst| inst.start_time);
-        instances.first().map(|inst| *inst)
+        instances.first().copied()
     }
 }
 

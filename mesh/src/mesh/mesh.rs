@@ -3,7 +3,6 @@ use std::sync::Arc;
 use super::actor::MeshActor;
 use super::partition::Partition;
 use super::topic::InstanceId;
-use super::topic::MeshTopicLogMap;
 use super::{operations::Extensions, topic::MeshLogId};
 use crate::client::kube_client::KubeClient;
 use crate::config::configuration::MergeStrategyType;
@@ -11,6 +10,7 @@ use crate::config::configuration::MeshConfig;
 use crate::merge::anyapplication_strategy::AnyApplicationMerge;
 use crate::merge::default_strategy::DefaultMerge;
 use crate::network::discovery::event::MembershipEvent;
+use crate::network::discovery::nodes::Nodes;
 use crate::utils::types::Clock;
 use crate::{JoinErrToStr, kube::subscriptions::Subscriptions};
 use anyhow::Result;
@@ -39,7 +39,7 @@ impl Mesh {
         cancelation: CancellationToken,
         client: KubeClient,
         clock: Arc<dyn Clock>,
-        topic_log_map: MeshTopicLogMap,
+        nodes: Nodes,
         store: MemoryStore<MeshLogId, Extensions>,
         network_tx: mpsc::Sender<Operation<Extensions>>,
         network_rx: mpsc::Receiver<Operation<Extensions>>,
@@ -67,7 +67,7 @@ impl Mesh {
             partition,
             clock,
             cancelation,
-            topic_log_map,
+            nodes,
             network_tx,
             network_rx,
             subscriber_rx.into_stream(),

@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, HashMap};
 
-use crate::mesh::{
-    operations::Extensions,
-    topic::{MeshLogId, MeshTopicLogMap},
+use crate::{
+    mesh::{operations::Extensions, topic::MeshLogId},
+    network::discovery::nodes::Nodes,
 };
 use anyhow::Result;
 use p2panda_core::{Operation, PublicKey};
@@ -19,7 +19,7 @@ pub struct OperationLog {
     own_log_id: MeshLogId,
     own_public_key: PublicKey,
     incoming_pending: HashMap<LogKey, BTreeMap<u64, Operation<Extensions>>>,
-    topic_log_map: MeshTopicLogMap,
+    nodes: Nodes,
     store: MemoryStore<MeshLogId, Extensions>,
     pointers: LogPointers,
 }
@@ -28,7 +28,7 @@ impl OperationLog {
     pub fn new(
         own_log_id: MeshLogId,
         own_public_key: PublicKey,
-        topic_log_map: MeshTopicLogMap,
+        nodes: Nodes,
         store: MemoryStore<MeshLogId, Extensions>,
     ) -> Self {
         let mut pointers = LogPointers::new();
@@ -37,7 +37,7 @@ impl OperationLog {
             incoming_pending: HashMap::default(),
             pointers,
             store,
-            topic_log_map,
+            nodes,
             own_log_id,
             own_public_key,
         }
@@ -170,11 +170,11 @@ impl OperationLog {
     }
 
     fn update_log_id(&mut self, incoming_source: &PublicKey, incoming_log_id: &MeshLogId) -> bool {
-        match self.topic_log_map.get_latest_log(incoming_source) {
+        match self.nodes.get_latest_log(incoming_source) {
             Some(latest) => match latest.0.start_time.cmp(&incoming_log_id.0.start_time) {
                 std::cmp::Ordering::Less => {
                     debug!("new log {} found from peer", incoming_log_id);
-                    self.topic_log_map
+                    self.nodes
                         .update_log(incoming_source.to_owned(), incoming_log_id.to_owned());
                     self.pointers.add(incoming_log_id.to_owned());
                     false
@@ -184,7 +184,7 @@ impl OperationLog {
             },
             None => {
                 debug!("new log {} found from peer", incoming_log_id);
-                self.topic_log_map
+                self.nodes
                     .update_log(incoming_source.to_owned(), incoming_log_id.to_owned());
                 self.pointers.add(incoming_log_id.to_owned());
                 false
@@ -193,7 +193,7 @@ impl OperationLog {
     }
 
     pub async fn truncate_obsolete_logs(&mut self) -> Result<()> {
-        for (source, log_ids) in self.topic_log_map.take_obsolete_log_ids() {
+        for (source, log_ids) in self.nodes.take_obsolete_log_ids() {
             for log_id in log_ids {
                 self.pointers.remove(&log_id);
                 if let Some((header, _)) = self.store.latest_operation(&source, &log_id).await? {
@@ -224,7 +224,7 @@ impl OperationLog {
     }
 
     async fn get_ready_incoming(&self) -> HashMap<MeshLogId, Vec<Operation<Extensions>>> {
-        let peer_log_ids = self.topic_log_map.get_peer_logs();
+        let peer_log_ids = self.nodes.get_peer_logs();
         let mut incoming = HashMap::<MeshLogId, Vec<Operation<Extensions>>>::new();
         for (peer_id, log_id) in peer_log_ids {
             let current = self.pointers.get_current(&log_id);
@@ -359,7 +359,11 @@ impl LogPointers {
 
 #[cfg(test)]
 pub mod tests {
-    use std::collections::{BTreeMap, HashMap};
+    use super::*;
+    use std::{
+        collections::{BTreeMap, HashMap},
+        time::Duration,
+    };
 
     use anyhow::Result;
     use kube::api::DynamicObject;
@@ -373,7 +377,7 @@ pub mod tests {
             event::MeshEvent,
             operation_log::OperationLog,
             operations::LinkedOperations,
-            topic::{InstanceId, MeshLogId, MeshTopicLogMap},
+            topic::{InstanceId, MeshLogId},
         },
     };
 
@@ -679,7 +683,11 @@ pub mod tests {
         let own_linked_operations = LinkedOperations::new(own_key.clone(), own_instance_id.clone());
 
         let own_mesh_log_id = MeshLogId(own_instance_id);
-        let own_topic_map = MeshTopicLogMap::new(own_key.public_key(), own_mesh_log_id.clone());
+        let own_topic_map = Nodes::new(
+            own_key.public_key(),
+            own_mesh_log_id.clone(),
+            Duration::from_secs(120),
+        );
         let log = OperationLog::new(
             own_mesh_log_id.clone(),
             own_key.public_key(),
@@ -705,7 +713,11 @@ pub mod tests {
         let own_key = PrivateKey::new();
         let own_instance_id = InstanceId::new("1".to_string());
         let own_mesh_log_id = MeshLogId(own_instance_id);
-        let own_topic_map = MeshTopicLogMap::new(own_key.public_key(), own_mesh_log_id.clone());
+        let own_topic_map = Nodes::new(
+            own_key.public_key(),
+            own_mesh_log_id.clone(),
+            Duration::from_secs(120),
+        );
         let log = OperationLog::new(
             own_mesh_log_id.clone(),
             own_key.public_key(),

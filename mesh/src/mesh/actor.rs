@@ -16,6 +16,7 @@ use crate::mesh::event::MeshEvent;
 use crate::mesh::operation_log::OperationLog;
 use crate::mesh::operation_log::Ready;
 use crate::network::discovery::event::MembershipEvent;
+use crate::network::discovery::nodes::Nodes;
 use crate::network::discovery::types::Membership;
 use crate::utils::types::Clock;
 use anyhow::Context;
@@ -34,7 +35,6 @@ use tracing::{debug, error, trace, warn};
 use super::operations::LinkedOperations;
 use super::partition::Partition;
 use super::topic::InstanceId;
-use super::topic::MeshTopicLogMap;
 use super::{operations::Extensions, topic::MeshLogId};
 
 const DEFAULT_TICK_INTERVAL: Duration = Duration::from_secs(1);
@@ -56,7 +56,7 @@ pub struct MeshActor {
     tombstone_config: TombstoneConfig,
     last_snapshot_time: SystemTime,
     own_log_id: MeshLogId,
-    membership: Membership,
+    membership: Membership
 }
 
 impl MeshActor {
@@ -69,7 +69,7 @@ impl MeshActor {
         partition: Partition,
         clock: Arc<dyn Clock>,
         cancelation: CancellationToken,
-        topic_log_map: MeshTopicLogMap,
+        nodes: Nodes,
         network_tx: mpsc::Sender<Operation<Extensions>>,
         network_rx: mpsc::Receiver<Operation<Extensions>>,
         event_rx: RecvStream<KubeEvent>,
@@ -82,7 +82,7 @@ impl MeshActor {
         let operation_log = OperationLog::new(
             own_log_id.clone(),
             key.public_key(),
-            topic_log_map.clone(),
+            nodes.clone(),
             store.clone(),
         );
         // TODO initialization
@@ -103,7 +103,7 @@ impl MeshActor {
             snapshot_config,
             tombstone_config,
             own_log_id,
-            membership,
+            membership
         }
     }
 
@@ -160,7 +160,6 @@ impl MeshActor {
     async fn on_event(&mut self, event: KubeEvent) -> Result<()> {
         let update_result = self.partition.kube_apply(event, &self.instance_id.zone)?;
         let event: Option<MeshEvent> = update_result.into();
-        // info!("kube event => mesh event {:?}", event);
 
         if let Some(event) = event {
             let operation = self.operations.next(event);
