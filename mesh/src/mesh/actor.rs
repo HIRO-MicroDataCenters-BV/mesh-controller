@@ -56,7 +56,7 @@ pub struct MeshActor {
     tombstone_config: TombstoneConfig,
     last_snapshot_time: SystemTime,
     own_log_id: MeshLogId,
-    membership: Membership
+    membership: Membership,
 }
 
 impl MeshActor {
@@ -103,7 +103,7 @@ impl MeshActor {
             snapshot_config,
             tombstone_config,
             own_log_id,
-            membership
+            membership,
         }
     }
 
