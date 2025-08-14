@@ -91,6 +91,7 @@ impl MeshActor {
         );
 
         let membership = nodes.get_membership(clock.now_millis());
+        tracing::info!("initial membership {:?}", membership);
         MeshActor {
             last_snapshot_time: clock.now(),
             operations,
@@ -142,7 +143,9 @@ impl MeshActor {
 
     async fn on_system_event(&mut self, event: SystemEvent<MeshTopic>) {
         match event {
-            SystemEvent::GossipNeighborDown { peer, .. } => self.on_peer_down(peer).await,
+            SystemEvent::GossipNeighborDown { peer, .. } => {
+                self.on_peer_down(peer).await
+            },
             SystemEvent::GossipNeighborUp { peer, .. } => {
                 self.on_peer_up(peer).await;
             }
