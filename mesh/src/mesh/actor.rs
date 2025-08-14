@@ -140,17 +140,6 @@ impl MeshActor {
         Ok(())
     }
 
-    async fn on_membership_change(&mut self, membership: Membership) -> Result<()> {
-        self.membership = membership;
-        tracing::info!("membership change {:?}", self.membership);
-        let merge_results = self
-            .partition
-            .mesh_membership_change(&self.membership, &self.instance_id.zone)?;
-        self.on_merge_results(merge_results).await;
-        self.on_ready().await?;
-        Ok(())
-    }
-
     async fn on_system_event(&mut self, event: SystemEvent<MeshTopic>) {
         match event {
             SystemEvent::GossipNeighborDown { peer, .. } => self.on_peer_down(peer).await,
@@ -198,13 +187,24 @@ impl MeshActor {
     async fn set_membership(&mut self, maybe_updated_membership: Option<Membership>) {
         if let Some(membership) = maybe_updated_membership {
             if !self.membership.is_equal(&membership) {
-                let res = self.on_membership_change(membership).await;
-                if let Err(err) = res {
+                if let Err(err) = self.on_membership_change(membership).await {
                     tracing::error!("membership change error {err:?}");
                 }
             }
         }
     }
+
+    async fn on_membership_change(&mut self, membership: Membership) -> Result<()> {
+        self.membership = membership;
+        tracing::info!("membership change {:?}", self.membership);
+        let merge_results = self
+            .partition
+            .mesh_membership_change(&self.membership, &self.instance_id.zone)?;
+        self.on_merge_results(merge_results).await;
+        self.on_ready().await?;
+        Ok(())
+    }
+
 
     async fn on_outgoing_to_network(&mut self, event: KubeEvent) -> Result<()> {
         self.on_event(event).await?;
