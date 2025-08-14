@@ -200,7 +200,7 @@ impl Partition {
         &mut self,
         membership: &Membership,
         node_zone: &str,
-    ) -> Result<Vec<MeshEvent>> {
+    ) -> Result<Vec<MergeResult>> {
         let mut out = vec![];
         for (_, current) in self.resources.iter() {
             let mut merge_results = self.merge_strategy.mesh_membership_change(
@@ -209,6 +209,9 @@ impl Partition {
                 node_zone,
             )?;
             out.append(&mut merge_results);
+        }
+        for merge_result in &out {
+            self.mesh_update_partition(&merge_result);
         }
         Ok(out)
     }

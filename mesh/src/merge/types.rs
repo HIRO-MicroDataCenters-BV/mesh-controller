@@ -105,7 +105,7 @@ pub trait MergeStrategy: Send + Sync {
         current: VersionedObject,
         membership: &Membership,
         node_zone: &str,
-    ) -> Result<Vec<MeshEvent>>;
+    ) -> Result<Vec<MergeResult>>;
 
     fn tombstone(&self, current: VersionedObject, now_millis: u64) -> Result<Option<Tombstone>>;
 

@@ -86,7 +86,8 @@ impl MeshActor {
             store.clone(),
         );
         // TODO initialization
-        let membership = Membership::default();
+        let mut membership = Membership::default();
+        membership.add(own_log_id.0.to_owned());
         MeshActor {
             last_snapshot_time: clock.now(),
             operations,
@@ -140,13 +141,11 @@ impl MeshActor {
 
     async fn on_membership_change(&mut self, membership: Membership) -> Result<()> {
         self.membership = membership;
-        let mesh_events = self
+        tracing::info!("membership change {:?}", self.membership);
+        let merge_results = self
             .partition
             .mesh_membership_change(&self.membership, &self.instance_id.zone)?;
-        for event in mesh_events {
-            let operation = self.operations.next(event);
-            self.operation_log.insert(operation).await?;
-        }
+        self.on_merge_results(merge_results).await;
         self.on_ready().await?;
         Ok(())
     }

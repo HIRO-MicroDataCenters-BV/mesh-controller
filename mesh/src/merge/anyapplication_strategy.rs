@@ -277,7 +277,7 @@ impl MergeStrategy for AnyApplicationMerge {
         current: VersionedObject,
         membership: &Membership,
         node_zone: &str,
-    ) -> Result<Vec<MeshEvent>> {
+    ) -> Result<Vec<MergeResult>> {
         match current {
             VersionedObject::Object(current) => {
                 let mut current: AnyApplication = current.try_parse()?;
@@ -301,9 +301,15 @@ impl MergeStrategy for AnyApplicationMerge {
                         if let Some(status) = &mut current.status {
                             status.ownership.owner = instance.zone.to_owned();
                             status.ownership.epoch += 1;
-                            let mut object = current.to_object()?;
-                            object.unset_resource_version();
-                            return Ok(vec![MeshEvent::Update { object }]);
+                            let merge_result = current.clone().to_object()?;
+                            let mut event_object = current.to_object()?;
+                            event_object.unset_resource_version();
+                            return Ok(vec![MergeResult::Update {
+                                object: merge_result,
+                                event: Some(MeshEvent::Update {
+                                    object: event_object,
+                                }),
+                            }]);
                         }
                     }
                 }

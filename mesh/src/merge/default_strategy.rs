@@ -2,7 +2,6 @@ use super::types::{MergeResult, MergeStrategy, UpdateResult};
 use crate::{
     kube::{dynamic_object_ext::DynamicObjectExt, subscriptions::Version},
     merge::types::{Tombstone, VersionedObject},
-    mesh::event::MeshEvent,
     network::discovery::types::Membership,
 };
 use anyhow::Result;
@@ -217,7 +216,7 @@ impl MergeStrategy for DefaultMerge {
         _current: VersionedObject,
         _membership: &Membership,
         _node_zone: &str,
-    ) -> Result<Vec<MeshEvent>> {
+    ) -> Result<Vec<MergeResult>> {
         Ok(vec![])
     }
 }
