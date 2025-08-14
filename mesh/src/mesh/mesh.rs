@@ -9,7 +9,7 @@ use crate::config::configuration::MergeStrategyType;
 use crate::config::configuration::MeshConfig;
 use crate::merge::anyapplication_strategy::AnyApplicationMerge;
 use crate::merge::default_strategy::DefaultMerge;
-use crate::network::discovery::event::MembershipEvent;
+use crate::mesh::topic::MeshTopic;
 use crate::network::discovery::nodes::Nodes;
 use crate::utils::types::Clock;
 use crate::{JoinErrToStr, kube::subscriptions::Subscriptions};
@@ -17,6 +17,7 @@ use anyhow::Result;
 use futures::future::{MapErr, Shared};
 use futures::{FutureExt, TryFutureExt};
 use p2panda_core::{Operation, PrivateKey};
+use p2panda_net::SystemEvent;
 use p2panda_store::MemoryStore;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc;
@@ -43,7 +44,7 @@ impl Mesh {
         store: MemoryStore<MeshLogId, Extensions>,
         network_tx: mpsc::Sender<Operation<Extensions>>,
         network_rx: mpsc::Receiver<Operation<Extensions>>,
-        membership_rx: broadcast::Receiver<MembershipEvent>,
+        system_events: broadcast::Receiver<SystemEvent<MeshTopic>>,
     ) -> Result<Mesh> {
         let gvk = config.resource.get_gvk();
 
@@ -71,7 +72,7 @@ impl Mesh {
             network_tx,
             network_rx,
             subscriber_rx.into_stream(),
-            membership_rx,
+            system_events,
             subscriptions,
             store,
         );

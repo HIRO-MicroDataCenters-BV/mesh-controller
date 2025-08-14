@@ -211,7 +211,7 @@ impl Partition {
             out.append(&mut merge_results);
         }
         for merge_result in &out {
-            self.mesh_update_partition(&merge_result);
+            self.mesh_update_partition(merge_result);
         }
         Ok(out)
     }

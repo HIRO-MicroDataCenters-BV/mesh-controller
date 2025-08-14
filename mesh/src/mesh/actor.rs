@@ -14,9 +14,11 @@ use crate::merge::types::MergeResult;
 use crate::merge::types::Tombstone;
 use crate::mesh::event::MeshEvent;
 use crate::mesh::operation_log::OperationLog;
+use crate::mesh::operation_log::OperationLogInsertResult;
 use crate::mesh::operation_log::Ready;
-use crate::network::discovery::event::MembershipEvent;
+use crate::mesh::topic::MeshTopic;
 use crate::network::discovery::nodes::Nodes;
+use crate::network::discovery::nodes::PeerEvent;
 use crate::network::discovery::types::Membership;
 use crate::utils::types::Clock;
 use anyhow::Context;
@@ -26,6 +28,7 @@ use kube::api::DynamicObject;
 use kube::api::GroupVersionKind;
 use loole::RecvStream;
 use p2panda_core::{Operation, PrivateKey};
+use p2panda_net::SystemEvent;
 use p2panda_store::MemoryStore;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc;
@@ -45,7 +48,7 @@ pub struct MeshActor {
     network_tx: mpsc::Sender<Operation<Extensions>>,
     network_rx: mpsc::Receiver<Operation<Extensions>>,
     event_rx: RecvStream<KubeEvent>,
-    membership_rx: broadcast::Receiver<MembershipEvent>,
+    system_events: broadcast::Receiver<SystemEvent<MeshTopic>>,
     subscriptions: Subscriptions,
     operation_log: OperationLog,
     operations: LinkedOperations,
@@ -57,6 +60,7 @@ pub struct MeshActor {
     last_snapshot_time: SystemTime,
     own_log_id: MeshLogId,
     membership: Membership,
+    nodes: Nodes,
 }
 
 impl MeshActor {
@@ -73,7 +77,7 @@ impl MeshActor {
         network_tx: mpsc::Sender<Operation<Extensions>>,
         network_rx: mpsc::Receiver<Operation<Extensions>>,
         event_rx: RecvStream<KubeEvent>,
-        membership_rx: broadcast::Receiver<MembershipEvent>,
+        system_events: broadcast::Receiver<SystemEvent<MeshTopic>>,
         subscriptions: Subscriptions,
         store: MemoryStore<MeshLogId, Extensions>,
     ) -> MeshActor {
@@ -85,9 +89,8 @@ impl MeshActor {
             nodes.clone(),
             store.clone(),
         );
-        // TODO initialization
-        let mut membership = Membership::default();
-        membership.add(own_log_id.0.to_owned());
+
+        let membership = nodes.get_membership(clock.now_millis());
         MeshActor {
             last_snapshot_time: clock.now(),
             operations,
@@ -96,7 +99,6 @@ impl MeshActor {
             network_tx,
             network_rx,
             event_rx,
-            membership_rx,
             subscriptions,
             partition,
             clock,
@@ -105,6 +107,8 @@ impl MeshActor {
             tombstone_config,
             own_log_id,
             membership,
+            system_events,
+            nodes,
         }
     }
 
@@ -118,11 +122,8 @@ impl MeshActor {
                         error!("error on tick, {}", err);
                     }
                 },
-                Ok(event) = self.membership_rx.recv() => {
-                    let MembershipEvent::Update(membership) = event;
-                    if let Err(err) = self.on_membership_change(membership).await {
-                        error!("error while processing kube event, {}", err);
-                    }
+                Ok(event) = self.system_events.recv() => {
+                    self.on_system_event(event).await;
                 }
                 Some(event) = self.event_rx.next() => {
                     if let Err(err) = self.on_outgoing_to_network(event).await {
@@ -148,6 +149,61 @@ impl MeshActor {
         self.on_merge_results(merge_results).await;
         self.on_ready().await?;
         Ok(())
+    }
+
+    async fn on_system_event(&mut self, event: SystemEvent<MeshTopic>) {
+        match event {
+            SystemEvent::GossipNeighborDown { peer, .. } => self.on_peer_down(peer).await,
+            SystemEvent::GossipNeighborUp { peer, .. } => {
+                self.on_peer_up(peer).await;
+            }
+            SystemEvent::PeerDiscovered { peer } => {
+                self.on_peer_discovered(peer).await;
+            }
+            SystemEvent::SyncStarted { peer, .. } => {
+                tracing::trace!("sync started: {}", peer.to_hex());
+            }
+            SystemEvent::SyncDone { peer, .. } => {
+                tracing::trace!("sync done: {}", peer.to_hex());
+            }
+            SystemEvent::SyncFailed { peer, .. } => {
+                tracing::trace!("sync failed: {}", peer.to_hex());
+            }
+            _ => {}
+        }
+    }
+
+    async fn on_peer_down(&mut self, peer: p2panda_core::PublicKey) {
+        self.set_membership(self.nodes.on_event(PeerEvent::PeerDown {
+            peer,
+            now: self.clock.now_millis(),
+        }))
+        .await;
+    }
+    async fn on_peer_up(&mut self, peer: p2panda_core::PublicKey) {
+        self.set_membership(self.nodes.on_event(PeerEvent::PeerUp {
+            peer,
+            now: self.clock.now_millis(),
+        }))
+        .await;
+    }
+    async fn on_peer_discovered(&mut self, peer: p2panda_core::PublicKey) {
+        self.set_membership(self.nodes.on_event(PeerEvent::PeerDiscovered {
+            peer,
+            now: self.clock.now_millis(),
+        }))
+        .await;
+    }
+
+    async fn set_membership(&mut self, maybe_updated_membership: Option<Membership>) {
+        if let Some(membership) = maybe_updated_membership {
+            if !self.membership.is_equal(&membership) {
+                let res = self.on_membership_change(membership).await;
+                if let Err(err) = res {
+                    tracing::error!("membership change error {err:?}");
+                }
+            }
+        }
     }
 
     async fn on_outgoing_to_network(&mut self, event: KubeEvent) -> Result<()> {
@@ -176,7 +232,15 @@ impl MeshActor {
     }
 
     async fn on_incoming_from_network(&mut self, operation: Operation<Extensions>) -> Result<()> {
-        self.operation_log.insert(operation).await?;
+        // let peer = operation.header.public_key;
+        match self.operation_log.insert(operation).await? {
+            OperationLogInsertResult::Ok => (),
+            OperationLogInsertResult::OkAndNewLog(_log_id) => {
+                // self.nodes.update_log(peer, log_id);
+                self.set_membership(Some(self.nodes.get_membership(self.clock.now_millis())))
+                    .await;
+            }
+        }
         self.on_ready().await
     }
 
@@ -379,7 +443,16 @@ impl MeshActor {
     }
 
     async fn on_tick(&mut self) -> Result<()> {
+        // Membership Check
+        self.set_membership(self.nodes.on_event(PeerEvent::Tick {
+            now: self.clock.now_millis(),
+        }))
+        .await;
+
+        // Send/Receive
         self.on_ready().await?;
+
+        // Cleanup
         let truncate_size =
             self.operations.count_since_snapshot() >= self.snapshot_config.snapshot_max_log;
         let duration_since_last_snapshot = self

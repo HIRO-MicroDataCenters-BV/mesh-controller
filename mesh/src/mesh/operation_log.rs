@@ -15,6 +15,18 @@ const MAX_PENDING_BATCH_SIZE: usize = 1000;
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct LogKey(PublicKey, MeshLogId);
 
+#[derive(Clone, Debug)]
+pub enum OperationLogInsertResult {
+    Ok,
+    OkAndNewLog(MeshLogId),
+}
+
+#[derive(Clone, Debug)]
+pub struct UpdateLogIdResult {
+    pub is_obsolete: bool,
+    pub is_new: bool,
+}
+
 pub struct OperationLog {
     own_log_id: MeshLogId,
     own_public_key: PublicKey,
@@ -43,7 +55,10 @@ impl OperationLog {
         }
     }
 
-    pub async fn insert(&mut self, operation: Operation<Extensions>) -> Result<()> {
+    pub async fn insert(
+        &mut self,
+        operation: Operation<Extensions>,
+    ) -> Result<OperationLogInsertResult> {
         let Operation { header, .. } = &operation;
 
         let Some(extensions) = header.extensions.as_ref() else {
@@ -52,7 +67,7 @@ impl OperationLog {
 
         let log_id = extensions.log_id.clone();
 
-        let result = self.insert_internal(operation).await?;
+        let (result, new_log) = self.insert_internal(operation).await?;
         match result {
             IngestResult::Complete(op) => {
                 debug!("Insert Operation({},{})", log_id.0.zone, op.header.seq_num);
@@ -81,13 +96,17 @@ impl OperationLog {
                 }
             }
         }
-        Ok(())
+        if let Some(log) = new_log {
+            Ok(OperationLogInsertResult::OkAndNewLog(log))
+        } else {
+            Ok(OperationLogInsertResult::Ok)
+        }
     }
 
     async fn insert_internal(
         &mut self,
         operation: Operation<Extensions>,
-    ) -> Result<IngestResult<Extensions>, IngestError> {
+    ) -> Result<(IngestResult<Extensions>, Option<MeshLogId>), IngestError> {
         let Operation {
             hash: _,
             header,
@@ -101,18 +120,25 @@ impl OperationLog {
         let log_id = extensions.log_id.clone();
         let prune_flag = extensions.prune_flag.is_set();
 
-        let is_obsolete = self.update_log_id(&header.public_key, &log_id);
+        let UpdateLogIdResult {
+            is_obsolete,
+            is_new,
+        } = self.update_log_id(&header.public_key, &log_id);
+        let log_id_result = if is_new { Some(log_id.clone()) } else { None };
         if is_obsolete {
             debug!(
                 "skipping Operation({}, {}), for log {:?}",
                 log_id.0.zone, header.seq_num, log_id
             );
             self.pointers.remove(&log_id);
-            return Ok(IngestResult::Complete(Operation {
-                hash: header.hash(),
-                header,
-                body: None,
-            }));
+            return Ok((
+                IngestResult::Complete(Operation {
+                    hash: header.hash(),
+                    header,
+                    body: None,
+                }),
+                log_id_result,
+            ));
         }
         let header_bytes = header.to_bytes();
         ingest_operation(
@@ -124,6 +150,7 @@ impl OperationLog {
             prune_flag,
         )
         .await
+        .map(|op| (op, log_id_result))
         .inspect_err(|e| {
             error!("Error during ingest operation {}", e);
         })
@@ -136,13 +163,13 @@ impl OperationLog {
         }
         for operation in batch {
             match self.insert_internal(operation).await? {
-                IngestResult::Complete(operation) => {
+                (IngestResult::Complete(operation), _) => {
                     let Some(pending) = self.incoming_pending.get_mut(key) else {
                         break;
                     };
                     pending.remove(&operation.header.seq_num);
                 }
-                IngestResult::Retry(_, _, _, _) => {
+                (IngestResult::Retry(_, _, _, _), _) => {
                     break;
                 }
             }
@@ -169,7 +196,11 @@ impl OperationLog {
         Ok(pending_bulk)
     }
 
-    fn update_log_id(&mut self, incoming_source: &PublicKey, incoming_log_id: &MeshLogId) -> bool {
+    fn update_log_id(
+        &mut self,
+        incoming_source: &PublicKey,
+        incoming_log_id: &MeshLogId,
+    ) -> UpdateLogIdResult {
         match self.nodes.get_latest_log(incoming_source) {
             Some(latest) => match latest.0.start_time.cmp(&incoming_log_id.0.start_time) {
                 std::cmp::Ordering::Less => {
@@ -177,17 +208,29 @@ impl OperationLog {
                     self.nodes
                         .update_log(incoming_source.to_owned(), incoming_log_id.to_owned());
                     self.pointers.add(incoming_log_id.to_owned());
-                    false
+                    UpdateLogIdResult {
+                        is_obsolete: false,
+                        is_new: true,
+                    }
                 }
-                std::cmp::Ordering::Equal => false,
-                std::cmp::Ordering::Greater => true,
+                std::cmp::Ordering::Equal => UpdateLogIdResult {
+                    is_obsolete: false,
+                    is_new: false,
+                },
+                std::cmp::Ordering::Greater => UpdateLogIdResult {
+                    is_obsolete: true,
+                    is_new: true,
+                },
             },
             None => {
                 debug!("new log {} found from peer", incoming_log_id);
                 self.nodes
                     .update_log(incoming_source.to_owned(), incoming_log_id.to_owned());
                 self.pointers.add(incoming_log_id.to_owned());
-                false
+                UpdateLogIdResult {
+                    is_obsolete: false,
+                    is_new: true,
+                }
             }
         }
     }
@@ -681,7 +724,6 @@ pub mod tests {
         let own_key = PrivateKey::new();
         let own_instance_id = InstanceId::new("1".to_string());
         let own_linked_operations = LinkedOperations::new(own_key.clone(), own_instance_id.clone());
-
         let own_mesh_log_id = MeshLogId(own_instance_id);
         let own_topic_map = Nodes::new(
             own_key.public_key(),

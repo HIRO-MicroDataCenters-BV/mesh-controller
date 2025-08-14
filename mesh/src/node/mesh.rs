@@ -6,7 +6,6 @@ use crate::mesh::mesh::Mesh;
 use crate::mesh::operations::Extensions;
 use crate::mesh::topic::MeshTopic;
 use crate::network::Panda;
-use crate::network::discovery::membership::MembershipDiscovery;
 use anyhow::{Context, Result, anyhow};
 use futures_util::future::{MapErr, Shared};
 use futures_util::{FutureExt, TryFutureExt};
@@ -42,15 +41,12 @@ pub struct MeshNode {
     mesh: Mesh,
     node_actor_tx: mpsc::Sender<ToNodeActor>,
     actor_handle: Shared<MapErr<AbortOnDropHandle<()>, JoinErrToStr>>,
-    #[allow(dead_code)]
-    membership_discovery: MembershipDiscovery,
 }
 
 impl MeshNode {
     pub async fn new(
         panda: Panda,
         mesh: Mesh,
-        membership_discovery: MembershipDiscovery,
         mesh_tx: mpsc::Sender<Operation<Extensions>>,
         options: NodeOptions,
     ) -> Result<Self> {
@@ -78,7 +74,6 @@ impl MeshNode {
             direct_addresses: options.direct_addresses,
             node_actor_tx,
             actor_handle: actor_drop_handle,
-            membership_discovery,
             mesh,
         };
 

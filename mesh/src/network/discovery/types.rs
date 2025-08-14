@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use crate::mesh::topic::InstanceId;
 
@@ -7,7 +7,7 @@ pub type Timestamp = u64;
 #[derive(Debug, Clone)]
 pub struct Membership {
     timestamp: Timestamp,
-    instances: HashMap<String, InstanceId>,
+    instances: BTreeMap<String, InstanceId>,
 }
 
 impl Default for Membership {
@@ -19,7 +19,7 @@ impl Default for Membership {
 impl Membership {
     pub fn new(timestamp: Timestamp) -> Membership {
         Membership {
-            instances: HashMap::new(),
+            instances: BTreeMap::new(),
             timestamp,
         }
     }
@@ -40,6 +40,10 @@ impl Membership {
         let mut instances: Vec<&InstanceId> = self.instances.values().collect();
         instances.sort_by_key(|inst| inst.start_time);
         instances.first().copied()
+    }
+
+    pub fn is_equal(&self, other: &Membership) -> bool {
+        self.instances == other.instances
     }
 }
 
