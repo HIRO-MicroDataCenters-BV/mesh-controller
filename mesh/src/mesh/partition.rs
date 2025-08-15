@@ -259,6 +259,7 @@ impl Partition {
                     let snapshot_result =
                         self.kube_apply_snapshot(version, snapshot, current_zone, true)?;
                     self.initialized = true;
+                    tracing::info!("partition initialized");
                     Ok(snapshot_result)
                 } else {
                     let snapshot_result =

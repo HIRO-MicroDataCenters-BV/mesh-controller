@@ -169,6 +169,7 @@ impl MeshActor {
     }
 
     async fn on_peer_up(&mut self, peer: p2panda_core::PublicKey) {
+        tracing::info!("peer up");
         self.update_membership(self.nodes.on_event(PeerEvent::PeerUp {
             peer,
             now: self.clock.now_millis(),
@@ -177,6 +178,7 @@ impl MeshActor {
     }
 
     async fn on_peer_down(&mut self, peer: p2panda_core::PublicKey) {
+        tracing::info!("peer down");
         self.update_membership(self.nodes.on_event(PeerEvent::PeerDown {
             peer,
             now: self.clock.now_millis(),
