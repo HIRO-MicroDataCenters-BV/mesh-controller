@@ -110,7 +110,9 @@ impl Nodes {
             .peers
             .entry(peer)
             .or_insert_with(|| PeerState::new(self.timeout));
-        let previous_log_id = entry.value_mut().update_log_id(log_id, PeerEvent::PeerUp { peer, now });
+        let previous_log_id = entry
+            .value_mut()
+            .update_log_id(log_id, PeerEvent::PeerUp { peer, now });
         if let Some(log_id) = previous_log_id {
             self.inner
                 .obsolete_logs
@@ -242,13 +244,10 @@ impl PeerState {
     }
 
     pub fn update_log_id(&mut self, log_id: MeshLogId, event: PeerEvent) -> Option<MeshLogId> {
-        let simulate_peer_up =
-            match &self.log_id {
-                Some(existing) => {
-                    existing.0.start_time.cmp(&log_id.0.start_time) == Ordering::Greater
-                } 
-                None => true
-            };
+        let simulate_peer_up = match &self.log_id {
+            Some(existing) => existing.0.start_time.cmp(&log_id.0.start_time) == Ordering::Greater,
+            None => true,
+        };
         if simulate_peer_up {
             self.on_event(event);
         }

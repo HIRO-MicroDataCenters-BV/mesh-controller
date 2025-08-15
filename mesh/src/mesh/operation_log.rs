@@ -205,8 +205,11 @@ impl OperationLog {
             Some(latest) => match latest.0.start_time.cmp(&incoming_log_id.0.start_time) {
                 std::cmp::Ordering::Less => {
                     debug!("new log {} found from peer", incoming_log_id);
-                    self.nodes
-                        .update_log(incoming_source.to_owned(), incoming_log_id.to_owned(), 0);// TODO move this update to actor
+                    self.nodes.update_log(
+                        incoming_source.to_owned(),
+                        incoming_log_id.to_owned(),
+                        0,
+                    ); // TODO move this update to actor
                     self.pointers.add(incoming_log_id.to_owned());
                     UpdateLogIdResult {
                         is_obsolete: false,
@@ -225,7 +228,7 @@ impl OperationLog {
             None => {
                 debug!("new log {} found from peer", incoming_log_id);
                 self.nodes
-                    .update_log(incoming_source.to_owned(), incoming_log_id.to_owned(),0);// TODO move this update to actor
+                    .update_log(incoming_source.to_owned(), incoming_log_id.to_owned(), 0); // TODO move this update to actor
                 self.pointers.add(incoming_log_id.to_owned());
                 UpdateLogIdResult {
                     is_obsolete: false,

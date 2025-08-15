@@ -143,9 +143,7 @@ impl MeshActor {
 
     async fn on_system_event(&mut self, event: SystemEvent<MeshTopic>) {
         match event {
-            SystemEvent::GossipNeighborDown { peer, .. } => {
-                self.on_peer_down(peer).await
-            },
+            SystemEvent::GossipNeighborDown { peer, .. } => self.on_peer_down(peer).await,
             SystemEvent::GossipNeighborUp { peer, .. } => {
                 self.on_peer_up(peer).await;
             }
@@ -207,7 +205,6 @@ impl MeshActor {
         self.on_ready().await?;
         Ok(())
     }
-
 
     async fn on_outgoing_to_network(&mut self, event: KubeEvent) -> Result<()> {
         self.on_event(event).await?;
