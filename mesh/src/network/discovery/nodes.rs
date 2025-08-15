@@ -77,7 +77,7 @@ impl Nodes {
             .iter()
             .flat_map(|entry| match entry.state {
                 MembershipState::Ready { .. } | MembershipState::NotReady { .. } => {
-                    entry.log_id.as_ref().map(|v| v.0.clone())
+                    entry.active_log.as_ref().map(|v| v.0.clone())
                 }
                 _ => None,
             })
@@ -86,7 +86,7 @@ impl Nodes {
         membership
     }
 
-    pub fn get_latest_log(&self, peer: &PublicKey) -> Option<MeshLogId> {
+    pub fn get_active_log(&self, peer: &PublicKey) -> Option<MeshLogId> {
         if peer == &self.inner.owner {
             // If the peer is the owner, return the log_id of the owner.
             Some(self.inner.log_id.clone())
@@ -94,7 +94,7 @@ impl Nodes {
             self.inner
                 .peers
                 .get(peer)
-                .map(|e| e.value().log_id.to_owned())
+                .map(|e| e.value().active_log.to_owned())
                 .unwrap_or(None)
         }
     }
@@ -133,7 +133,7 @@ impl Nodes {
             .collect()
     }
 
-    pub fn get_peer_logs(&self) -> HashMap<PublicKey, MeshLogId> {
+    pub fn get_remote_active_logs(&self) -> HashMap<PublicKey, MeshLogId> {
         self.inner
             .peers
             .iter()
@@ -141,7 +141,7 @@ impl Nodes {
                 let peer = entry.key().to_owned();
                 entry
                     .value()
-                    .log_id
+                    .active_log
                     .as_ref()
                     .map(|log_id| (peer, log_id.to_owned()))
             })
@@ -156,7 +156,7 @@ impl TopicLogMap<MeshTopic, MeshLogId> for Nodes {
         self.inner.peers.iter().for_each(|peer| {
             let log_ids = peer
                 .value()
-                .log_id
+                .active_log
                 .as_ref()
                 .map(|log_id| vec![log_id.clone()])
                 .unwrap_or_default();
@@ -177,7 +177,7 @@ struct NodesInner {
 
 #[derive(Clone, Debug)]
 pub struct PeerState {
-    log_id: Option<MeshLogId>,
+    active_log: Option<MeshLogId>,
     state: MembershipState,
     timeout: Duration,
 }
@@ -186,7 +186,7 @@ impl PeerState {
     pub fn new(timeout: Duration) -> PeerState {
         PeerState {
             state: MembershipState::Unavailable { since: 0 },
-            log_id: None,
+            active_log: None,
             timeout,
         }
     }
@@ -244,14 +244,14 @@ impl PeerState {
     }
 
     pub fn update_log_id(&mut self, log_id: MeshLogId, event: PeerEvent) -> Option<MeshLogId> {
-        let simulate_peer_up = match &self.log_id {
+        let simulate_peer_up = match &self.active_log {
             Some(existing) => existing.0.start_time.cmp(&log_id.0.start_time) == Ordering::Greater,
             None => true,
         };
         if simulate_peer_up {
             self.on_event(event);
         }
-        self.log_id.replace(log_id)
+        self.active_log.replace(log_id)
     }
 }
 

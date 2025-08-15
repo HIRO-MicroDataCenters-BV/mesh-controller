@@ -14,7 +14,6 @@ use crate::merge::types::MergeResult;
 use crate::merge::types::Tombstone;
 use crate::mesh::event::MeshEvent;
 use crate::mesh::operation_log::OperationLog;
-use crate::mesh::operation_log::OperationLogInsertResult;
 use crate::mesh::operation_log::Ready;
 use crate::mesh::topic::MeshTopic;
 use crate::network::discovery::nodes::Nodes;
@@ -27,9 +26,11 @@ use futures::StreamExt;
 use kube::api::DynamicObject;
 use kube::api::GroupVersionKind;
 use loole::RecvStream;
+use p2panda_core::PublicKey;
 use p2panda_core::{Operation, PrivateKey};
 use p2panda_net::SystemEvent;
 use p2panda_store::MemoryStore;
+use p2panda_stream::operation::IngestError;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -42,6 +43,13 @@ use super::{operations::Extensions, topic::MeshLogId};
 
 const DEFAULT_TICK_INTERVAL: Duration = Duration::from_secs(1);
 const DEFAULT_FORCED_SYNC_MAX_ATTEMPTS: usize = 10;
+
+#[derive(Clone, Debug)]
+pub struct UpdateLogIdResult {
+    pub is_obsolete_operation: bool,
+    pub is_new_log: bool,
+    pub old_log: Option<MeshLogId>,
+}
 
 pub struct MeshActor {
     instance_id: InstanceId,
@@ -83,12 +91,7 @@ impl MeshActor {
     ) -> MeshActor {
         let own_log_id = MeshLogId(instance_id.clone());
         let operations = LinkedOperations::new(key.clone(), instance_id.clone());
-        let operation_log = OperationLog::new(
-            own_log_id.clone(),
-            key.public_key(),
-            nodes.clone(),
-            store.clone(),
-        );
+        let operation_log = OperationLog::new(own_log_id.clone(), key.public_key(), store.clone());
 
         let membership = nodes.get_membership(clock.now_millis());
         tracing::info!("initial membership {:?}", membership);
@@ -144,20 +147,14 @@ impl MeshActor {
     async fn on_system_event(&mut self, event: SystemEvent<MeshTopic>) {
         match event {
             SystemEvent::GossipNeighborDown { peer, .. } => self.on_peer_down(peer).await,
-            SystemEvent::GossipNeighborUp { peer, .. } => {
-                self.on_peer_up(peer).await;
-            }
-            SystemEvent::PeerDiscovered { peer } => {
-                self.on_peer_discovered(peer).await;
-            }
+            SystemEvent::GossipNeighborUp { peer, .. } => self.on_peer_up(peer).await,
+            SystemEvent::PeerDiscovered { peer } => self.on_peer_discovered(peer).await,
             SystemEvent::SyncStarted { peer, .. } => {
-                tracing::trace!("sync started: {}", peer.to_hex());
+                tracing::trace!("sync started: {}", peer.to_hex())
             }
-            SystemEvent::SyncDone { peer, .. } => {
-                tracing::trace!("sync done: {}", peer.to_hex());
-            }
+            SystemEvent::SyncDone { peer, .. } => tracing::trace!("sync done: {}", peer.to_hex()),
             SystemEvent::SyncFailed { peer, .. } => {
-                tracing::trace!("sync failed: {}", peer.to_hex());
+                tracing::trace!("sync failed: {}", peer.to_hex())
             }
             _ => {}
         }
@@ -220,16 +217,16 @@ impl MeshActor {
 
         if let Some(event) = event {
             let operation = self.operations.next(event);
-            // No need to check for new log because the produced operation is for own log, 
-            // thus should never trigger any membership updates,
-            // because own log id does not change
+            // No need to check for new log because the produced operation is for own log which never changes in current instance,
+            // thus should never trigger any membership updates
             self.operation_log.insert(operation).await?;
         }
         Ok(())
     }
 
     async fn on_ready(&mut self) -> Result<()> {
-        if let Some(mut ready) = self.operation_log.get_ready().await {
+        let active_logs = self.nodes.get_remote_active_logs();
+        if let Some(mut ready) = self.operation_log.get_ready(&active_logs).await {
             self.on_ready_outgoing(&mut ready).await;
             self.on_ready_incoming(&mut ready).await?;
         }
@@ -242,17 +239,88 @@ impl MeshActor {
     }
 
     async fn insert_operation(&mut self, operation: Operation<Extensions>) -> Result<()> {
-        // let peer = operation.header.public_key;
-        match self.operation_log.insert(operation).await? {
-            OperationLogInsertResult::Ok => (),
-            OperationLogInsertResult::OkAndNewLog(_log_id) => {
-                // self.nodes.update_log(peer, log_id);
-                let membership = self.nodes.get_membership(self.clock.now_millis());
-                self.update_membership(Some(membership))
-                    .await;
-            }
+        let peer = operation.header.public_key;
+
+        let Operation { header, .. } = &operation;
+
+        let Some(extensions) = header.extensions.as_ref() else {
+            return Err(IngestError::MissingHeaderExtension("extension".into()).into());
+        };
+
+        let incoming_log_id = extensions.log_id.clone();
+
+        let UpdateLogIdResult {
+            is_obsolete_operation,
+            is_new_log,
+            old_log,
+        } = self.update_log_id(&peer, &incoming_log_id);
+        if is_new_log {
+            self.operation_log
+                .update_active_log(incoming_log_id.to_owned(), old_log);
+        }
+        if !is_obsolete_operation {
+            self.operation_log.insert(operation).await?;
+        } else {
+            debug!(
+                "skipping Operation({}, {}), for log {:?}, obsolete log.",
+                incoming_log_id.0.zone, header.seq_num, incoming_log_id
+            );
+        }
+        if is_new_log {
+            let membership = self.nodes.get_membership(self.clock.now_millis());
+            self.update_membership(Some(membership)).await;
         }
         Ok(())
+    }
+
+    fn update_log_id(
+        &mut self,
+        incoming_source: &PublicKey,
+        incoming_log_id: &MeshLogId,
+    ) -> UpdateLogIdResult {
+        match self.nodes.get_active_log(incoming_source) {
+            Some(active) => match active.0.start_time.cmp(&incoming_log_id.0.start_time) {
+                std::cmp::Ordering::Less => {
+                    debug!(
+                        "new log {} found from peer, and replaced old {}",
+                        incoming_log_id, active
+                    );
+                    self.nodes.update_log(
+                        incoming_source.to_owned(),
+                        incoming_log_id.to_owned(),
+                        self.clock.now_millis(),
+                    );
+                    UpdateLogIdResult {
+                        is_obsolete_operation: false,
+                        is_new_log: true,
+                        old_log: Some(active),
+                    }
+                }
+                std::cmp::Ordering::Equal => UpdateLogIdResult {
+                    is_obsolete_operation: false,
+                    is_new_log: false,
+                    old_log: None,
+                },
+                std::cmp::Ordering::Greater => UpdateLogIdResult {
+                    is_obsolete_operation: true,
+                    is_new_log: false,
+                    old_log: None,
+                },
+            },
+            None => {
+                debug!("new log {} found from peer", incoming_log_id);
+                self.nodes.update_log(
+                    incoming_source.to_owned(),
+                    incoming_log_id.to_owned(),
+                    self.clock.now_millis(),
+                );
+                UpdateLogIdResult {
+                    is_obsolete_operation: false,
+                    is_new_log: true,
+                    old_log: None,
+                }
+            }
+        }
     }
 
     async fn on_ready_incoming(&mut self, ready: &mut Ready) -> Result<(), anyhow::Error> {
@@ -477,7 +545,10 @@ impl MeshActor {
             duration_since_last_snapshot > self.snapshot_config.snapshot_interval_seconds;
         if truncate_size || snapshot_time {
             self.send_snapshot().await?;
-            self.operation_log.truncate_obsolete_logs().await?;
+            let obsolete_log_ids = self.nodes.take_obsolete_log_ids();
+            self.operation_log
+                .truncate_obsolete_logs(obsolete_log_ids)
+                .await?;
         }
 
         self.partition

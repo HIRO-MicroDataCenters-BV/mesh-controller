@@ -1482,7 +1482,7 @@ pub mod tests {
         }
     }
 
-    fn sort_merge_results(data: &mut Vec<MergeResult>) {
+    fn sort_merge_results(data: &mut [MergeResult]) {
         data.sort_by_key(|result| match result {
             MergeResult::Skip => 0,
             MergeResult::Create { .. } => 1,
