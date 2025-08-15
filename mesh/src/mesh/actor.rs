@@ -94,7 +94,7 @@ impl MeshActor {
         let operation_log = OperationLog::new(own_log_id.clone(), key.public_key(), store.clone());
 
         let membership = nodes.get_membership(clock.now_millis());
-        tracing::info!("initial membership {:?}", membership);
+        tracing::info!("initial membership {}", membership.to_string());
         MeshActor {
             last_snapshot_time: clock.now(),
             operations,
@@ -196,7 +196,7 @@ impl MeshActor {
 
     async fn on_membership_change(&mut self, membership: Membership) -> Result<()> {
         self.membership = membership;
-        tracing::info!("membership change {:?}", self.membership);
+        tracing::info!("membership update: {}", self.membership.to_string());
         let merge_results = self
             .partition
             .mesh_membership_change(&self.membership, &self.instance_id.zone)?;
@@ -375,7 +375,7 @@ impl MeshActor {
 
         if let (Ok(PersistenceResult::Persisted), Some(event)) = (&final_ok_or_result, event) {
             let operation = self.operations.next(event);
-            // TODO this insert into own log therefore no need to check for new logs and update membership
+            // this insert into own log therefore no need to check for new logs and update membership
             self.operation_log.insert(operation).await?;
         }
         final_ok_or_result.map(|_| ())

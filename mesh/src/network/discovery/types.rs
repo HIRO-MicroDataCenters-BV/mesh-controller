@@ -47,6 +47,22 @@ impl Membership {
     }
 }
 
+impl std::fmt::Display for Membership {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Membership{{")?;
+        let mut sep = false;
+        for instance in self.instances.values() {
+            if sep {
+                write!(f, ", ")?;
+            }
+            write!(f, "{}@{}", instance.zone, instance.start_time)?;
+            sep = true;
+        }
+        write!(f, "}}")?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 pub mod tests {
 

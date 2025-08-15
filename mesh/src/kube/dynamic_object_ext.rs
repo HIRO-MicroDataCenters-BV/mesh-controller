@@ -1,5 +1,6 @@
 use anyapplication::anyapplication::{
-    AnyApplication, AnyApplicationStatusOwnership, AnyApplicationStatusZones,
+    AnyApplication, AnyApplicationStatusOwnership, AnyApplicationStatusOwnershipPlacements,
+    AnyApplicationStatusZones,
 };
 use anyapplication::anyapplication_ext::Epoch;
 use anyhow::{Context, Result, anyhow};
@@ -202,7 +203,11 @@ pub fn dump_ownership(context: &str, ownership: &AnyApplicationStatusOwnership) 
     out += format!(" epoch: {}\n", ownership.epoch).as_str();
     out += format!(" owner: {}\n", ownership.owner).as_str();
     out += format!(" state: {}\n", ownership.state).as_str();
-    out += format!(" place: {:?}\n", ownership.placements).as_str();
+    out += format!(
+        " place: {}\n",
+        render_placements(ownership.placements.as_ref().unwrap_or(&vec![]))
+    )
+    .as_str();
     println!("{}", out);
 }
 pub fn dump_zones(context: &str, zones: &[AnyApplicationStatusZones]) {
@@ -221,4 +226,18 @@ pub fn dump_zones(context: &str, zones: &[AnyApplicationStatusZones]) {
     }
     out += "\n";
     println!("{}", out);
+}
+
+pub fn render_placements(placements: &[AnyApplicationStatusOwnershipPlacements]) -> String {
+    let mut out = String::new();
+
+    let mut sep = false;
+    for placement in placements.iter() {
+        if sep {
+            out += ", ";
+        }
+        out += &placement.zone;
+        sep = true;
+    }
+    return out;
 }
