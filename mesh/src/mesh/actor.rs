@@ -117,15 +117,6 @@ impl MeshActor {
         let mut interval = tokio::time::interval(DEFAULT_TICK_INTERVAL);
         loop {
             tokio::select! {
-                _ = self.cancelation.cancelled() => break,
-                _ = interval.tick() => {
-                    if let Err(err) = self.on_tick().await {
-                        error!("error on tick, {}", err);
-                    }
-                },
-                Ok(event) = self.system_events.recv() => {
-                    self.on_system_event(event).await;
-                }
                 Some(event) = self.event_rx.next() => {
                     if let Err(err) = self.on_outgoing_to_network(event).await {
                         error!("error while processing kube event, {}", err);
@@ -136,6 +127,15 @@ impl MeshActor {
                         error!("error while processing network event, {}", err);
                     }
                 }
+                _ = interval.tick() => {
+                    if let Err(err) = self.on_tick().await {
+                        error!("error on tick, {}", err);
+                    }
+                },
+                Ok(event) = self.system_events.recv() => {
+                    self.on_system_event(event).await;
+                }
+                _ = self.cancelation.cancelled() => break,
             }
         }
         Ok(())
@@ -163,29 +163,31 @@ impl MeshActor {
         }
     }
 
-    async fn on_peer_down(&mut self, peer: p2panda_core::PublicKey) {
-        self.set_membership(self.nodes.on_event(PeerEvent::PeerDown {
-            peer,
-            now: self.clock.now_millis(),
-        }))
-        .await;
-    }
-    async fn on_peer_up(&mut self, peer: p2panda_core::PublicKey) {
-        self.set_membership(self.nodes.on_event(PeerEvent::PeerUp {
-            peer,
-            now: self.clock.now_millis(),
-        }))
-        .await;
-    }
     async fn on_peer_discovered(&mut self, peer: p2panda_core::PublicKey) {
-        self.set_membership(self.nodes.on_event(PeerEvent::PeerDiscovered {
+        self.update_membership(self.nodes.on_event(PeerEvent::PeerDiscovered {
             peer,
             now: self.clock.now_millis(),
         }))
         .await;
     }
 
-    async fn set_membership(&mut self, maybe_updated_membership: Option<Membership>) {
+    async fn on_peer_up(&mut self, peer: p2panda_core::PublicKey) {
+        self.update_membership(self.nodes.on_event(PeerEvent::PeerUp {
+            peer,
+            now: self.clock.now_millis(),
+        }))
+        .await;
+    }
+
+    async fn on_peer_down(&mut self, peer: p2panda_core::PublicKey) {
+        self.update_membership(self.nodes.on_event(PeerEvent::PeerDown {
+            peer,
+            now: self.clock.now_millis(),
+        }))
+        .await;
+    }
+
+    async fn update_membership(&mut self, maybe_updated_membership: Option<Membership>) {
         if let Some(membership) = maybe_updated_membership {
             if !self.membership.is_equal(&membership) {
                 if let Err(err) = self.on_membership_change(membership).await {
@@ -207,17 +209,20 @@ impl MeshActor {
     }
 
     async fn on_outgoing_to_network(&mut self, event: KubeEvent) -> Result<()> {
-        self.on_event(event).await?;
+        self.on_kube_event(event).await?;
         self.on_ready().await?;
         Ok(())
     }
 
-    async fn on_event(&mut self, event: KubeEvent) -> Result<()> {
+    async fn on_kube_event(&mut self, event: KubeEvent) -> Result<()> {
         let update_result = self.partition.kube_apply(event, &self.instance_id.zone)?;
         let event: Option<MeshEvent> = update_result.into();
 
         if let Some(event) = event {
             let operation = self.operations.next(event);
+            // No need to check for new log because the produced operation is for own log, 
+            // thus should never trigger any membership updates,
+            // because own log id does not change
             self.operation_log.insert(operation).await?;
         }
         Ok(())
@@ -232,16 +237,22 @@ impl MeshActor {
     }
 
     async fn on_incoming_from_network(&mut self, operation: Operation<Extensions>) -> Result<()> {
+        self.insert_operation(operation).await?;
+        self.on_ready().await
+    }
+
+    async fn insert_operation(&mut self, operation: Operation<Extensions>) -> Result<()> {
         // let peer = operation.header.public_key;
         match self.operation_log.insert(operation).await? {
             OperationLogInsertResult::Ok => (),
             OperationLogInsertResult::OkAndNewLog(_log_id) => {
                 // self.nodes.update_log(peer, log_id);
-                self.set_membership(Some(self.nodes.get_membership(self.clock.now_millis())))
+                let membership = self.nodes.get_membership(self.clock.now_millis());
+                self.update_membership(Some(membership))
                     .await;
             }
         }
-        self.on_ready().await
+        Ok(())
     }
 
     async fn on_ready_incoming(&mut self, ready: &mut Ready) -> Result<(), anyhow::Error> {
@@ -296,6 +307,7 @@ impl MeshActor {
 
         if let (Ok(PersistenceResult::Persisted), Some(event)) = (&final_ok_or_result, event) {
             let operation = self.operations.next(event);
+            // TODO this insert into own log therefore no need to check for new logs and update membership
             self.operation_log.insert(operation).await?;
         }
         final_ok_or_result.map(|_| ())
@@ -331,7 +343,7 @@ impl MeshActor {
                     OperationType::Update => KubeEvent::Update { version, object },
                     OperationType::Delete => KubeEvent::Delete { version, object },
                 };
-                if let Err(err) = self.on_event(event).await {
+                if let Err(err) = self.on_kube_event(event).await {
                     error!("on_event error during forced sync {err}");
                 }
                 self.partition.update_resource_version(&name, version);
@@ -444,7 +456,7 @@ impl MeshActor {
 
     async fn on_tick(&mut self) -> Result<()> {
         // Membership Check
-        self.set_membership(self.nodes.on_event(PeerEvent::Tick {
+        self.update_membership(self.nodes.on_event(PeerEvent::Tick {
             now: self.clock.now_millis(),
         }))
         .await;
