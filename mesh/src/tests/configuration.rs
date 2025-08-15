@@ -8,7 +8,7 @@ use std::{
 
 use crate::config::configuration::{
     Config, KnownNode, KubeConfiguration, KubeConfigurationExternal, MergeStrategyType, MeshConfig,
-    PeriodicSnapshotConfig, ResourceConfig, TombstoneConfig,
+    PeerTimeoutConfig, PeriodicSnapshotConfig, ResourceConfig, TombstoneConfig,
 };
 
 static TEST_INSTANCE_HTTP_PORT: Lazy<AtomicU16> = Lazy::new(|| AtomicU16::new(18080));
@@ -38,6 +38,9 @@ pub fn generate_config(
         },
         tombstone: TombstoneConfig {
             tombstone_retention_interval_seconds: 100,
+        },
+        peer_timeout: PeerTimeoutConfig {
+            peer_unavailable_after_seconds: 100,
         },
         resource: ResourceConfig {
             group: gvk.group.to_owned(),

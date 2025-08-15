@@ -126,6 +126,7 @@ pub struct MeshConfig {
     pub bootstrap: bool,
     pub snapshot: PeriodicSnapshotConfig,
     pub tombstone: TombstoneConfig,
+    pub peer_timeout: PeerTimeoutConfig,
     pub resource: ResourceConfig,
 }
 
@@ -179,6 +180,19 @@ impl Default for PeriodicSnapshotConfig {
         Self {
             snapshot_interval_seconds: 300,
             snapshot_max_log: 256,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Hash)]
+pub struct PeerTimeoutConfig {
+    pub peer_unavailable_after_seconds: u64,
+}
+
+impl Default for PeerTimeoutConfig {
+    fn default() -> Self {
+        Self {
+            peer_unavailable_after_seconds: 120,
         }
     }
 }
@@ -268,8 +282,8 @@ mod tests {
 
     use crate::config::configuration::{
         Config, DiscoveryOptions, KnownNode, KubeConfiguration, KubeConfigurationExternal,
-        MergeStrategyType, MeshConfig, NodeConfig, PeriodicSnapshotConfig, ProtocolConfig,
-        ResourceConfig, TombstoneConfig,
+        MergeStrategyType, MeshConfig, NodeConfig, PeerTimeoutConfig, PeriodicSnapshotConfig,
+        ProtocolConfig, ResourceConfig, TombstoneConfig,
     };
 
     #[test]
@@ -317,6 +331,7 @@ mod tests {
                         bootstrap: false,
                         snapshot: PeriodicSnapshotConfig::default(),
                         tombstone: TombstoneConfig::default(),
+                        peer_timeout: PeerTimeoutConfig::default(),
                         resource: ResourceConfig {
                             group: "".into(),
                             version: "v2".into(),
@@ -364,6 +379,8 @@ mesh:
         snapshot_max_log: 100
     tombstone:
         tombstone_retention_interval_seconds: 100
+    peer_timeout:
+        peer_unavailable_after_seconds: 100
     resource:
         group: ""
         version: v2
@@ -418,6 +435,9 @@ kubernetes:
                         },
                         tombstone: TombstoneConfig {
                             tombstone_retention_interval_seconds: 100,
+                        },
+                        peer_timeout: PeerTimeoutConfig {
+                            peer_unavailable_after_seconds: 100,
                         },
                         resource: ResourceConfig {
                             group: "".into(),

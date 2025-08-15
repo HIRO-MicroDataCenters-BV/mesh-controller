@@ -127,7 +127,7 @@ impl ContextBuilder {
         let nodes = Nodes::new(
             private_key.public_key(),
             MeshLogId(instance_id.clone()),
-            Duration::from_secs(10), // TODO config
+            Duration::from_secs(config.mesh.peer_timeout.peer_unavailable_after_seconds),
         );
 
         let (mesh_tx, network_rx) = mpsc::channel(512);
