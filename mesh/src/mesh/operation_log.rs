@@ -206,7 +206,7 @@ impl OperationLog {
                 std::cmp::Ordering::Less => {
                     debug!("new log {} found from peer", incoming_log_id);
                     self.nodes
-                        .update_log(incoming_source.to_owned(), incoming_log_id.to_owned());
+                        .update_log(incoming_source.to_owned(), incoming_log_id.to_owned(), 0);// TODO move this update to actor
                     self.pointers.add(incoming_log_id.to_owned());
                     UpdateLogIdResult {
                         is_obsolete: false,
@@ -225,7 +225,7 @@ impl OperationLog {
             None => {
                 debug!("new log {} found from peer", incoming_log_id);
                 self.nodes
-                    .update_log(incoming_source.to_owned(), incoming_log_id.to_owned());
+                    .update_log(incoming_source.to_owned(), incoming_log_id.to_owned(),0);// TODO move this update to actor
                 self.pointers.add(incoming_log_id.to_owned());
                 UpdateLogIdResult {
                     is_obsolete: false,
@@ -235,6 +235,7 @@ impl OperationLog {
         }
     }
 
+    // TODO pass obsolete log ids as parameter and disentagle from nodes
     pub async fn truncate_obsolete_logs(&mut self) -> Result<()> {
         for (source, log_ids) in self.nodes.take_obsolete_log_ids() {
             for log_id in log_ids {
@@ -266,6 +267,7 @@ impl OperationLog {
         }
     }
 
+    // TODO pass active peer logs as parameter
     async fn get_ready_incoming(&self) -> HashMap<MeshLogId, Vec<Operation<Extensions>>> {
         let peer_log_ids = self.nodes.get_peer_logs();
         let mut incoming = HashMap::<MeshLogId, Vec<Operation<Extensions>>>::new();

@@ -119,6 +119,10 @@ impl DynamicObjectExt for DynamicObject {
             .get(OWNER_ZONE)
             .cloned()
             .ok_or(anyhow!("{} label not set", OWNER_ZONE))
+            .inspect_err(|_|{
+                // TODO remove temporary logging
+                tracing::info!("label not set {:?}", &self)
+            })
     }
 
     fn get_owner_version(&self) -> Option<Version> {
@@ -168,10 +172,17 @@ impl DynamicObjectExt for DynamicObject {
     }
 
     fn get_resource_version(&self) -> Version {
-        let resource_version = &self
+        let maybe_resource_version = &self
             .metadata
             .resource_version
-            .as_ref()
+            .as_ref();
+
+        // TODO remove temporary logging
+        if maybe_resource_version.is_none() {
+            tracing::info!("no resource version {:?}", &self)
+        }
+
+        let resource_version = maybe_resource_version
             .expect("resource version is not set");
         resource_version
             .parse()
