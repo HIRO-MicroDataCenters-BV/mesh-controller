@@ -92,11 +92,12 @@ impl OperationLog {
             return Err(IngestError::MissingHeaderExtension("extension".into()));
         };
 
+        let seq_num = header.seq_num;
         let log_id = extensions.log_id.clone();
         let prune_flag = extensions.prune_flag.is_set();
 
         let header_bytes = header.to_bytes();
-        ingest_operation(
+        let ingest_result = ingest_operation(
             &mut self.store,
             header,
             body.clone(),
@@ -107,7 +108,11 @@ impl OperationLog {
         .await
         .inspect_err(|e| {
             error!("Error during ingest operation {}", e);
-        })
+        })?;
+        if prune_flag {
+            self.pointers.advance_snapshot(&log_id, seq_num);
+        }
+        Ok(ingest_result)
     }
 
     pub fn update_active_log(&mut self, new_log: MeshLogId, old_log: Option<MeshLogId>) {
@@ -205,8 +210,20 @@ impl OperationLog {
                 self.get_operations(peer_id, log_id, current)
                     .await
                     .into_iter()
-                    .for_each(|ops| {
+                    .for_each(|mut ops| {
                         if !ops.is_empty() {
+                            let mut i = ops.len() - 1;
+                            while i > 0 {
+                                if let Some(ext) = &ops[i].header.extensions {
+                                    if ext.prune_flag.is_set() {
+                                        break;
+                                    }
+                                }
+                                i -= 1;
+                            }
+                            if i != 0 {
+                                ops = ops.split_off(i);
+                            }
                             incoming.insert(log_id.to_owned(), ops);
                         }
                     });
@@ -319,10 +336,25 @@ impl LogPointers {
         self.pointers.get(log_id).cloned()
     }
 
+    pub fn advance_snapshot(&mut self, log_id: &MeshLogId, snapshot_seq_num: SeqNum) {
+        if let Some(current) = self.get_current(log_id) {
+            if snapshot_seq_num > current {
+                self.pointers.insert(log_id.clone(), snapshot_seq_num);
+            }
+        } else {
+            self.pointers.insert(log_id.clone(), snapshot_seq_num);
+        }
+    }
+
     pub fn advance(&mut self, log_id: &MeshLogId, seq_num: SeqNum) {
         if let Some(current) = self.get_current(log_id) {
             if seq_num > current {
                 self.pointers.insert(log_id.clone(), seq_num);
+            } else {
+                panic!(
+                    "cannot advance log backwards. log = {}, current seq_num = {}, next seq_num = {}",
+                    log_id, current, seq_num
+                )
             }
         } else {
             self.pointers.insert(log_id.clone(), seq_num);
@@ -499,6 +531,76 @@ pub mod tests {
     }
 
     #[tokio::test]
+    async fn wait_till_gaps_are_filled_skip_unnecessary_snapshots() -> Result<()> {
+        let RemoteTestSetup {
+            mut remote_linked_operations,
+            remote_mesh_log_id,
+            mut log,
+            mut remote_active_logs,
+            remote_key,
+            ..
+        } = setup_remote_log();
+
+        let event_remote11 = snapshot();
+        let event_remote12 = update();
+        let event_remote13 = update();
+
+        let event_remote21 = snapshot();
+        let event_remote22 = update();
+
+        let event_remote31 = snapshot();
+        let event_remote32 = update();
+
+        let event_remote41 = snapshot();
+        let event_remote42 = update();
+
+        let remote_op11 = remote_linked_operations.next(event_remote11);
+        let remote_op12 = remote_linked_operations.next(event_remote12);
+        remote_linked_operations.next(event_remote13);
+
+        remote_linked_operations.next(event_remote21);
+        remote_linked_operations.next(event_remote22);
+
+        remote_linked_operations.next(event_remote31);
+        remote_linked_operations.next(event_remote32);
+
+        let remote_op41 = remote_linked_operations.next(event_remote41);
+        let remote_op42 = remote_linked_operations.next(event_remote42);
+
+        remote_active_logs.insert(remote_key.public_key(), remote_mesh_log_id.clone());
+        log.update_active_log(remote_mesh_log_id.clone(), None);
+
+        log.insert(remote_op11.clone()).await?;
+        log.insert(remote_op12.clone()).await?;
+
+        assert_ready(
+            &mut log,
+            &remote_active_logs,
+            hashmap! { remote_mesh_log_id.clone() => vec![0, 1]},
+            vec![],
+        )
+        .await;
+        log.advance_log_pointer(&remote_mesh_log_id, 2);
+
+        assert_not_ready(&log, &remote_active_logs).await;
+
+        log.insert(remote_op41.clone()).await?;
+        log.insert(remote_op42.clone()).await?;
+        assert_ready(
+            &mut log,
+            &remote_active_logs,
+            hashmap! { remote_mesh_log_id.clone() => vec![7, 8]},
+            vec![],
+        )
+        .await;
+        log.advance_log_pointer(&remote_mesh_log_id, 9);
+
+        assert_not_ready(&log, &remote_active_logs).await;
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn wait_till_gaps_are_filled_with_next_snapshot() -> Result<()> {
         let RemoteTestSetup {
             mut remote_linked_operations,
@@ -514,12 +616,18 @@ pub mod tests {
         let event_remote3 = update();
         let event_remote4 = update();
         let event_remote5 = snapshot();
+        let event_remote6 = update();
+        let event_remote7 = snapshot();
+        let event_remote8 = update();
 
         let remote_op1 = remote_linked_operations.next(event_remote1);
         let _remote_op2 = remote_linked_operations.next(event_remote2);
         let _remote_op3 = remote_linked_operations.next(event_remote3);
         let remote_op4 = remote_linked_operations.next(event_remote4);
         let remote_op5 = remote_linked_operations.next(event_remote5);
+        let remote_op6 = remote_linked_operations.next(event_remote6);
+        let remote_op7 = remote_linked_operations.next(event_remote7);
+        let remote_op8 = remote_linked_operations.next(event_remote8);
 
         remote_active_logs.insert(remote_key.public_key(), remote_mesh_log_id.clone());
         log.update_active_log(remote_mesh_log_id.clone(), None);
@@ -539,14 +647,17 @@ pub mod tests {
         assert_not_ready(&log, &remote_active_logs).await;
 
         log.insert(remote_op5.clone()).await?;
+        log.insert(remote_op6.clone()).await?;
+        log.insert(remote_op7.clone()).await?;
+        log.insert(remote_op8.clone()).await?;
         assert_ready(
             &mut log,
             &remote_active_logs,
-            hashmap! { remote_mesh_log_id.clone() => vec![4]},
+            hashmap! { remote_mesh_log_id.clone() => vec![6,7]},
             vec![],
         )
         .await;
-        log.advance_log_pointer(&remote_mesh_log_id, 5);
+        log.advance_log_pointer(&remote_mesh_log_id, 8);
 
         assert_not_ready(&log, &remote_active_logs).await;
 
