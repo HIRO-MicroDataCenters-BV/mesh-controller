@@ -239,5 +239,5 @@ pub fn render_placements(placements: &[AnyApplicationStatusOwnershipPlacements])
         out += &placement.zone;
         sep = true;
     }
-    return out;
+    out
 }
