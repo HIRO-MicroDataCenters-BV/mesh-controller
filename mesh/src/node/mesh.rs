@@ -4,7 +4,6 @@ use crate::JoinErrToStr;
 use crate::config::configuration::Config;
 use crate::mesh::mesh::Mesh;
 use crate::mesh::operations::Extensions;
-use crate::mesh::peer_discovery::PeerDiscovery;
 use crate::mesh::topic::MeshTopic;
 use crate::network::Panda;
 use anyhow::{Context, Result, anyhow};
@@ -42,15 +41,12 @@ pub struct MeshNode {
     mesh: Mesh,
     node_actor_tx: mpsc::Sender<ToNodeActor>,
     actor_handle: Shared<MapErr<AbortOnDropHandle<()>, JoinErrToStr>>,
-    #[allow(dead_code)]
-    peer_discovery: PeerDiscovery,
 }
 
 impl MeshNode {
     pub async fn new(
         panda: Panda,
         mesh: Mesh,
-        peer_discovery: PeerDiscovery,
         mesh_tx: mpsc::Sender<Operation<Extensions>>,
         options: NodeOptions,
     ) -> Result<Self> {
@@ -78,7 +74,6 @@ impl MeshNode {
             direct_addresses: options.direct_addresses,
             node_actor_tx,
             actor_handle: actor_drop_handle,
-            peer_discovery,
             mesh,
         };
 

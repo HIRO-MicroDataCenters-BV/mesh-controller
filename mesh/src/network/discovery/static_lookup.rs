@@ -14,12 +14,12 @@ use crate::config::configuration::{DiscoveryOptions, KnownNode};
 
 type SubscribeReceiver = Receiver<Result<DiscoveryEvent>>;
 
-struct NodeInfo {
+pub struct NodeInfo {
     pub addresses: Vec<String>,
     pub addr: Option<NodeAddr>,
 }
 
-struct KnownPeers {
+pub struct KnownPeers {
     peers: HashMap<PublicKey, NodeInfo>,
 }
 
@@ -40,6 +40,9 @@ impl KnownPeers {
         let mut discovered = vec![];
         for (public_key, info) in self.peers.iter_mut() {
             let mut direct_addresses = vec![];
+            if info.addr.is_some() {
+                continue;
+            }
             for fqdn in &info.addresses {
                 let maybe_peers = tokio::net::lookup_host(fqdn).await;
                 if let Ok(peers) = maybe_peers {
@@ -65,13 +68,13 @@ impl KnownPeers {
 }
 
 #[derive(Debug)]
-pub struct Membership {
+pub struct StaticLookup {
     #[allow(dead_code)]
     handle: AbortOnDropHandle<()>,
     rx: SubscribeReceiver,
 }
 
-impl Membership {
+impl StaticLookup {
     pub fn new(known_nodes: &Vec<KnownNode>, options: DiscoveryOptions) -> Self {
         let mut peers = KnownPeers::new(known_nodes);
         let (sender, rx) = loole::bounded(64);
@@ -103,7 +106,7 @@ impl Membership {
     }
 }
 
-impl Discovery for Membership {
+impl Discovery for StaticLookup {
     fn update_local_address(&self, _node_addr: &NodeAddr) -> Result<()> {
         Ok(())
     }

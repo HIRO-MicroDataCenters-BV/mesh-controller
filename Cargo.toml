@@ -33,7 +33,7 @@ serde_yaml = "0.9"
 futures-lite = "2.6.0"
 futures-util = "0.3.31"
 thiserror = "2.0.12"
-tokio = { version = "1.45.1", features = ["full"] }
+tokio = { version = "1.47.1", features = ["full"] }
 tokio-stream = "0.1.17"
 tokio-util = "0.7.15"
 url = { version= "2.5.4" }

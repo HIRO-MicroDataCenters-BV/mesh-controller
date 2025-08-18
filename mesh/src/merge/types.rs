@@ -1,11 +1,12 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 use anyhow::Result;
 use kube::api::{DynamicObject, GroupVersionKind};
 
 use crate::{
     kube::{subscriptions::Version, types::NamespacedName},
-    mesh::{event::MeshEvent, topic::InstanceId},
+    mesh::event::MeshEvent,
+    network::discovery::types::Membership,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -104,42 +105,11 @@ pub trait MergeStrategy: Send + Sync {
         current: VersionedObject,
         membership: &Membership,
         node_zone: &str,
-    ) -> Result<Vec<MeshEvent>>;
+    ) -> Result<Vec<MergeResult>>;
 
     fn tombstone(&self, current: VersionedObject, now_millis: u64) -> Result<Option<Tombstone>>;
 
     fn is_owner_zone(&self, current: &VersionedObject, zone: &str) -> bool;
 
     fn is_owner_zone_object(&self, current: &DynamicObject, zone: &str) -> bool;
-}
-
-#[derive(Debug, Clone)]
-pub struct Membership {
-    instances: HashMap<String, InstanceId>,
-}
-
-impl Default for Membership {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Membership {
-    pub fn new() -> Membership {
-        Membership {
-            instances: HashMap::new(),
-        }
-    }
-
-    pub fn add(&mut self, instance: InstanceId) {
-        self.instances.insert(instance.zone.to_owned(), instance);
-    }
-
-    pub fn get_instance(&self, zone: &str) -> Option<&InstanceId> {
-        self.instances.get(zone)
-    }
-
-    pub fn default_owner(&self) -> Option<&InstanceId> {
-        None
-    }
 }

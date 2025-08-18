@@ -10,8 +10,6 @@ use std::fmt::Display;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{collections::HashMap, fmt::Debug};
 
-use crate::merge::types::Membership;
-
 pub type LogSeq = u64;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Deserialize, Serialize)]
@@ -59,10 +57,6 @@ impl MeshTopicLogMap {
                 obsolete_logs: DashMap::new(),
             }),
         }
-    }
-
-    pub fn get_membership(&self) -> Membership {
-        Membership::new()
     }
 
     pub fn add_peer(&self, peer: PublicKey) {

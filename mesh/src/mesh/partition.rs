@@ -6,7 +6,8 @@ use std::{
 use super::event::MeshEvent;
 use crate::{
     kube::subscriptions::Version,
-    merge::types::{Membership, Tombstone, VersionedObject},
+    merge::types::{Tombstone, VersionedObject},
+    network::discovery::types::Membership,
     utils::types::Clock,
 };
 use crate::{
@@ -199,7 +200,7 @@ impl Partition {
         &mut self,
         membership: &Membership,
         node_zone: &str,
-    ) -> Result<Vec<MeshEvent>> {
+    ) -> Result<Vec<MergeResult>> {
         let mut out = vec![];
         for (_, current) in self.resources.iter() {
             let mut merge_results = self.merge_strategy.mesh_membership_change(
@@ -208,6 +209,9 @@ impl Partition {
                 node_zone,
             )?;
             out.append(&mut merge_results);
+        }
+        for merge_result in &out {
+            self.mesh_update_partition(merge_result);
         }
         Ok(out)
     }
@@ -255,6 +259,7 @@ impl Partition {
                     let snapshot_result =
                         self.kube_apply_snapshot(version, snapshot, current_zone, true)?;
                     self.initialized = true;
+                    tracing::info!("partition initialized");
                     Ok(snapshot_result)
                 } else {
                     let snapshot_result =
@@ -458,6 +463,7 @@ impl Partition {
 
 #[cfg(test)]
 pub mod tests {
+    use super::*;
     use std::{collections::BTreeMap, sync::Arc};
 
     use anyapplication::{anyapplication::*, anyapplication_ext::*};
@@ -472,7 +478,7 @@ pub mod tests {
         merge::{
             anyapplication_strategy::AnyApplicationMerge,
             anyapplication_test_support::tests::{anycond, anyplacements, anyspec, anystatus},
-            types::{Membership, MergeResult, Tombstone, UpdateResult},
+            types::{MergeResult, Tombstone, UpdateResult},
         },
         mesh::{event::MeshEvent, partition::Partition},
         utils::clock::FakeClock,
@@ -480,7 +486,7 @@ pub mod tests {
 
     #[test]
     fn snapshot_handling() {
-        let membership = Membership::new();
+        let membership = Membership::default();
         let name_a1 = NamespacedName::new("default".into(), "nginx-app-a1".into());
         let mut app_a1 = anyapp(
             &name_a1,
@@ -1044,7 +1050,7 @@ pub mod tests {
         pub fn new_anyapp(zone_a: &str, zone_b: &str) -> ReplicationTestRunner {
             let clock = Arc::new(FakeClock::new());
             clock.set_time_millis(0);
-            let membership = Membership::new();
+            let membership = Membership::default();
             ReplicationTestRunner {
                 partition_a: Partition::new(AnyApplicationMerge::new(), clock.clone()),
                 partition_b: Partition::new(AnyApplicationMerge::new(), clock),
@@ -1477,7 +1483,7 @@ pub mod tests {
         }
     }
 
-    fn sort_merge_results(data: &mut Vec<MergeResult>) {
+    fn sort_merge_results(data: &mut [MergeResult]) {
         data.sort_by_key(|result| match result {
             MergeResult::Skip => 0,
             MergeResult::Create { .. } => 1,

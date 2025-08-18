@@ -10,12 +10,15 @@ use crate::kube::event::KubeEvent;
 use crate::kube::subscriptions::Subscriptions;
 use crate::kube::subscriptions::Version;
 use crate::kube::types::NamespacedName;
-use crate::merge::types::Membership;
 use crate::merge::types::MergeResult;
 use crate::merge::types::Tombstone;
 use crate::mesh::event::MeshEvent;
 use crate::mesh::operation_log::OperationLog;
 use crate::mesh::operation_log::Ready;
+use crate::mesh::topic::MeshTopic;
+use crate::network::discovery::nodes::Nodes;
+use crate::network::discovery::nodes::PeerEvent;
+use crate::network::discovery::types::Membership;
 use crate::utils::types::Clock;
 use anyhow::Context;
 use anyhow::Result;
@@ -23,8 +26,12 @@ use futures::StreamExt;
 use kube::api::DynamicObject;
 use kube::api::GroupVersionKind;
 use loole::RecvStream;
+use p2panda_core::PublicKey;
 use p2panda_core::{Operation, PrivateKey};
+use p2panda_net::SystemEvent;
 use p2panda_store::MemoryStore;
+use p2panda_stream::operation::IngestError;
+use tokio::sync::broadcast;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, trace, warn};
@@ -32,28 +39,36 @@ use tracing::{debug, error, trace, warn};
 use super::operations::LinkedOperations;
 use super::partition::Partition;
 use super::topic::InstanceId;
-use super::topic::MeshTopicLogMap;
 use super::{operations::Extensions, topic::MeshLogId};
 
 const DEFAULT_TICK_INTERVAL: Duration = Duration::from_secs(1);
 const DEFAULT_FORCED_SYNC_MAX_ATTEMPTS: usize = 10;
+
+#[derive(Clone, Debug)]
+pub struct UpdateLogIdResult {
+    pub is_obsolete_operation: bool,
+    pub is_new_log: bool,
+    pub old_log: Option<MeshLogId>,
+}
 
 pub struct MeshActor {
     instance_id: InstanceId,
     network_tx: mpsc::Sender<Operation<Extensions>>,
     network_rx: mpsc::Receiver<Operation<Extensions>>,
     event_rx: RecvStream<KubeEvent>,
+    system_events: broadcast::Receiver<SystemEvent<MeshTopic>>,
     subscriptions: Subscriptions,
     operation_log: OperationLog,
     operations: LinkedOperations,
     partition: Partition,
-    topic_log_map: MeshTopicLogMap,
     clock: Arc<dyn Clock>,
     cancelation: CancellationToken,
     snapshot_config: PeriodicSnapshotConfig,
     tombstone_config: TombstoneConfig,
     last_snapshot_time: SystemTime,
     own_log_id: MeshLogId,
+    membership: Membership,
+    nodes: Nodes,
 }
 
 impl MeshActor {
@@ -66,24 +81,24 @@ impl MeshActor {
         partition: Partition,
         clock: Arc<dyn Clock>,
         cancelation: CancellationToken,
-        topic_log_map: MeshTopicLogMap,
+        nodes: Nodes,
         network_tx: mpsc::Sender<Operation<Extensions>>,
         network_rx: mpsc::Receiver<Operation<Extensions>>,
         event_rx: RecvStream<KubeEvent>,
+        system_events: broadcast::Receiver<SystemEvent<MeshTopic>>,
         subscriptions: Subscriptions,
         store: MemoryStore<MeshLogId, Extensions>,
     ) -> MeshActor {
         let own_log_id = MeshLogId(instance_id.clone());
+        let operations = LinkedOperations::new(key.clone(), instance_id.clone());
+        let operation_log = OperationLog::new(own_log_id.clone(), key.public_key(), store.clone());
+
+        let membership = nodes.get_membership(clock.now_millis());
+        tracing::info!("initial membership {}", membership.to_string());
         MeshActor {
             last_snapshot_time: clock.now(),
-            operations: LinkedOperations::new(key.clone(), instance_id.clone()),
-            operation_log: OperationLog::new(
-                own_log_id.clone(),
-                key.public_key(),
-                topic_log_map.clone(),
-                store.clone(),
-            ),
-            topic_log_map,
+            operations,
+            operation_log,
             instance_id,
             network_tx,
             network_rx,
@@ -95,6 +110,9 @@ impl MeshActor {
             snapshot_config,
             tombstone_config,
             own_log_id,
+            membership,
+            system_events,
+            nodes,
         }
     }
 
@@ -102,12 +120,6 @@ impl MeshActor {
         let mut interval = tokio::time::interval(DEFAULT_TICK_INTERVAL);
         loop {
             tokio::select! {
-                _ = self.cancelation.cancelled() => break,
-                _ = interval.tick() => {
-                    if let Err(err) = self.on_tick().await {
-                        error!("error on tick, {}", err);
-                    }
-                },
                 Some(event) = self.event_rx.next() => {
                     if let Err(err) = self.on_outgoing_to_network(event).await {
                         error!("error while processing kube event, {}", err);
@@ -118,43 +130,105 @@ impl MeshActor {
                         error!("error while processing network event, {}", err);
                     }
                 }
+                _ = interval.tick() => {
+                    if let Err(err) = self.on_tick().await {
+                        error!("error on tick, {}", err);
+                    }
+                },
+                Ok(event) = self.system_events.recv() => {
+                    self.on_system_event(event).await;
+                }
+                _ = self.cancelation.cancelled() => break,
             }
         }
         Ok(())
     }
 
-    async fn _on_membership_change(&mut self, membership: &Membership) -> Result<()> {
-        let mesh_events = self
-            .partition
-            .mesh_membership_change(membership, &self.instance_id.zone)?;
-        for event in mesh_events {
-            let operation = self.operations.next(event);
-            self.operation_log.insert(operation).await?;
+    async fn on_system_event(&mut self, event: SystemEvent<MeshTopic>) {
+        match event {
+            SystemEvent::GossipNeighborDown { peer, .. } => self.on_peer_down(peer).await,
+            SystemEvent::GossipNeighborUp { peer, .. } => self.on_peer_up(peer).await,
+            SystemEvent::PeerDiscovered { peer } => self.on_peer_discovered(peer).await,
+            SystemEvent::SyncStarted { peer, .. } => {
+                tracing::trace!("sync started: {}", peer.to_hex())
+            }
+            SystemEvent::SyncDone { peer, .. } => tracing::trace!("sync done: {}", peer.to_hex()),
+            SystemEvent::SyncFailed { peer, .. } => {
+                tracing::trace!("sync failed: {}", peer.to_hex())
+            }
+            _ => {}
         }
+    }
+
+    async fn on_peer_discovered(&mut self, peer: p2panda_core::PublicKey) {
+        self.update_membership(self.nodes.on_event(PeerEvent::PeerDiscovered {
+            peer,
+            now: self.clock.now_millis(),
+        }))
+        .await;
+    }
+
+    async fn on_peer_up(&mut self, peer: p2panda_core::PublicKey) {
+        tracing::info!("peer up");
+        self.update_membership(self.nodes.on_event(PeerEvent::PeerUp {
+            peer,
+            now: self.clock.now_millis(),
+        }))
+        .await;
+    }
+
+    async fn on_peer_down(&mut self, peer: p2panda_core::PublicKey) {
+        tracing::info!("peer down");
+        self.update_membership(self.nodes.on_event(PeerEvent::PeerDown {
+            peer,
+            now: self.clock.now_millis(),
+        }))
+        .await;
+    }
+
+    async fn update_membership(&mut self, maybe_updated_membership: Option<Membership>) {
+        if let Some(membership) = maybe_updated_membership {
+            if !self.membership.is_equal(&membership) {
+                if let Err(err) = self.on_membership_change(membership).await {
+                    tracing::error!("membership change error {err:?}");
+                }
+            }
+        }
+    }
+
+    async fn on_membership_change(&mut self, membership: Membership) -> Result<()> {
+        self.membership = membership;
+        tracing::info!("membership update: {}", self.membership.to_string());
+        let merge_results = self
+            .partition
+            .mesh_membership_change(&self.membership, &self.instance_id.zone)?;
+        self.on_merge_results(merge_results).await;
         self.on_ready().await?;
         Ok(())
     }
 
     async fn on_outgoing_to_network(&mut self, event: KubeEvent) -> Result<()> {
-        self.on_event(event).await?;
+        self.on_kube_event(event).await?;
         self.on_ready().await?;
         Ok(())
     }
 
-    async fn on_event(&mut self, event: KubeEvent) -> Result<()> {
+    async fn on_kube_event(&mut self, event: KubeEvent) -> Result<()> {
         let update_result = self.partition.kube_apply(event, &self.instance_id.zone)?;
         let event: Option<MeshEvent> = update_result.into();
-        // info!("kube event => mesh event {:?}", event);
 
         if let Some(event) = event {
             let operation = self.operations.next(event);
+            // No need to check for new log because the produced operation is for own log which never changes in current instance,
+            // thus should never trigger any membership updates
             self.operation_log.insert(operation).await?;
         }
         Ok(())
     }
 
     async fn on_ready(&mut self) -> Result<()> {
-        if let Some(mut ready) = self.operation_log.get_ready().await {
+        let active_logs = self.nodes.get_remote_active_logs();
+        if let Some(mut ready) = self.operation_log.get_ready(&active_logs).await {
             self.on_ready_outgoing(&mut ready).await;
             self.on_ready_incoming(&mut ready).await?;
         }
@@ -162,12 +236,96 @@ impl MeshActor {
     }
 
     async fn on_incoming_from_network(&mut self, operation: Operation<Extensions>) -> Result<()> {
-        self.operation_log.insert(operation.clone()).await?;
+        self.insert_operation(operation).await?;
         self.on_ready().await
     }
 
+    async fn insert_operation(&mut self, operation: Operation<Extensions>) -> Result<()> {
+        let peer = operation.header.public_key;
+
+        let Operation { header, .. } = &operation;
+
+        let Some(extensions) = header.extensions.as_ref() else {
+            return Err(IngestError::MissingHeaderExtension("extension".into()).into());
+        };
+
+        let incoming_log_id = extensions.log_id.clone();
+
+        let UpdateLogIdResult {
+            is_obsolete_operation,
+            is_new_log,
+            old_log,
+        } = self.update_log_id(&peer, &incoming_log_id);
+        if is_new_log {
+            self.operation_log
+                .update_active_log(incoming_log_id.to_owned(), old_log);
+        }
+        if !is_obsolete_operation {
+            self.operation_log.insert(operation).await?;
+        } else {
+            debug!(
+                "skipping Operation({}, {}), for log {:?}, obsolete log.",
+                incoming_log_id.0.zone, header.seq_num, incoming_log_id
+            );
+        }
+        if is_new_log {
+            let membership = self.nodes.get_membership(self.clock.now_millis());
+            self.update_membership(Some(membership)).await;
+        }
+        Ok(())
+    }
+
+    fn update_log_id(
+        &mut self,
+        incoming_source: &PublicKey,
+        incoming_log_id: &MeshLogId,
+    ) -> UpdateLogIdResult {
+        match self.nodes.get_active_log(incoming_source) {
+            Some(active) => match active.0.start_time.cmp(&incoming_log_id.0.start_time) {
+                std::cmp::Ordering::Less => {
+                    debug!(
+                        "new log {} found from peer, and replaced old {}",
+                        incoming_log_id, active
+                    );
+                    self.nodes.update_log(
+                        incoming_source.to_owned(),
+                        incoming_log_id.to_owned(),
+                        self.clock.now_millis(),
+                    );
+                    UpdateLogIdResult {
+                        is_obsolete_operation: false,
+                        is_new_log: true,
+                        old_log: Some(active),
+                    }
+                }
+                std::cmp::Ordering::Equal => UpdateLogIdResult {
+                    is_obsolete_operation: false,
+                    is_new_log: false,
+                    old_log: None,
+                },
+                std::cmp::Ordering::Greater => UpdateLogIdResult {
+                    is_obsolete_operation: true,
+                    is_new_log: false,
+                    old_log: None,
+                },
+            },
+            None => {
+                debug!("new log {} found from peer", incoming_log_id);
+                self.nodes.update_log(
+                    incoming_source.to_owned(),
+                    incoming_log_id.to_owned(),
+                    self.clock.now_millis(),
+                );
+                UpdateLogIdResult {
+                    is_obsolete_operation: false,
+                    is_new_log: true,
+                    old_log: None,
+                }
+            }
+        }
+    }
+
     async fn on_ready_incoming(&mut self, ready: &mut Ready) -> Result<(), anyhow::Error> {
-        let membership = self.topic_log_map.get_membership();
         for (log_id, ops) in ready.take_incoming().into_iter() {
             for operation in ops.into_iter() {
                 let pointer = operation.header.seq_num;
@@ -177,7 +335,7 @@ impl MeshActor {
                         mesh_event,
                         &log_id.0.zone,
                         &self.instance_id.zone,
-                        &membership,
+                        &self.membership,
                     )?;
                     self.on_merge_results(merge_results).await;
                     self.operation_log.advance_log_pointer(&log_id, pointer + 1);
@@ -219,6 +377,7 @@ impl MeshActor {
 
         if let (Ok(PersistenceResult::Persisted), Some(event)) = (&final_ok_or_result, event) {
             let operation = self.operations.next(event);
+            // this insert into own log therefore no need to check for new logs and update membership
             self.operation_log.insert(operation).await?;
         }
         final_ok_or_result.map(|_| ())
@@ -254,7 +413,7 @@ impl MeshActor {
                     OperationType::Update => KubeEvent::Update { version, object },
                     OperationType::Delete => KubeEvent::Delete { version, object },
                 };
-                if let Err(err) = self.on_event(event).await {
+                if let Err(err) = self.on_kube_event(event).await {
                     error!("on_event error during forced sync {err}");
                 }
                 self.partition.update_resource_version(&name, version);
@@ -366,7 +525,16 @@ impl MeshActor {
     }
 
     async fn on_tick(&mut self) -> Result<()> {
+        // Membership Check
+        self.update_membership(self.nodes.on_event(PeerEvent::Tick {
+            now: self.clock.now_millis(),
+        }))
+        .await;
+
+        // Send/Receive
         self.on_ready().await?;
+
+        // Cleanup
         let truncate_size =
             self.operations.count_since_snapshot() >= self.snapshot_config.snapshot_max_log;
         let duration_since_last_snapshot = self
@@ -379,7 +547,10 @@ impl MeshActor {
             duration_since_last_snapshot > self.snapshot_config.snapshot_interval_seconds;
         if truncate_size || snapshot_time {
             self.send_snapshot().await?;
-            self.operation_log.truncate_obsolete_logs().await?;
+            let obsolete_log_ids = self.nodes.take_obsolete_log_ids();
+            self.operation_log
+                .truncate_obsolete_logs(obsolete_log_ids)
+                .await?;
         }
 
         self.partition

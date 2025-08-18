@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::client::kube_client::KubeClient;
 use crate::config::private_key::load_private_key_from_file;
@@ -8,12 +9,13 @@ use crate::http::api::MeshApiImpl;
 use crate::api::server::MeshHTTPServer;
 use crate::mesh::mesh::Mesh;
 use crate::mesh::operations::Extensions;
-use crate::mesh::peer_discovery::PeerDiscovery;
+use crate::mesh::topic::MeshTopic;
 use crate::mesh::topic::{InstanceId, MeshLogId};
-use crate::mesh::topic::{MeshTopic, MeshTopicLogMap};
 use crate::network::Panda;
-use crate::network::membership::Membership;
+use crate::network::discovery::nodes::Nodes;
+use crate::network::discovery::static_lookup::StaticLookup;
 use crate::node::mesh::{MeshNode, NodeOptions};
+use crate::utils::clock::RealClock;
 use anyhow::{Context as AnyhowContext, Result, anyhow};
 use p2panda_core::{PrivateKey, PublicKey};
 use p2panda_net::{NetworkBuilder, ResyncConfiguration, SyncConfiguration};
@@ -120,33 +122,24 @@ impl ContextBuilder {
 
         let resync_config = ContextBuilder::to_resync_config(&config);
         let instance_id = InstanceId::new(config.mesh.zone.to_owned());
-        let topic_log_map =
-            MeshTopicLogMap::new(private_key.public_key(), MeshLogId(instance_id.clone()));
         let log_store = MemoryStore::<MeshLogId, Extensions>::new();
+        let clock = Arc::new(RealClock::new());
+        let nodes = Nodes::new(
+            private_key.public_key(),
+            MeshLogId(instance_id.clone()),
+            Duration::from_secs(config.mesh.peer_timeout.peer_unavailable_after_seconds),
+        );
 
         let (mesh_tx, network_rx) = mpsc::channel(512);
         let (network_tx, mesh_rx) = mpsc::channel(512);
 
-        let mesh = Mesh::new(
-            private_key.clone(),
-            &config.mesh,
-            instance_id,
-            cancelation,
-            client,
-            topic_log_map.clone(),
-            log_store.clone(),
-            network_tx,
-            network_rx,
-        )
-        .await?;
-
-        let sync_protocol = LogSyncProtocol::new(topic_log_map.clone(), log_store);
+        let sync_protocol = LogSyncProtocol::new(nodes.clone(), log_store.clone());
         let sync_config = SyncConfiguration::new(sync_protocol).resync(resync_config);
 
         let mut builder = NetworkBuilder::from_config(p2p_network_config)
             .private_key(private_key.clone())
             .sync(sync_config)
-            .discovery(Membership::new(
+            .discovery(StaticLookup::new(
                 &config.node.known_nodes,
                 config.node.discovery.to_owned().unwrap_or_default(),
             ));
@@ -155,7 +148,21 @@ impl ContextBuilder {
         }
 
         let network = builder.build().await?;
-        let peer_discovery = PeerDiscovery::start(network.events().await?, topic_log_map.clone());
+
+        let mesh = Mesh::new(
+            private_key.clone(),
+            &config.mesh,
+            instance_id,
+            cancelation,
+            client,
+            clock,
+            nodes.clone(),
+            log_store.clone(),
+            network_tx,
+            network_rx,
+            network.events().await?,
+        )
+        .await?;
 
         let node_id = network.node_id();
         let direct_addresses = network
@@ -171,7 +178,7 @@ impl ContextBuilder {
             node_config,
         };
 
-        let node = MeshNode::new(panda, mesh, peer_discovery, mesh_tx, options.clone()).await?;
+        let node = MeshNode::new(panda, mesh, mesh_tx, options.clone()).await?;
         node.subscribe(MeshTopic::default()).await?;
         node.publish_operations(mesh_rx).await.ok();
         Ok(node)

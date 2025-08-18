@@ -1,9 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 
-use crate::mesh::{
-    operations::Extensions,
-    topic::{MeshLogId, MeshTopicLogMap},
-};
+use crate::mesh::{operations::Extensions, topic::MeshLogId};
 use anyhow::Result;
 use p2panda_core::{Operation, PublicKey};
 use p2panda_store::{LogStore, MemoryStore};
@@ -19,7 +16,6 @@ pub struct OperationLog {
     own_log_id: MeshLogId,
     own_public_key: PublicKey,
     incoming_pending: HashMap<LogKey, BTreeMap<u64, Operation<Extensions>>>,
-    topic_log_map: MeshTopicLogMap,
     store: MemoryStore<MeshLogId, Extensions>,
     pointers: LogPointers,
 }
@@ -28,7 +24,6 @@ impl OperationLog {
     pub fn new(
         own_log_id: MeshLogId,
         own_public_key: PublicKey,
-        topic_log_map: MeshTopicLogMap,
         store: MemoryStore<MeshLogId, Extensions>,
     ) -> Self {
         let mut pointers = LogPointers::new();
@@ -37,7 +32,6 @@ impl OperationLog {
             incoming_pending: HashMap::default(),
             pointers,
             store,
-            topic_log_map,
             own_log_id,
             own_public_key,
         }
@@ -98,24 +92,12 @@ impl OperationLog {
             return Err(IngestError::MissingHeaderExtension("extension".into()));
         };
 
+        let seq_num = header.seq_num;
         let log_id = extensions.log_id.clone();
         let prune_flag = extensions.prune_flag.is_set();
 
-        let is_obsolete = self.update_log_id(&header.public_key, &log_id);
-        if is_obsolete {
-            debug!(
-                "skipping Operation({}, {}), for log {:?}",
-                log_id.0.zone, header.seq_num, log_id
-            );
-            self.pointers.remove(&log_id);
-            return Ok(IngestResult::Complete(Operation {
-                hash: header.hash(),
-                header,
-                body: None,
-            }));
-        }
         let header_bytes = header.to_bytes();
-        ingest_operation(
+        let ingest_result = ingest_operation(
             &mut self.store,
             header,
             body.clone(),
@@ -126,7 +108,18 @@ impl OperationLog {
         .await
         .inspect_err(|e| {
             error!("Error during ingest operation {}", e);
-        })
+        })?;
+        if prune_flag {
+            self.pointers.advance_snapshot(&log_id, seq_num);
+        }
+        Ok(ingest_result)
+    }
+
+    pub fn update_active_log(&mut self, new_log: MeshLogId, old_log: Option<MeshLogId>) {
+        self.pointers.add(new_log);
+        if let Some(old) = &old_log {
+            self.pointers.remove(old);
+        }
     }
 
     async fn replay_pending_inserts(&mut self, key: &LogKey) -> Result<()> {
@@ -169,31 +162,11 @@ impl OperationLog {
         Ok(pending_bulk)
     }
 
-    fn update_log_id(&mut self, incoming_source: &PublicKey, incoming_log_id: &MeshLogId) -> bool {
-        match self.topic_log_map.get_latest_log(incoming_source) {
-            Some(latest) => match latest.0.start_time.cmp(&incoming_log_id.0.start_time) {
-                std::cmp::Ordering::Less => {
-                    debug!("new log {} found from peer", incoming_log_id);
-                    self.topic_log_map
-                        .update_log(incoming_source.to_owned(), incoming_log_id.to_owned());
-                    self.pointers.add(incoming_log_id.to_owned());
-                    false
-                }
-                std::cmp::Ordering::Equal => false,
-                std::cmp::Ordering::Greater => true,
-            },
-            None => {
-                debug!("new log {} found from peer", incoming_log_id);
-                self.topic_log_map
-                    .update_log(incoming_source.to_owned(), incoming_log_id.to_owned());
-                self.pointers.add(incoming_log_id.to_owned());
-                false
-            }
-        }
-    }
-
-    pub async fn truncate_obsolete_logs(&mut self) -> Result<()> {
-        for (source, log_ids) in self.topic_log_map.take_obsolete_log_ids() {
+    pub async fn truncate_obsolete_logs(
+        &mut self,
+        obsolete_logs: Vec<(PublicKey, Vec<MeshLogId>)>,
+    ) -> Result<()> {
+        for (source, log_ids) in obsolete_logs {
             for log_id in log_ids {
                 self.pointers.remove(&log_id);
                 if let Some((header, _)) = self.store.latest_operation(&source, &log_id).await? {
@@ -213,8 +186,11 @@ impl OperationLog {
         Ok(())
     }
 
-    pub async fn get_ready(&self) -> Option<Ready> {
-        let incoming = self.get_ready_incoming().await;
+    pub async fn get_ready(
+        &self,
+        remote_active_logs: &HashMap<PublicKey, MeshLogId>,
+    ) -> Option<Ready> {
+        let incoming = self.get_ready_incoming(remote_active_logs).await;
         let outgoing = self.get_ready_outgoing().await;
         if incoming.is_empty() && outgoing.is_empty() {
             None
@@ -223,17 +199,31 @@ impl OperationLog {
         }
     }
 
-    async fn get_ready_incoming(&self) -> HashMap<MeshLogId, Vec<Operation<Extensions>>> {
-        let peer_log_ids = self.topic_log_map.get_peer_logs();
+    async fn get_ready_incoming(
+        &self,
+        remote_active_logs: &HashMap<PublicKey, MeshLogId>,
+    ) -> HashMap<MeshLogId, Vec<Operation<Extensions>>> {
         let mut incoming = HashMap::<MeshLogId, Vec<Operation<Extensions>>>::new();
-        for (peer_id, log_id) in peer_log_ids {
-            let current = self.pointers.get_current(&log_id);
+        for (peer_id, log_id) in remote_active_logs {
+            let current = self.pointers.get_current(log_id);
             if let Some(current) = current {
-                self.get_operations(&peer_id, &log_id, current)
+                self.get_operations(peer_id, log_id, current)
                     .await
                     .into_iter()
-                    .for_each(|ops| {
+                    .for_each(|mut ops| {
                         if !ops.is_empty() {
+                            let mut i = ops.len() - 1;
+                            while i > 0 {
+                                if let Some(ext) = &ops[i].header.extensions {
+                                    if ext.prune_flag.is_set() {
+                                        break;
+                                    }
+                                }
+                                i -= 1;
+                            }
+                            if i != 0 {
+                                ops = ops.split_off(i);
+                            }
                             incoming.insert(log_id.to_owned(), ops);
                         }
                     });
@@ -346,10 +336,25 @@ impl LogPointers {
         self.pointers.get(log_id).cloned()
     }
 
+    pub fn advance_snapshot(&mut self, log_id: &MeshLogId, snapshot_seq_num: SeqNum) {
+        if let Some(current) = self.get_current(log_id) {
+            if snapshot_seq_num > current {
+                self.pointers.insert(log_id.clone(), snapshot_seq_num);
+            }
+        } else {
+            self.pointers.insert(log_id.clone(), snapshot_seq_num);
+        }
+    }
+
     pub fn advance(&mut self, log_id: &MeshLogId, seq_num: SeqNum) {
         if let Some(current) = self.get_current(log_id) {
             if seq_num > current {
                 self.pointers.insert(log_id.clone(), seq_num);
+            } else {
+                panic!(
+                    "cannot advance log backwards. log = {}, current seq_num = {}, next seq_num = {}",
+                    log_id, current, seq_num
+                )
             }
         } else {
             self.pointers.insert(log_id.clone(), seq_num);
@@ -364,7 +369,7 @@ pub mod tests {
     use anyhow::Result;
     use kube::api::DynamicObject;
     use maplit::hashmap;
-    use p2panda_core::PrivateKey;
+    use p2panda_core::{PrivateKey, PublicKey};
     use p2panda_store::MemoryStore;
 
     use crate::{
@@ -373,7 +378,7 @@ pub mod tests {
             event::MeshEvent,
             operation_log::OperationLog,
             operations::LinkedOperations,
-            topic::{InstanceId, MeshLogId, MeshTopicLogMap},
+            topic::{InstanceId, MeshLogId},
         },
     };
 
@@ -383,6 +388,7 @@ pub mod tests {
             mut own_linked_operations,
             own_mesh_log_id,
             mut log,
+            active_logs,
             ..
         } = setup_local_log();
 
@@ -397,22 +403,22 @@ pub mod tests {
         log.insert(op1.clone()).await?;
         log.insert(op2.clone()).await?;
 
-        assert_ready(&mut log, hashmap! {}, vec![0, 1]).await;
+        assert_ready(&mut log, &active_logs, hashmap! {}, vec![0, 1]).await;
 
         // the same ready if pointer is not advanced
-        assert_ready(&mut log, hashmap! {}, vec![0, 1]).await;
+        assert_ready(&mut log, &active_logs, hashmap! {}, vec![0, 1]).await;
 
         // advance pointers to commit the operations
         log.advance_log_pointer(&own_mesh_log_id, 2);
-        assert_not_ready(&log).await;
+        assert_not_ready(&log, &active_logs).await;
 
         // more operations can be inserted
         log.insert(op3.clone()).await?;
 
-        assert_ready(&mut log, hashmap! {}, vec![2]).await;
+        assert_ready(&mut log, &active_logs, hashmap! {}, vec![2]).await;
         log.advance_log_pointer(&own_mesh_log_id, 3);
 
-        assert_not_ready(&log).await;
+        assert_not_ready(&log, &active_logs).await;
 
         Ok(())
     }
@@ -423,6 +429,8 @@ pub mod tests {
             mut remote_linked_operations,
             remote_mesh_log_id,
             mut log,
+            mut remote_active_logs,
+            remote_key,
             ..
         } = setup_remote_log();
 
@@ -434,29 +442,35 @@ pub mod tests {
         let remote_op2 = remote_linked_operations.next(event_remote2);
         let remote_op3 = remote_linked_operations.next(event_remote3);
 
+        remote_active_logs.insert(remote_key.public_key(), remote_mesh_log_id.clone());
+
+        log.update_active_log(remote_mesh_log_id.clone(), None);
+
         log.insert(remote_op1.clone()).await?;
         log.insert(remote_op2.clone()).await?;
 
         assert_ready(
             &mut log,
+            &remote_active_logs,
             hashmap! { remote_mesh_log_id.clone() => vec![0, 1]},
             vec![],
         )
         .await;
         log.advance_log_pointer(&remote_mesh_log_id, 2);
 
-        assert_not_ready(&log).await;
+        assert_not_ready(&log, &remote_active_logs).await;
 
         log.insert(remote_op3.clone()).await?;
         assert_ready(
             &mut log,
+            &remote_active_logs,
             hashmap! { remote_mesh_log_id.clone() => vec![2]},
             vec![],
         )
         .await;
         log.advance_log_pointer(&remote_mesh_log_id, 3);
 
-        assert_not_ready(&log).await;
+        assert_not_ready(&log, &remote_active_logs).await;
 
         Ok(())
     }
@@ -467,6 +481,8 @@ pub mod tests {
             mut remote_linked_operations,
             remote_mesh_log_id,
             mut log,
+            mut remote_active_logs,
+            remote_key,
             ..
         } = setup_remote_log();
 
@@ -480,30 +496,106 @@ pub mod tests {
         let remote_op3 = remote_linked_operations.next(event_remote3);
         let remote_op4 = remote_linked_operations.next(event_remote4);
 
+        remote_active_logs.insert(remote_key.public_key(), remote_mesh_log_id.clone());
+
+        log.update_active_log(remote_mesh_log_id.clone(), None);
+
         log.insert(remote_op1.clone()).await?;
         log.insert(remote_op4.clone()).await?;
 
         assert_ready(
             &mut log,
+            &remote_active_logs,
             hashmap! { remote_mesh_log_id.clone() => vec![0]},
             vec![],
         )
         .await;
         log.advance_log_pointer(&remote_mesh_log_id, 1);
 
-        assert_not_ready(&log).await;
+        assert_not_ready(&log, &remote_active_logs).await;
 
         log.insert(remote_op2.clone()).await?;
         log.insert(remote_op3.clone()).await?;
         assert_ready(
             &mut log,
+            &remote_active_logs,
             hashmap! { remote_mesh_log_id.clone() => vec![1, 2, 3]},
             vec![],
         )
         .await;
         log.advance_log_pointer(&remote_mesh_log_id, 4);
 
-        assert_not_ready(&log).await;
+        assert_not_ready(&log, &remote_active_logs).await;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn wait_till_gaps_are_filled_skip_unnecessary_snapshots() -> Result<()> {
+        let RemoteTestSetup {
+            mut remote_linked_operations,
+            remote_mesh_log_id,
+            mut log,
+            mut remote_active_logs,
+            remote_key,
+            ..
+        } = setup_remote_log();
+
+        let event_remote11 = snapshot();
+        let event_remote12 = update();
+        let event_remote13 = update();
+
+        let event_remote21 = snapshot();
+        let event_remote22 = update();
+
+        let event_remote31 = snapshot();
+        let event_remote32 = update();
+
+        let event_remote41 = snapshot();
+        let event_remote42 = update();
+
+        let remote_op11 = remote_linked_operations.next(event_remote11);
+        let remote_op12 = remote_linked_operations.next(event_remote12);
+        remote_linked_operations.next(event_remote13);
+
+        remote_linked_operations.next(event_remote21);
+        remote_linked_operations.next(event_remote22);
+
+        remote_linked_operations.next(event_remote31);
+        remote_linked_operations.next(event_remote32);
+
+        let remote_op41 = remote_linked_operations.next(event_remote41);
+        let remote_op42 = remote_linked_operations.next(event_remote42);
+
+        remote_active_logs.insert(remote_key.public_key(), remote_mesh_log_id.clone());
+        log.update_active_log(remote_mesh_log_id.clone(), None);
+
+        log.insert(remote_op11.clone()).await?;
+        log.insert(remote_op12.clone()).await?;
+
+        assert_ready(
+            &mut log,
+            &remote_active_logs,
+            hashmap! { remote_mesh_log_id.clone() => vec![0, 1]},
+            vec![],
+        )
+        .await;
+        log.advance_log_pointer(&remote_mesh_log_id, 2);
+
+        assert_not_ready(&log, &remote_active_logs).await;
+
+        log.insert(remote_op41.clone()).await?;
+        log.insert(remote_op42.clone()).await?;
+        assert_ready(
+            &mut log,
+            &remote_active_logs,
+            hashmap! { remote_mesh_log_id.clone() => vec![7, 8]},
+            vec![],
+        )
+        .await;
+        log.advance_log_pointer(&remote_mesh_log_id, 9);
+
+        assert_not_ready(&log, &remote_active_logs).await;
 
         Ok(())
     }
@@ -514,6 +606,8 @@ pub mod tests {
             mut remote_linked_operations,
             remote_mesh_log_id,
             mut log,
+            mut remote_active_logs,
+            remote_key,
             ..
         } = setup_remote_log();
 
@@ -522,36 +616,50 @@ pub mod tests {
         let event_remote3 = update();
         let event_remote4 = update();
         let event_remote5 = snapshot();
+        let event_remote6 = update();
+        let event_remote7 = snapshot();
+        let event_remote8 = update();
 
         let remote_op1 = remote_linked_operations.next(event_remote1);
         let _remote_op2 = remote_linked_operations.next(event_remote2);
         let _remote_op3 = remote_linked_operations.next(event_remote3);
         let remote_op4 = remote_linked_operations.next(event_remote4);
         let remote_op5 = remote_linked_operations.next(event_remote5);
+        let remote_op6 = remote_linked_operations.next(event_remote6);
+        let remote_op7 = remote_linked_operations.next(event_remote7);
+        let remote_op8 = remote_linked_operations.next(event_remote8);
+
+        remote_active_logs.insert(remote_key.public_key(), remote_mesh_log_id.clone());
+        log.update_active_log(remote_mesh_log_id.clone(), None);
 
         log.insert(remote_op1.clone()).await?;
         log.insert(remote_op4.clone()).await?;
 
         assert_ready(
             &mut log,
+            &remote_active_logs,
             hashmap! { remote_mesh_log_id.clone() => vec![0]},
             vec![],
         )
         .await;
         log.advance_log_pointer(&remote_mesh_log_id, 1);
 
-        assert_not_ready(&log).await;
+        assert_not_ready(&log, &remote_active_logs).await;
 
         log.insert(remote_op5.clone()).await?;
+        log.insert(remote_op6.clone()).await?;
+        log.insert(remote_op7.clone()).await?;
+        log.insert(remote_op8.clone()).await?;
         assert_ready(
             &mut log,
-            hashmap! { remote_mesh_log_id.clone() => vec![4]},
+            &remote_active_logs,
+            hashmap! { remote_mesh_log_id.clone() => vec![6,7]},
             vec![],
         )
         .await;
-        log.advance_log_pointer(&remote_mesh_log_id, 5);
+        log.advance_log_pointer(&remote_mesh_log_id, 8);
 
-        assert_not_ready(&log).await;
+        assert_not_ready(&log, &remote_active_logs).await;
 
         Ok(())
     }
@@ -563,6 +671,7 @@ pub mod tests {
             remote_mesh_log_id,
             remote_key,
             mut log,
+            mut remote_active_logs,
             ..
         } = setup_remote_log();
 
@@ -572,18 +681,22 @@ pub mod tests {
         let remote_op11 = remote_linked_operations.next(event_remote11);
         let remote_op12 = remote_linked_operations.next(event_remote12);
 
+        remote_active_logs.insert(remote_key.public_key(), remote_mesh_log_id.clone());
+        log.update_active_log(remote_mesh_log_id.clone(), None);
+
         log.insert(remote_op11.clone()).await?;
         log.insert(remote_op12.clone()).await?;
 
         assert_ready(
             &mut log,
+            &remote_active_logs,
             hashmap! { remote_mesh_log_id.clone() => vec![0, 1]},
             vec![],
         )
         .await;
         log.advance_log_pointer(&remote_mesh_log_id, 2);
 
-        assert_not_ready(&log).await;
+        assert_not_ready(&log, &remote_active_logs).await;
 
         // Restarting the peer
         let new_remote_instance_id = InstanceId::new(remote_mesh_log_id.0.zone.clone());
@@ -602,6 +715,9 @@ pub mod tests {
         let remote_op23 = new_remote_linked_operations.next(event_remote23);
         let remote_op24 = new_remote_linked_operations.next(event_remote24);
 
+        remote_active_logs.insert(remote_key.public_key(), new_remote_mesh_log_id.clone());
+        log.update_active_log(new_remote_mesh_log_id.clone(), Some(remote_mesh_log_id));
+
         log.insert(remote_op21.clone()).await?;
         log.insert(remote_op22.clone()).await?;
         log.insert(remote_op23.clone()).await?;
@@ -610,13 +726,14 @@ pub mod tests {
         // new log started from the last snapshot (version 2)
         assert_ready(
             &mut log,
+            &remote_active_logs,
             hashmap! { new_remote_mesh_log_id.clone() => vec![3]},
             vec![],
         )
         .await;
         log.advance_log_pointer(&new_remote_mesh_log_id, 4);
 
-        assert_not_ready(&log).await;
+        assert_not_ready(&log, &remote_active_logs).await;
 
         Ok(())
     }
@@ -633,16 +750,17 @@ pub mod tests {
         }
     }
 
-    async fn assert_not_ready(log: &OperationLog) {
-        assert_eq!(log.get_ready().await, None);
+    async fn assert_not_ready(log: &OperationLog, active_logs: &HashMap<PublicKey, MeshLogId>) {
+        assert_eq!(log.get_ready(active_logs).await, None);
     }
 
     async fn assert_ready(
         log: &mut OperationLog,
+        active_logs: &HashMap<PublicKey, MeshLogId>,
         incoming: HashMap<MeshLogId, Vec<usize>>,
         outgoing: Vec<usize>,
     ) {
-        let Some(mut ready) = log.get_ready().await else {
+        let Some(mut ready) = log.get_ready(active_logs).await else {
             panic!("Expected ready operations");
         };
 
@@ -677,13 +795,16 @@ pub mod tests {
         let own_key = PrivateKey::new();
         let own_instance_id = InstanceId::new("1".to_string());
         let own_linked_operations = LinkedOperations::new(own_key.clone(), own_instance_id.clone());
-
         let own_mesh_log_id = MeshLogId(own_instance_id);
-        let own_topic_map = MeshTopicLogMap::new(own_key.public_key(), own_mesh_log_id.clone());
+        // let own_topic_map = Nodes::new(
+        //     own_key.public_key(),
+        //     own_mesh_log_id.clone(),
+        //     Duration::from_secs(120),
+        // );
+        let active_logs = hashmap! {};
         let log = OperationLog::new(
             own_mesh_log_id.clone(),
             own_key.public_key(),
-            own_topic_map.clone(),
             MemoryStore::new(),
         );
 
@@ -691,6 +812,7 @@ pub mod tests {
             own_linked_operations,
             own_mesh_log_id,
             log,
+            active_logs,
         }
     }
 
@@ -699,17 +821,22 @@ pub mod tests {
         pub own_mesh_log_id: MeshLogId,
 
         pub log: OperationLog,
+        pub active_logs: HashMap<PublicKey, MeshLogId>,
     }
 
     fn setup_remote_log() -> RemoteTestSetup {
         let own_key = PrivateKey::new();
         let own_instance_id = InstanceId::new("1".to_string());
         let own_mesh_log_id = MeshLogId(own_instance_id);
-        let own_topic_map = MeshTopicLogMap::new(own_key.public_key(), own_mesh_log_id.clone());
+        // let own_topic_map = Nodes::new(
+        //     own_key.public_key(),
+        //     own_mesh_log_id.clone(),
+        //     Duration::from_secs(120),
+        // );
+        let active_logs = hashmap! {own_key.public_key() => own_mesh_log_id.clone() };
         let log = OperationLog::new(
             own_mesh_log_id.clone(),
             own_key.public_key(),
-            own_topic_map.clone(),
             MemoryStore::new(),
         );
 
@@ -723,7 +850,7 @@ pub mod tests {
             remote_key,
             remote_linked_operations,
             remote_mesh_log_id,
-
+            remote_active_logs: active_logs,
             log,
         }
     }
@@ -734,6 +861,7 @@ pub mod tests {
         pub remote_mesh_log_id: MeshLogId,
 
         pub log: OperationLog,
+        pub remote_active_logs: HashMap<PublicKey, MeshLogId>,
     }
 
     fn make_object(zone: &str, version: Version, data: &str) -> DynamicObject {

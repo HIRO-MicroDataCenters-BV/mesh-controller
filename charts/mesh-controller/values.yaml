@@ -96,6 +96,12 @@ configuration:
       snapshot_interval_seconds: 300
       snapshot_max_log: 256
 
+    tombstone:
+        tombstone_retention_interval_seconds: 300
+
+    peer_timeout:
+        peer_unavailable_after_seconds: 120
+
     resource:
       group: ""
       version: v1

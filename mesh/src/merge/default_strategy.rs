@@ -1,8 +1,8 @@
 use super::types::{MergeResult, MergeStrategy, UpdateResult};
 use crate::{
     kube::{dynamic_object_ext::DynamicObjectExt, subscriptions::Version},
-    merge::types::{Membership, Tombstone, VersionedObject},
-    mesh::event::MeshEvent,
+    merge::types::{Tombstone, VersionedObject},
+    network::discovery::types::Membership,
 };
 use anyhow::Result;
 use kube::api::{DynamicObject, GroupVersionKind, TypeMeta};
@@ -216,7 +216,7 @@ impl MergeStrategy for DefaultMerge {
         _current: VersionedObject,
         _membership: &Membership,
         _node_zone: &str,
-    ) -> Result<Vec<MeshEvent>> {
+    ) -> Result<Vec<MergeResult>> {
         Ok(vec![])
     }
 }
@@ -313,7 +313,7 @@ pub mod tests {
 
     #[test]
     pub fn mesh_update_non_existing_create() {
-        let membership = Membership::new();
+        let membership = Membership::default();
         let gvk = GroupVersionKind::gvk("", "v1", "Secret");
         let incoming = make_object("test", 2, "value");
 
@@ -335,7 +335,7 @@ pub mod tests {
 
     #[test]
     pub fn mesh_update_tombstone_create() {
-        let membership = Membership::new();
+        let membership = Membership::default();
         let gvk = GroupVersionKind::gvk("", "v1", "Secret");
         let incoming = make_object("test", 2, "value");
         let existing = VersionedObject::Tombstone(Tombstone {
@@ -359,7 +359,7 @@ pub mod tests {
 
     #[test]
     pub fn mesh_update_tombstone_skip_create_if_obsolete() {
-        let membership = Membership::new();
+        let membership = Membership::default();
         let gvk = GroupVersionKind::gvk("", "v1", "Secret");
         let incoming = make_object("test", 2, "value");
         let existing = VersionedObject::Tombstone(Tombstone {
@@ -381,7 +381,7 @@ pub mod tests {
 
     #[test]
     pub fn mesh_update_non_existing_other_zone() {
-        let membership = Membership::new();
+        let membership = Membership::default();
         let gvk = GroupVersionKind::gvk("", "v1", "Secret");
         let incoming = make_object("other", 2, "value");
 
@@ -401,7 +401,7 @@ pub mod tests {
 
     #[test]
     pub fn mesh_update_versions_equal() {
-        let membership = Membership::new();
+        let membership = Membership::default();
         let gvk = GroupVersionKind::gvk("", "v1", "Secret");
         let current = make_object("test", 1, "value");
         let incoming = make_object("test", 1, "value");
@@ -416,7 +416,7 @@ pub mod tests {
 
     #[test]
     pub fn mesh_update_incoming_version_greater() {
-        let membership = Membership::new();
+        let membership = Membership::default();
         let gvk = GroupVersionKind::gvk("", "v1", "Secret");
         let current = make_object("test", 1, "value");
         let incoming = make_object("test", 2, "updated");
@@ -434,7 +434,7 @@ pub mod tests {
 
     #[test]
     pub fn mesh_update_other_zone() {
-        let membership = Membership::new();
+        let membership = Membership::default();
         let gvk = GroupVersionKind::gvk("", "v1", "Secret");
         let current = make_object("test", 1, "value");
         let incoming = make_object("other", 2, "updated");
