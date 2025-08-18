@@ -6,3 +6,4 @@ pub mod operation_log;
 pub mod operations;
 pub mod partition;
 pub mod topic;
+pub mod operation_ext;
