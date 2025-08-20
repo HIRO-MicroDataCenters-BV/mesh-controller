@@ -4,6 +4,7 @@ use p2panda_core::PublicKey;
 use p2panda_sync::log_sync::TopicLogMap;
 use std::cmp::Ordering;
 use std::{collections::HashMap, sync::Arc};
+use tracing::{Span, info};
 
 use crate::mesh::topic::{Logs, MeshLogId, MeshTopic};
 use crate::network::discovery::types::{Membership, Timestamp};
@@ -28,7 +29,7 @@ impl Nodes {
         }
     }
 
-    pub fn on_event(&self, event: PeerEvent) -> Option<Membership> {
+    pub fn on_event(&self, span: &Span, event: PeerEvent) -> Option<Membership> {
         let now = event.timestamp();
         let updated = match &event {
             PeerEvent::PeerDiscovered { peer, .. } => {
@@ -36,30 +37,30 @@ impl Nodes {
                     .inner
                     .peers
                     .entry(*peer)
-                    .or_insert_with(|| PeerState::new(self.timeout));
-                entry.value_mut().on_event(event)
+                    .or_insert_with(|| PeerState::new(peer.to_owned(), self.timeout));
+                entry.value_mut().on_event(span, event)
             }
             PeerEvent::PeerUp { peer, .. } => {
                 let mut entry = self
                     .inner
                     .peers
                     .entry(*peer)
-                    .or_insert_with(|| PeerState::new(self.timeout));
-                entry.value_mut().on_event(event)
+                    .or_insert_with(|| PeerState::new(peer.to_owned(), self.timeout));
+                entry.value_mut().on_event(span, event)
             }
             PeerEvent::PeerDown { peer, .. } => {
                 let mut entry = self
                     .inner
                     .peers
                     .entry(*peer)
-                    .or_insert_with(|| PeerState::new(self.timeout));
-                entry.value_mut().on_event(event)
+                    .or_insert_with(|| PeerState::new(peer.to_owned(), self.timeout));
+                entry.value_mut().on_event(span, event)
             }
             PeerEvent::Tick { .. } => self
                 .inner
                 .peers
                 .iter_mut()
-                .map(|mut entry| entry.value_mut().on_event(event))
+                .map(|mut entry| entry.value_mut().on_event(span, event))
                 .reduce(|left, right| left | right)
                 .unwrap_or(false),
         };
@@ -99,7 +100,7 @@ impl Nodes {
         }
     }
 
-    pub fn update_log(&self, peer: PublicKey, log_id: MeshLogId, now: Timestamp) {
+    pub fn update_log(&self, span: &Span, peer: PublicKey, log_id: MeshLogId, now: Timestamp) {
         if peer == self.inner.owner {
             // If the peer is the owner, log update is handled via restart of application.
             return;
@@ -109,10 +110,11 @@ impl Nodes {
             .inner
             .peers
             .entry(peer)
-            .or_insert_with(|| PeerState::new(self.timeout));
-        let previous_log_id = entry
-            .value_mut()
-            .update_log_id(log_id, PeerEvent::PeerUp { peer, now });
+            .or_insert_with(|| PeerState::new(peer.to_owned(), self.timeout));
+        let previous_log_id =
+            entry
+                .value_mut()
+                .update_log_id(span, log_id, PeerEvent::PeerUp { peer, now });
         if let Some(log_id) = previous_log_id {
             self.inner
                 .obsolete_logs
@@ -177,21 +179,23 @@ struct NodesInner {
 
 #[derive(Clone, Debug)]
 pub struct PeerState {
-    active_log: Option<MeshLogId>,
+    peer: PublicKey,
     state: MembershipState,
+    active_log: Option<MeshLogId>,
     timeout: Duration,
 }
 
 impl PeerState {
-    pub fn new(timeout: Duration) -> PeerState {
+    pub fn new(peer: PublicKey, timeout: Duration) -> PeerState {
         PeerState {
             state: MembershipState::Unavailable { since: 0 },
             active_log: None,
+            peer,
             timeout,
         }
     }
 
-    pub fn on_event(&mut self, event: PeerEvent) -> bool {
+    pub fn on_event(&mut self, span: &Span, event: PeerEvent) -> bool {
         let new_state = match (event, &self.state) {
             (
                 PeerEvent::Tick { .. },
@@ -199,7 +203,6 @@ impl PeerState {
             ) => None,
             (PeerEvent::Tick { now }, MembershipState::NotReady { since }) => {
                 if *since < now.saturating_sub(self.timeout.as_millis() as u64) {
-                    tracing::info!("Peer Unavailable");
                     Some(MembershipState::Unavailable { since: now })
                 } else {
                     None
@@ -207,22 +210,15 @@ impl PeerState {
             }
 
             (
-                PeerEvent::PeerDiscovered { now, peer },
+                PeerEvent::PeerDiscovered { now, .. },
                 MembershipState::Unavailable { .. } | MembershipState::NotReady { .. },
-            ) => {
-                tracing::info!("Peer Discovered {:?}", peer.to_hex());
-
-                Some(MembershipState::Ready { since: now })
-            }
+            ) => Some(MembershipState::Ready { since: now }),
             (PeerEvent::PeerDiscovered { .. }, MembershipState::Ready { .. }) => None,
 
             (
                 PeerEvent::PeerUp { now, .. },
                 MembershipState::Unavailable { .. } | MembershipState::NotReady { .. },
-            ) => {
-                tracing::info!("Peer Ready");
-                Some(MembershipState::Ready { since: now })
-            }
+            ) => Some(MembershipState::Ready { since: now }),
             (PeerEvent::PeerUp { .. }, MembershipState::Ready { .. }) => None,
 
             (
@@ -230,26 +226,35 @@ impl PeerState {
                 MembershipState::Unavailable { .. } | MembershipState::NotReady { .. },
             ) => None,
             (PeerEvent::PeerDown { now, .. }, MembershipState::Ready { .. }) => {
-                tracing::info!("Peer NotReady");
                 Some(MembershipState::NotReady { since: now })
             }
         };
         if new_state.is_some() {
-            tracing::info!("new state {new_state:?}");
             self.state = new_state.unwrap();
+            let active_log_id = self
+                .active_log
+                .as_ref()
+                .map(|log| log.0.to_string())
+                .unwrap_or("unknown".into());
+            info!(parent: span, "{}({}): new state {}", self.peer.to_hex(), active_log_id, self.state);
             true
         } else {
             false
         }
     }
 
-    pub fn update_log_id(&mut self, log_id: MeshLogId, event: PeerEvent) -> Option<MeshLogId> {
+    pub fn update_log_id(
+        &mut self,
+        span: &Span,
+        log_id: MeshLogId,
+        event: PeerEvent,
+    ) -> Option<MeshLogId> {
         let simulate_peer_up = match &self.active_log {
             Some(existing) => existing.0.start_time.cmp(&log_id.0.start_time) == Ordering::Greater,
             None => true,
         };
         if simulate_peer_up {
-            self.on_event(event);
+            self.on_event(span, event);
         }
         self.active_log.replace(log_id)
     }
@@ -279,4 +284,14 @@ pub enum MembershipState {
     Ready { since: Timestamp },
     NotReady { since: Timestamp },
     Unavailable { since: Timestamp },
+}
+
+impl std::fmt::Display for MembershipState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MembershipState::Ready { since } => write!(f, "Ready(since = {since})"),
+            MembershipState::NotReady { since } => write!(f, "NotReady(since = {since})"),
+            MembershipState::Unavailable { since } => write!(f, "Unavailable(since = {since})"),
+        }
+    }
 }

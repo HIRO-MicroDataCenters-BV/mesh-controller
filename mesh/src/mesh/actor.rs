@@ -170,7 +170,9 @@ impl MeshActor {
     async fn on_peer_discovered(&mut self, peer: p2panda_core::PublicKey) {
         let now = self.clock.now_millis();
         let span = span!(Level::DEBUG, "peer_discovered", id = now.to_string());
-        let maybe_updated_membership = self.nodes.on_event(PeerEvent::PeerDiscovered { peer, now });
+        let maybe_updated_membership = self
+            .nodes
+            .on_event(&span, PeerEvent::PeerDiscovered { peer, now });
         self.update_membership(&span, maybe_updated_membership)
             .await;
     }
@@ -178,8 +180,8 @@ impl MeshActor {
     async fn on_peer_up(&mut self, peer: p2panda_core::PublicKey) {
         let now = self.clock.now_millis();
         let span = span!(Level::DEBUG, "peer_up", id = now.to_string());
-        tracing::debug!(parent: &span, "receving");
-        let maybe_updated_membership = self.nodes.on_event(PeerEvent::PeerUp { peer, now });
+        tracing::debug!(parent: &span, "system event received");
+        let maybe_updated_membership = self.nodes.on_event(&span, PeerEvent::PeerUp { peer, now });
         self.update_membership(&span, maybe_updated_membership)
             .await;
     }
@@ -187,8 +189,10 @@ impl MeshActor {
     async fn on_peer_down(&mut self, peer: p2panda_core::PublicKey) {
         let now = self.clock.now_millis();
         let span = span!(Level::DEBUG, "peer_down", id = now.to_string());
-        tracing::debug!(parent: &span, "receving");
-        let maybe_updated_membership = self.nodes.on_event(PeerEvent::PeerDown { peer, now });
+        tracing::debug!(parent: &span, "system event received");
+        let maybe_updated_membership = self
+            .nodes
+            .on_event(&span, PeerEvent::PeerDown { peer, now });
         self.update_membership(&span, maybe_updated_membership)
             .await;
     }
@@ -285,11 +289,7 @@ impl MeshActor {
         if !is_obsolete_operation {
             self.operation_log.insert(span, operation).await?;
         } else {
-            debug!(
-                parent: span,
-                "skipping Operation({}, {}), for log {:?}, obsolete log.",
-                incoming_log_id.0.zone, header.seq_num, incoming_log_id
-            );
+            debug!(parent: span, "skipping operation, obsolete log.");
         }
         if is_new_log {
             debug!(parent: span, instance_id = ?incoming_log_id.0.to_string(), "new log detected");
@@ -314,6 +314,7 @@ impl MeshActor {
                         incoming_log_id.0.to_string(), active.0.to_string()
                     );
                     self.nodes.update_log(
+                        span,
                         incoming_source.to_owned(),
                         incoming_log_id.to_owned(),
                         self.clock.now_millis(),
@@ -338,6 +339,7 @@ impl MeshActor {
             None => {
                 debug!(parent: span, "new log {} found from peer", incoming_log_id.0.to_string());
                 self.nodes.update_log(
+                    span,
                     incoming_source.to_owned(),
                     incoming_log_id.to_owned(),
                     self.clock.now_millis(),
@@ -580,9 +582,12 @@ impl MeshActor {
         // Membership Check
         self.update_membership(
             span,
-            self.nodes.on_event(PeerEvent::Tick {
-                now: self.clock.now_millis(),
-            }),
+            self.nodes.on_event(
+                span,
+                PeerEvent::Tick {
+                    now: self.clock.now_millis(),
+                },
+            ),
         )
         .await;
 
