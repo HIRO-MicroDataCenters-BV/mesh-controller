@@ -36,6 +36,22 @@ impl KubeEvent {
             KubeEvent::Snapshot { version, .. } => version,
         }
     }
+
+    pub fn get_id(&self) -> String {
+        let (event_type, id) = match self {
+            KubeEvent::Update { version, object } => (
+                "update",
+                format!("{}/{}", object.get_namespaced_name(), version),
+            ),
+            KubeEvent::Delete { version, object } => (
+                "delete",
+                format!("{}/{}", object.get_namespaced_name(), version),
+            ),
+            KubeEvent::Snapshot { version, .. } => ("snapshot", version.to_string()),
+        };
+
+        format!("{event_type}({id})")
+    }
 }
 
 impl TryFrom<Vec<u8>> for KubeEvent {

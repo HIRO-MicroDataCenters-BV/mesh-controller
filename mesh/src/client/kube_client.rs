@@ -9,7 +9,7 @@ use dashmap::DashMap;
 use either::Either;
 use futures::Stream;
 use kube::Error;
-use kube::api::ApiResource;
+use kube::api::{ApiResource, ListParams};
 use kube::config::{InferConfigError, KubeconfigError};
 use kube::{
     Api,
@@ -230,6 +230,21 @@ impl KubeClient {
                 gvk
             )))
             .map(|resource| Api::<DynamicObject>::all_with(self.client.clone(), resource.value()))
+    }
+
+    pub async fn get_latest_version(&self) -> Result<Version> {
+        use k8s_openapi::api::core::v1::Pod;
+
+        let lp = ListParams {
+            resource_version: Some("0".to_string()),
+            ..Default::default()
+        };
+        let pods: Api<Pod> = Api::all(self.client.clone());
+
+        let pod_list = pods.list(&lp).await?;
+        let latest_version_str = pod_list.metadata.resource_version.unwrap_or("0".into());
+        let latest = latest_version_str.parse::<Version>().unwrap_or_default();
+        Ok(latest)
     }
 }
 

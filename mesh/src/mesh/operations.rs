@@ -106,6 +106,7 @@ pub mod tests {
         // Snapshot1 event
         let event1 = MeshEvent::Snapshot {
             snapshot: BTreeMap::new(),
+            version: 1,
         };
         let operation1 = linked_operations.next(event1.clone());
         assert_eq!(operation1.header.backlink, None);
@@ -118,6 +119,7 @@ pub mod tests {
         // Update event
         let event2 = MeshEvent::Update {
             object: make_object("test", 1, "data"),
+            version: 1,
         };
         let operation2 = linked_operations.next(event2.clone());
         assert_eq!(operation2.header.backlink, Some(operation1.hash));
@@ -130,6 +132,7 @@ pub mod tests {
         // Snapshot2 event
         let event3 = MeshEvent::Snapshot {
             snapshot: BTreeMap::new(),
+            version: 2,
         };
         let operation3 = linked_operations.next(event3.clone());
         assert_eq!(operation3.header.backlink, Some(operation2.hash));

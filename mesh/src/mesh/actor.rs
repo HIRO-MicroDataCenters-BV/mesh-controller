@@ -13,6 +13,7 @@ use crate::kube::types::NamespacedName;
 use crate::merge::types::MergeResult;
 use crate::merge::types::Tombstone;
 use crate::mesh::event::MeshEvent;
+use crate::mesh::operation_ext::OperationExt;
 use crate::mesh::operation_log::OperationLog;
 use crate::mesh::operation_log::Ready;
 use crate::mesh::topic::MeshTopic;
@@ -34,6 +35,9 @@ use p2panda_stream::operation::IngestError;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
+use tracing::Level;
+use tracing::Span;
+use tracing::span;
 use tracing::{debug, error, trace, warn};
 
 use super::operations::LinkedOperations;
@@ -121,18 +125,21 @@ impl MeshActor {
         loop {
             tokio::select! {
                 Some(event) = self.event_rx.next() => {
-                    if let Err(err) = self.on_outgoing_to_network(event).await {
-                        error!("error while processing kube event, {}", err);
+                    let span = span!(Level::DEBUG, "kube_event", id = event.get_id());
+                    if let Err(err) = self.on_outgoing_to_network(&span, event).await {
+                        error!(parent: &span, "error while processing kube event, {}", err);
                     }
                 }
-                Some(message) = self.network_rx.recv() => {
-                    if let Err(err) = self.on_incoming_from_network(message).await {
-                        error!("error while processing network event, {}", err);
+                Some(operation) = self.network_rx.recv() => {
+                    let span = span!(Level::DEBUG, "incoming", op = %operation.get_id()?);
+                    if let Err(err) = self.on_incoming_from_network(&span, operation).await {
+                        error!(parent: &span, "error while processing network event, {}", err);
                     }
                 }
                 _ = interval.tick() => {
-                    if let Err(err) = self.on_tick().await {
-                        error!("error on tick, {}", err);
+                    let span = span!(Level::DEBUG, "tick", ts = self.clock.now_millis().to_string());
+                    if let Err(err) = self.on_tick(&span).await {
+                        error!(parent: &span, "error on tick, {}", err);
                     }
                 },
                 Ok(event) = self.system_events.recv() => {
@@ -161,90 +168,109 @@ impl MeshActor {
     }
 
     async fn on_peer_discovered(&mut self, peer: p2panda_core::PublicKey) {
-        self.update_membership(self.nodes.on_event(PeerEvent::PeerDiscovered {
-            peer,
-            now: self.clock.now_millis(),
-        }))
-        .await;
+        let now = self.clock.now_millis();
+        let span = span!(Level::DEBUG, "peer_discovered", id = now.to_string());
+        let maybe_updated_membership = self
+            .nodes
+            .on_event(&span, PeerEvent::PeerDiscovered { peer, now });
+        self.update_membership(&span, maybe_updated_membership)
+            .await;
     }
 
     async fn on_peer_up(&mut self, peer: p2panda_core::PublicKey) {
-        tracing::info!("peer up");
-        self.update_membership(self.nodes.on_event(PeerEvent::PeerUp {
-            peer,
-            now: self.clock.now_millis(),
-        }))
-        .await;
+        let now = self.clock.now_millis();
+        let span = span!(Level::DEBUG, "peer_up", id = now.to_string());
+        tracing::debug!(parent: &span, "system event received");
+        let maybe_updated_membership = self.nodes.on_event(&span, PeerEvent::PeerUp { peer, now });
+        self.update_membership(&span, maybe_updated_membership)
+            .await;
     }
 
     async fn on_peer_down(&mut self, peer: p2panda_core::PublicKey) {
-        tracing::info!("peer down");
-        self.update_membership(self.nodes.on_event(PeerEvent::PeerDown {
-            peer,
-            now: self.clock.now_millis(),
-        }))
-        .await;
+        let now = self.clock.now_millis();
+        let span = span!(Level::DEBUG, "peer_down", id = now.to_string());
+        tracing::debug!(parent: &span, "system event received");
+        let maybe_updated_membership = self
+            .nodes
+            .on_event(&span, PeerEvent::PeerDown { peer, now });
+        self.update_membership(&span, maybe_updated_membership)
+            .await;
     }
 
-    async fn update_membership(&mut self, maybe_updated_membership: Option<Membership>) {
+    async fn update_membership(
+        &mut self,
+        span: &Span,
+        maybe_updated_membership: Option<Membership>,
+    ) {
         if let Some(membership) = maybe_updated_membership {
             if !self.membership.is_equal(&membership) {
-                if let Err(err) = self.on_membership_change(membership).await {
-                    tracing::error!("membership change error {err:?}");
+                if let Err(err) = self.on_membership_change(span, membership).await {
+                    error!(parent: span, "membership change error {err:?}");
                 }
             }
         }
     }
 
-    async fn on_membership_change(&mut self, membership: Membership) -> Result<()> {
+    async fn on_membership_change(&mut self, span: &Span, membership: Membership) -> Result<()> {
         self.membership = membership;
-        tracing::info!("membership update: {}", self.membership.to_string());
-        let merge_results = self
+        debug!(parent: span, "membership update: {}", self.membership.to_string());
+        let merge_results = self.partition.mesh_onchange_membership(
+            span,
+            &self.membership,
+            &self.instance_id.zone,
+        )?;
+        self.on_merge_results(span, merge_results).await;
+        self.on_ready(span).await?;
+        Ok(())
+    }
+
+    async fn on_outgoing_to_network(&mut self, span: &Span, event: KubeEvent) -> Result<()> {
+        self.on_kube_event(span, event).await?;
+        self.on_ready(span).await?;
+        Ok(())
+    }
+
+    async fn on_kube_event(&mut self, span: &Span, event: KubeEvent) -> Result<()> {
+        let update_result = self
             .partition
-            .mesh_membership_change(&self.membership, &self.instance_id.zone)?;
-        self.on_merge_results(merge_results).await;
-        self.on_ready().await?;
-        Ok(())
-    }
-
-    async fn on_outgoing_to_network(&mut self, event: KubeEvent) -> Result<()> {
-        self.on_kube_event(event).await?;
-        self.on_ready().await?;
-        Ok(())
-    }
-
-    async fn on_kube_event(&mut self, event: KubeEvent) -> Result<()> {
-        let update_result = self.partition.kube_apply(event, &self.instance_id.zone)?;
+            .kube_apply(span, event, &self.instance_id.zone)?;
         let event: Option<MeshEvent> = update_result.into();
 
         if let Some(event) = event {
             let operation = self.operations.next(event);
             // No need to check for new log because the produced operation is for own log which never changes in current instance,
             // thus should never trigger any membership updates
-            self.operation_log.insert(operation).await?;
+            self.operation_log.insert(span, operation).await?;
         }
         Ok(())
     }
 
-    async fn on_ready(&mut self) -> Result<()> {
+    async fn on_ready(&mut self, span: &Span) -> Result<()> {
         let active_logs = self.nodes.get_remote_active_logs();
-        if let Some(mut ready) = self.operation_log.get_ready(&active_logs).await {
+        if let Some(mut ready) = self.operation_log.get_ready(span, &active_logs).await {
             self.on_ready_outgoing(&mut ready).await;
             self.on_ready_incoming(&mut ready).await?;
         }
         Ok(())
     }
 
-    async fn on_incoming_from_network(&mut self, operation: Operation<Extensions>) -> Result<()> {
-        self.insert_operation(operation).await?;
-        self.on_ready().await
+    async fn on_incoming_from_network(
+        &mut self,
+        span: &Span,
+        operation: Operation<Extensions>,
+    ) -> Result<()> {
+        self.insert_operation(span, operation).await?;
+        self.on_ready(span).await
     }
 
-    async fn insert_operation(&mut self, operation: Operation<Extensions>) -> Result<()> {
+    async fn insert_operation(
+        &mut self,
+        span: &Span,
+        operation: Operation<Extensions>,
+    ) -> Result<()> {
         let peer = operation.header.public_key;
 
         let Operation { header, .. } = &operation;
-
         let Some(extensions) = header.extensions.as_ref() else {
             return Err(IngestError::MissingHeaderExtension("extension".into()).into());
         };
@@ -255,28 +281,27 @@ impl MeshActor {
             is_obsolete_operation,
             is_new_log,
             old_log,
-        } = self.update_log_id(&peer, &incoming_log_id);
+        } = self.update_log_id(span, &peer, &incoming_log_id);
         if is_new_log {
             self.operation_log
                 .update_active_log(incoming_log_id.to_owned(), old_log);
         }
         if !is_obsolete_operation {
-            self.operation_log.insert(operation).await?;
+            self.operation_log.insert(span, operation).await?;
         } else {
-            debug!(
-                "skipping Operation({}, {}), for log {:?}, obsolete log.",
-                incoming_log_id.0.zone, header.seq_num, incoming_log_id
-            );
+            debug!(parent: span, "skipping operation, obsolete log.");
         }
         if is_new_log {
+            debug!(parent: span, instance_id = ?incoming_log_id.0.to_string(), "new log detected");
             let membership = self.nodes.get_membership(self.clock.now_millis());
-            self.update_membership(Some(membership)).await;
+            self.update_membership(span, Some(membership)).await;
         }
         Ok(())
     }
 
     fn update_log_id(
         &mut self,
+        span: &Span,
         incoming_source: &PublicKey,
         incoming_log_id: &MeshLogId,
     ) -> UpdateLogIdResult {
@@ -284,10 +309,12 @@ impl MeshActor {
             Some(active) => match active.0.start_time.cmp(&incoming_log_id.0.start_time) {
                 std::cmp::Ordering::Less => {
                     debug!(
+                        parent: span,
                         "new log {} found from peer, and replaced old {}",
-                        incoming_log_id, active
+                        incoming_log_id.0.to_string(), active.0.to_string()
                     );
                     self.nodes.update_log(
+                        span,
                         incoming_source.to_owned(),
                         incoming_log_id.to_owned(),
                         self.clock.now_millis(),
@@ -310,8 +337,9 @@ impl MeshActor {
                 },
             },
             None => {
-                debug!("new log {} found from peer", incoming_log_id);
+                debug!(parent: span, "new log {} found from peer", incoming_log_id.0.to_string());
                 self.nodes.update_log(
+                    span,
                     incoming_source.to_owned(),
                     incoming_log_id.to_owned(),
                     self.clock.now_millis(),
@@ -328,77 +356,95 @@ impl MeshActor {
     async fn on_ready_incoming(&mut self, ready: &mut Ready) -> Result<(), anyhow::Error> {
         for (log_id, ops) in ready.take_incoming().into_iter() {
             for operation in ops.into_iter() {
+                let span = span!(Level::DEBUG, "apply-operation", id = %operation.get_id()?);
                 let pointer = operation.header.seq_num;
                 if let Some(body) = operation.body {
                     let mesh_event = MeshEvent::try_from(body.to_bytes())?;
                     let merge_results = self.partition.mesh_apply(
+                        &span,
                         mesh_event,
                         &log_id.0.zone,
                         &self.instance_id.zone,
                         &self.membership,
                     )?;
-                    self.on_merge_results(merge_results).await;
+                    let event_types: Vec<&str> =
+                        merge_results.iter().map(|e| e.event_type()).collect();
+                    debug!(
+                        parent: &span,
+                        "merge result: {:?}",
+                        event_types
+                    );
+                    self.on_merge_results(&span, merge_results).await;
                     self.operation_log.advance_log_pointer(&log_id, pointer + 1);
                 } else {
-                    error!("event has no body");
+                    error!(parent: span, "event has no body");
                 }
             }
         }
         Ok(())
     }
 
-    async fn on_merge_results(&mut self, merge_results: Vec<MergeResult>) {
+    async fn on_merge_results(&mut self, span: &Span, merge_results: Vec<MergeResult>) {
         for merge_result in merge_results.into_iter() {
-            let ok_or_error = self.on_merge_result(merge_result).await;
+            let ok_or_error = self.on_merge_result(span, merge_result).await;
             if let Err(err) = ok_or_error {
-                error!("error while merging {err}");
+                error!(parent: span, "error while merging {err}");
             }
         }
     }
 
-    async fn on_merge_result(&mut self, merge_result: MergeResult) -> Result<()> {
+    async fn on_merge_result(&mut self, span: &Span, merge_result: MergeResult) -> Result<()> {
         let event = if let MergeResult::Update { event, .. } = &merge_result {
             event.clone()
         } else {
             None
         };
 
-        let initial_ok_or_error = self.kube_apply(merge_result).await;
+        let initial_ok_or_error = self.kube_apply(span, merge_result).await;
 
         let final_ok_or_result = match initial_ok_or_error {
             Ok(PersistenceResult::Conflict {
                 gvk,
                 name,
                 operation_type,
-            }) => self.forced_sync(gvk, name, operation_type).await,
+            }) => self.forced_sync(span, gvk, name, operation_type).await,
             Ok(ok) => Ok(ok),
             Err(err) => Err(err),
         };
 
-        if let (Ok(PersistenceResult::Persisted), Some(event)) = (&final_ok_or_result, event) {
+        if let (Ok(PersistenceResult::Persisted(version)), Some(mut event)) =
+            (&final_ok_or_result, event)
+        {
+            event.set_zone_version(*version);
             let operation = self.operations.next(event);
+            debug!(parent: span, "inserting new event from persisted operation");
             // this insert into own log therefore no need to check for new logs and update membership
-            self.operation_log.insert(operation).await?;
+            self.operation_log.insert(span, operation).await?;
         }
         final_ok_or_result.map(|_| ())
     }
 
-    async fn kube_apply(&mut self, merge_result: MergeResult) -> Result<PersistenceResult> {
+    async fn kube_apply(
+        &mut self,
+        span: &Span,
+        merge_result: MergeResult,
+    ) -> Result<PersistenceResult> {
         match merge_result {
-            MergeResult::Create { object } => self.kube_patch_apply(object).await,
-            MergeResult::Update { object, .. } => self.kube_patch_apply(object).await,
+            MergeResult::Create { object } => self.kube_patch_apply(span, object).await,
+            MergeResult::Update { object, .. } => self.kube_patch_apply(span, object).await,
             MergeResult::Delete(Tombstone {
                 gvk,
                 name,
                 resource_version,
                 ..
-            }) => self.kube_delete(&gvk, &name, resource_version).await,
+            }) => self.kube_delete(span, &gvk, &name, resource_version).await,
             MergeResult::Skip | MergeResult::Tombstone { .. } => Ok(PersistenceResult::Skipped),
         }
     }
 
     async fn forced_sync(
         &mut self,
+        span: &Span,
         gvk: GroupVersionKind,
         name: NamespacedName,
         operation_type: OperationType,
@@ -413,15 +459,15 @@ impl MeshActor {
                     OperationType::Update => KubeEvent::Update { version, object },
                     OperationType::Delete => KubeEvent::Delete { version, object },
                 };
-                if let Err(err) = self.on_kube_event(event).await {
-                    error!("on_event error during forced sync {err}");
+                if let Err(err) = self.on_kube_event(span, event).await {
+                    error!(parent: span, "on_event error during forced sync {err}");
                 }
                 self.partition.update_resource_version(&name, version);
                 if let Some(current) = self.partition.get(&name) {
                     persistence_result = match operation_type {
-                        OperationType::Update => self.kube_patch_apply(current).await?,
+                        OperationType::Update => self.kube_patch_apply(span, current).await?,
                         OperationType::Delete => {
-                            self.kube_delete(&gvk, &name, current.get_resource_version())
+                            self.kube_delete(span, &gvk, &name, current.get_resource_version())
                                 .await?
                         }
                     };
@@ -432,19 +478,24 @@ impl MeshActor {
                     return Ok(PersistenceResult::Skipped);
                 }
             } else {
-                warn!("object {gvk:?} is no longer present");
+                warn!(parent: span, "object {gvk:?} is no longer present");
                 return Ok(PersistenceResult::Skipped);
             }
             attempts -= 1;
         }
         warn!(
+            parent: span,
             "Conflicts: Number of attempts ({DEFAULT_FORCED_SYNC_MAX_ATTEMPTS}) is exhausted while updating object {}",
             name
         );
         Ok(persistence_result)
     }
 
-    async fn kube_patch_apply(&mut self, mut object: DynamicObject) -> Result<PersistenceResult> {
+    async fn kube_patch_apply(
+        &mut self,
+        span: &Span,
+        mut object: DynamicObject,
+    ) -> Result<PersistenceResult> {
         let gvk = object.get_gvk()?;
         let name = object.get_namespaced_name();
 
@@ -456,6 +507,7 @@ impl MeshActor {
             object.types = existing.types;
             object.metadata.uid = existing.metadata.uid;
             debug!(
+                parent: span,
                 "patch apply: existing version {}, object version {}",
                 existing_version,
                 object.get_resource_version()
@@ -470,10 +522,10 @@ impl MeshActor {
         match ok_or_error {
             Ok(new_version) => {
                 self.partition.update_resource_version(&name, new_version);
-                Ok(PersistenceResult::Persisted)
+                Ok(PersistenceResult::Persisted(new_version))
             }
             Err(ClientError::VersionConflict) => {
-                debug!("Version Conflict for resource {}", name);
+                debug!(parent: span, "Version Conflict for resource {}", name);
                 Ok(PersistenceResult::Conflict {
                     gvk,
                     name,
@@ -486,6 +538,7 @@ impl MeshActor {
 
     async fn kube_delete(
         &mut self,
+        span: &Span,
         gvk: &GroupVersionKind,
         name: &NamespacedName,
         version: Version,
@@ -506,13 +559,14 @@ impl MeshActor {
             let object_or_status = self.subscriptions.client().delete(gvk, name).await?;
             object_or_status.map_right(|status|{
                 if status.is_failure() {
-                    error!(%name, %status.code, %status.message, %status.reason, "delete object failure");
+                    error!(parent: span, %name, %status.code, %status.message, %status.reason, "delete object failure");
                 }
             });
         } else {
-            warn!(%name, "Object not found. Skipping delete.");
+            warn!(parent: span, %name, "Object not found. Skipping delete.");
         }
-        Ok(PersistenceResult::Persisted)
+        let version = self.subscriptions.client().get_latest_version().await?;
+        Ok(PersistenceResult::Persisted(version))
     }
 
     async fn on_ready_outgoing(&mut self, ready: &mut Ready) {
@@ -524,15 +578,21 @@ impl MeshActor {
         }
     }
 
-    async fn on_tick(&mut self) -> Result<()> {
+    async fn on_tick(&mut self, span: &Span) -> Result<()> {
         // Membership Check
-        self.update_membership(self.nodes.on_event(PeerEvent::Tick {
-            now: self.clock.now_millis(),
-        }))
+        self.update_membership(
+            span,
+            self.nodes.on_event(
+                span,
+                PeerEvent::Tick {
+                    now: self.clock.now_millis(),
+                },
+            ),
+        )
         .await;
 
         // Send/Receive
-        self.on_ready().await?;
+        self.on_ready(span).await?;
 
         // Cleanup
         let truncate_size =
@@ -546,10 +606,10 @@ impl MeshActor {
         let snapshot_time =
             duration_since_last_snapshot > self.snapshot_config.snapshot_interval_seconds;
         if truncate_size || snapshot_time {
-            self.send_snapshot().await?;
+            self.send_snapshot(span).await?;
             let obsolete_log_ids = self.nodes.take_obsolete_log_ids();
             self.operation_log
-                .truncate_obsolete_logs(obsolete_log_ids)
+                .truncate_obsolete_logs(span, obsolete_log_ids)
                 .await?;
         }
 
@@ -559,11 +619,14 @@ impl MeshActor {
         Ok(())
     }
 
-    async fn send_snapshot(&mut self) -> Result<()> {
-        trace!("Periodic snapshot");
-        let event = self.partition.get_mesh_snapshot(&self.instance_id.zone);
+    async fn send_snapshot(&mut self, span: &Span) -> Result<()> {
+        trace!(parent: span, "Periodic snapshot");
+        let version = self.subscriptions.client().get_latest_version().await?;
+        let event = self
+            .partition
+            .mesh_gen_snapshot(&self.instance_id.zone, version);
         let operation = self.operations.next(event);
-        self.on_incoming_from_network(operation).await?;
+        self.on_incoming_from_network(span, operation).await?;
         self.last_snapshot_time = self.clock.now();
         Ok(())
     }
@@ -577,7 +640,7 @@ pub enum OperationType {
 
 #[derive(Debug, Clone)]
 pub enum PersistenceResult {
-    Persisted,
+    Persisted(Version),
     Conflict {
         gvk: GroupVersionKind,
         name: NamespacedName,

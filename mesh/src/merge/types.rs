@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use anyhow::Result;
 use kube::api::{DynamicObject, GroupVersionKind};
+use tracing::Span;
 
 use crate::{
     kube::{subscriptions::Version, types::NamespacedName},
@@ -23,19 +24,35 @@ pub enum MergeResult {
     Skip,
 }
 
+impl MergeResult {
+    pub fn event_type(&self) -> &str {
+        match self {
+            MergeResult::Create { .. } => "create",
+            MergeResult::Update { .. } => "update",
+            MergeResult::Delete { .. } => "delete",
+            MergeResult::Tombstone { .. } => "tombstone",
+            MergeResult::Skip => "skip",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum UpdateResult {
     Create {
+        version: Version,
         object: DynamicObject,
     },
     Update {
+        version: Version,
         object: DynamicObject,
     },
     Delete {
+        version: Version,
         object: DynamicObject,
         tombstone: Tombstone,
     },
     Snapshot {
+        version: Version,
         snapshot: BTreeMap<NamespacedName, DynamicObject>,
     },
     Tombstone(Tombstone),
@@ -68,6 +85,7 @@ impl From<DynamicObject> for VersionedObject {
 pub trait MergeStrategy: Send + Sync {
     fn kube_update(
         &self,
+        span: &Span,
         current: VersionedObject,
         incoming: DynamicObject,
         incoming_resource_version: Version,
@@ -76,6 +94,7 @@ pub trait MergeStrategy: Send + Sync {
 
     fn kube_delete(
         &self,
+        span: &Span,
         current: VersionedObject,
         incoming: DynamicObject,
         incoming_resource_version: Version,
@@ -85,6 +104,7 @@ pub trait MergeStrategy: Send + Sync {
 
     fn mesh_update(
         &self,
+        span: &Span,
         current: VersionedObject,
         incoming: DynamicObject,
         incoming_zone: &str,
@@ -94,6 +114,7 @@ pub trait MergeStrategy: Send + Sync {
 
     fn mesh_delete(
         &self,
+        span: &Span,
         current: VersionedObject,
         incoming: DynamicObject,
         incoming_zone: &str,
@@ -102,6 +123,7 @@ pub trait MergeStrategy: Send + Sync {
 
     fn mesh_membership_change(
         &self,
+        span: &Span,
         current: VersionedObject,
         membership: &Membership,
         node_zone: &str,
@@ -112,4 +134,11 @@ pub trait MergeStrategy: Send + Sync {
     fn is_owner_zone(&self, current: &VersionedObject, zone: &str) -> bool;
 
     fn is_owner_zone_object(&self, current: &DynamicObject, zone: &str) -> bool;
+
+    fn construct_remote_versions(
+        &self,
+        span: &Span,
+        snapshot: &BTreeMap<NamespacedName, DynamicObject>,
+        node_zone: &str,
+    ) -> Result<BTreeMap<String, Version>>;
 }
