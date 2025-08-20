@@ -14,8 +14,7 @@ use crate::{
     kube::{dynamic_object_ext::DynamicObjectExt, event::KubeEvent, types::NamespacedName},
     merge::types::{MergeResult, MergeStrategy, UpdateResult},
 };
-use anyapplication::{anyapplication::AnyApplication, anyapplication_ext::AnyApplicationExt};
-use anyhow::{Context, Result};
+use anyhow::Result;
 use kube::api::DynamicObject;
 use tracing::{Span, debug, warn};
 
@@ -244,7 +243,7 @@ impl Partition {
         Ok(results)
     }
 
-    pub fn get_mesh_snapshot(&mut self, current_zone: &str, version: Version) -> MeshEvent {
+    pub fn mesh_gen_snapshot(&mut self, current_zone: &str, version: Version) -> MeshEvent {
         let owned: HashSet<NamespacedName> = self
             .resources
             .iter()
@@ -263,14 +262,14 @@ impl Partition {
             };
             snapshot.insert(name, object.to_owned());
         }
-        self.zone_version = version; // TODO ugly mutation
+        self.zone_version = Version::max(self.zone_version, version);
         MeshEvent::Snapshot {
             snapshot,
             version: self.zone_version,
         }
     }
 
-    pub fn mesh_membership_change(
+    pub fn mesh_onchange_membership(
         &mut self,
         span: &Span,
         membership: &Membership,
@@ -348,7 +347,7 @@ impl Partition {
                         self.kube_apply_snapshot(span, version, snapshot, current_zone, true)?;
                     self.initialized = true;
                     self.zone_version = Version::max(self.zone_version, version);
-                    debug!("partition initialized");
+                    debug!(parent: span, "partition initialized");
                     Ok(snapshot_result)
                 } else {
                     let snapshot_result =
@@ -427,27 +426,9 @@ impl Partition {
         initial: bool,
     ) -> Result<UpdateResult> {
         if initial {
-            // Initialize known remote zones versions from resources
-            let mut remote_zone_versions: BTreeMap<String, Version> = BTreeMap::new();
-            // TODO move into the anyapplication strategy
-            for object in snapshot.values() {
-                let remote_version = object.get_owner_version();
-                let name = object.get_namespaced_name();
-                let application: AnyApplication = object
-                    .to_owned()
-                    .try_parse()
-                    .context("parsing AnyApplication resource from snapshot")?;
-                let zone = application.get_owner_zone();
-                if zone != current_zone {
-                    if let Some(remote_version) = remote_version {
-                        let current = remote_zone_versions.entry(zone).or_insert(remote_version);
-                        *current = Version::max(*current, remote_version);
-                    } else {
-                        warn!(parent: span, %name, "kube apply snapshot (initial), resource has no owner version. Skipping...")
-                    }
-                }
-            }
-            self.remote_zone_versions = remote_zone_versions;
+            self.remote_zone_versions =
+                self.merge_strategy
+                    .construct_remote_versions(span, &snapshot, current_zone)?;
         }
 
         let owned_resources: HashSet<NamespacedName> = snapshot
@@ -505,8 +486,6 @@ impl Partition {
                 .collect();
 
             // Inserting tombstone if partition contains object which is absent in kube snapshot
-            // This is probably not possible anymore since the owner can change
-            // TODO reconsider
             for name in owned_by_current_zone_not_in_snapshot {
                 match self
                     .resources
@@ -648,7 +627,7 @@ pub mod tests {
         );
 
         // 2. Incremental snapshot
-        let actual_incremental_snapshot = partition.get_mesh_snapshot("A", 1);
+        let actual_incremental_snapshot = partition.mesh_gen_snapshot("A", 1);
         assert_eq!(
             actual_incremental_snapshot,
             MeshEvent::Snapshot {
@@ -693,7 +672,7 @@ pub mod tests {
         membership.add(InstanceId::new("B".into()));
 
         let actual_change_result = partition
-            .mesh_membership_change(&span, &membership, "B")
+            .mesh_onchange_membership(&span, &membership, "B")
             .unwrap();
 
         let app_a1_expected = make_anyapplication_with_conditions(

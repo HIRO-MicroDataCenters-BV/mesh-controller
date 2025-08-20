@@ -134,4 +134,11 @@ pub trait MergeStrategy: Send + Sync {
     fn is_owner_zone(&self, current: &VersionedObject, zone: &str) -> bool;
 
     fn is_owner_zone_object(&self, current: &DynamicObject, zone: &str) -> bool;
+
+    fn construct_remote_versions(
+        &self,
+        span: &Span,
+        snapshot: &BTreeMap<NamespacedName, DynamicObject>,
+        node_zone: &str,
+    ) -> Result<BTreeMap<String, Version>>;
 }

@@ -1,12 +1,14 @@
+use std::collections::BTreeMap;
+
 use super::types::{MergeResult, MergeStrategy, UpdateResult};
 use crate::{
-    kube::{dynamic_object_ext::DynamicObjectExt, subscriptions::Version},
+    kube::{dynamic_object_ext::DynamicObjectExt, subscriptions::Version, types::NamespacedName},
     merge::types::{Tombstone, VersionedObject},
     network::discovery::types::Membership,
 };
 use anyhow::Result;
 use kube::api::{DynamicObject, GroupVersionKind, TypeMeta};
-use tracing::Span;
+use tracing::{Span, warn};
 
 pub struct DefaultMerge {
     gvk: GroupVersionKind,
@@ -234,6 +236,29 @@ impl MergeStrategy for DefaultMerge {
         _node_zone: &str,
     ) -> Result<Vec<MergeResult>> {
         Ok(vec![])
+    }
+
+    fn construct_remote_versions(
+        &self,
+        span: &Span,
+        snapshot: &BTreeMap<NamespacedName, DynamicObject>,
+        node_zone: &str,
+    ) -> Result<BTreeMap<String, Version>> {
+        let mut remote_zone_versions: BTreeMap<String, Version> = BTreeMap::new();
+        for object in snapshot.values() {
+            let remote_version = object.get_owner_version();
+            let name = object.get_namespaced_name();
+            let zone = object.get_owner_zone()?;
+            if zone != node_zone {
+                if let Some(remote_version) = remote_version {
+                    let current = remote_zone_versions.entry(zone).or_insert(remote_version);
+                    *current = Version::max(*current, remote_version);
+                } else {
+                    warn!(parent: span, %name, "kube apply snapshot (initial), resource has no owner version. Skipping...")
+                }
+            }
+        }
+        Ok(remote_zone_versions)
     }
 }
 

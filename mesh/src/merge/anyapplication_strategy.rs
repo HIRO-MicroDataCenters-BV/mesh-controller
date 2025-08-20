@@ -1,8 +1,11 @@
+use std::collections::BTreeMap;
+
 use super::types::{MergeResult, MergeStrategy, UpdateResult};
 use crate::{
     kube::{
         dynamic_object_ext::{DynamicObjectExt, dump_zones},
         subscriptions::Version,
+        types::NamespacedName,
     },
     merge::types::{Tombstone, VersionedObject},
     mesh::{event::MeshEvent, topic::InstanceId},
@@ -15,9 +18,9 @@ use anyapplication::{
     },
     anyapplication_ext::{AnyApplicationExt, AnyApplicationStatusOwnershipExt},
 };
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use kube::api::{DynamicObject, GroupVersionKind};
-use tracing::{Span, debug, error};
+use tracing::{Span, debug, error, warn};
 
 pub struct AnyApplicationMerge {
     gvk: GroupVersionKind,
@@ -352,6 +355,33 @@ impl MergeStrategy for AnyApplicationMerge {
             }
             VersionedObject::NonExisting | VersionedObject::Tombstone(_) => Ok(vec![]),
         }
+    }
+
+    fn construct_remote_versions(
+        &self,
+        span: &Span,
+        snapshot: &BTreeMap<NamespacedName, DynamicObject>,
+        node_zone: &str,
+    ) -> Result<BTreeMap<String, Version>> {
+        let mut remote_zone_versions: BTreeMap<String, Version> = BTreeMap::new();
+        for object in snapshot.values() {
+            let remote_version = object.get_owner_version();
+            let name = object.get_namespaced_name();
+            let application: AnyApplication = object
+                .to_owned()
+                .try_parse()
+                .context("parsing AnyApplication resource from snapshot")?;
+            let zone = application.get_owner_zone();
+            if zone != node_zone {
+                if let Some(remote_version) = remote_version {
+                    let current = remote_zone_versions.entry(zone).or_insert(remote_version);
+                    *current = Version::max(*current, remote_version);
+                } else {
+                    warn!(parent: span, %name, "kube apply snapshot (initial), resource has no owner version. Skipping...")
+                }
+            }
+        }
+        Ok(remote_zone_versions)
     }
 }
 
@@ -799,11 +829,11 @@ impl AnyApplicationMerge {
         if acceptable_zone {
             incoming.metadata.managed_fields = None;
             incoming.metadata.uid = None;
-            tracing::info!(parent: span, %name, "merge update over non existing: create new");
+            debug!(parent: span, %name, "merge update over non existing: create new");
             let object = incoming.to_object()?;
             Ok(MergeResult::Create { object })
         } else {
-            tracing::info!(parent: span, %name, "merge update over non existing: skipping update");
+            debug!(parent: span, %name, "merge update over non existing: skipping update");
             Ok(MergeResult::Skip)
         }
     }
@@ -826,7 +856,7 @@ impl AnyApplicationMerge {
         let incoming_owner_epoch = incoming_app.get_owner_epoch();
         let incoming_create_timestamp = incoming_app.get_create_timestamp();
 
-        tracing::info!(parent: span, %name, "merge-update-tombstone, current{{version = {current_owner_version}, zone = {current_owner_zone}, delete_timestamp = {current_delete_timestamp} }}, incoming {{ version = {incoming_owner_version}, zone = {incoming_owner_zone}, epoch = {incoming_owner_epoch}, create_timestamp = {incoming_create_timestamp} }}");
+        debug!(parent: span, %name, "merge-update-tombstone, current{{version = {current_owner_version}, zone = {current_owner_zone}, delete_timestamp = {current_delete_timestamp} }}, incoming {{ version = {incoming_owner_version}, zone = {incoming_owner_zone}, epoch = {incoming_owner_epoch}, create_timestamp = {incoming_create_timestamp} }}");
         // tombstone update is possible only from owning zone
         let acceptable_zone = incoming_owner_zone == received_from_zone;
         if !acceptable_zone {
@@ -839,10 +869,10 @@ impl AnyApplicationMerge {
             && current_delete_timestamp < incoming_create_timestamp;
         if is_other_zone_greater_timestamp || is_same_zone_greater_version {
             // tomstone is older than incoming =>
-            tracing::info!(parent: span, %name, "merge update over tombstone: creating resource");
+            debug!(parent: span, %name, "merge update over tombstone: creating resource");
             self.mesh_update_create(span, incoming, received_from_zone)
         } else {
-            tracing::info!(parent: span, %name, "merge update over tombstone: skipping update");
+            debug!(parent: span, %name, "merge update over tombstone: skipping update");
             // tombstone is newer than incoming => ignore
             Ok(MergeResult::Skip)
         }
@@ -885,9 +915,9 @@ impl AnyApplicationMerge {
                 .map(|t| t.0.timestamp_millis() as u64)
                 .unwrap_or(now_millis);
             if is_same_zone_greater_version {
-                tracing::info!(parent: span, %name, "mesh delete - new version received");
+                debug!(parent: span, %name, "mesh delete - new version received");
             } else {
-                tracing::info!(parent: span, %name, "mesh delete - new epoch received");
+                debug!(parent: span, %name, "mesh delete - new epoch received");
             }
             Ok(MergeResult::Delete(Tombstone {
                 gvk: self.gvk.to_owned(),
@@ -898,7 +928,7 @@ impl AnyApplicationMerge {
                 deletion_timestamp,
             }))
         } else {
-            tracing::info!(%name, "skipping delete");
+            debug!(parent: span, %name, "skipping delete");
             Ok(MergeResult::Skip)
         }
     }

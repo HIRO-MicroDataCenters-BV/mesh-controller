@@ -214,7 +214,7 @@ impl MeshActor {
     async fn on_membership_change(&mut self, span: &Span, membership: Membership) -> Result<()> {
         self.membership = membership;
         debug!(parent: span, "membership update: {}", self.membership.to_string());
-        let merge_results = self.partition.mesh_membership_change(
+        let merge_results = self.partition.mesh_onchange_membership(
             span,
             &self.membership,
             &self.instance_id.zone,
@@ -624,7 +624,7 @@ impl MeshActor {
         let version = self.subscriptions.client().get_latest_version().await?;
         let event = self
             .partition
-            .get_mesh_snapshot(&self.instance_id.zone, version);
+            .mesh_gen_snapshot(&self.instance_id.zone, version);
         let operation = self.operations.next(event);
         self.on_incoming_from_network(span, operation).await?;
         self.last_snapshot_time = self.clock.now();
