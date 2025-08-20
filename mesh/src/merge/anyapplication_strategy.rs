@@ -17,7 +17,7 @@ use anyapplication::{
 };
 use anyhow::{Result, anyhow};
 use kube::api::{DynamicObject, GroupVersionKind};
-use tracing::error;
+use tracing::{Span, debug, error};
 
 pub struct AnyApplicationMerge {
     gvk: GroupVersionKind,
@@ -26,6 +26,7 @@ pub struct AnyApplicationMerge {
 impl MergeStrategy for AnyApplicationMerge {
     fn mesh_update(
         &self,
+        span: &Span,
         current: VersionedObject,
         incoming: DynamicObject,
         received_from_zone: &str,
@@ -34,21 +35,25 @@ impl MergeStrategy for AnyApplicationMerge {
     ) -> Result<MergeResult> {
         match current {
             VersionedObject::Object(current) => self.mesh_update_update(
+                span,
                 current,
                 incoming,
                 received_from_zone,
                 node_zone,
                 membership,
             ),
-            VersionedObject::NonExisting => self.mesh_update_create(incoming, received_from_zone),
+            VersionedObject::NonExisting => {
+                self.mesh_update_create(span, incoming, received_from_zone)
+            }
             VersionedObject::Tombstone(tombstone) => {
-                self.mesh_update_tombstone(tombstone, incoming, received_from_zone)
+                self.mesh_update_tombstone(span, tombstone, incoming, received_from_zone)
             }
         }
     }
 
     fn mesh_delete(
         &self,
+        span: &Span,
         current: VersionedObject,
         incoming: DynamicObject,
         incoming_zone: &str,
@@ -56,7 +61,7 @@ impl MergeStrategy for AnyApplicationMerge {
     ) -> Result<MergeResult> {
         match current {
             VersionedObject::Object(current) => {
-                self.mesh_delete_internal(current, incoming, incoming_zone, now_millis)
+                self.mesh_delete_internal(span, current, incoming, incoming_zone, now_millis)
             }
             VersionedObject::NonExisting => Ok(MergeResult::Tombstone(Tombstone {
                 gvk: self.gvk.to_owned(),
@@ -112,6 +117,7 @@ impl MergeStrategy for AnyApplicationMerge {
 
     fn kube_update(
         &self,
+        span: &Span,
         current: VersionedObject,
         incoming: DynamicObject,
         incoming_resource_version: Version,
@@ -122,13 +128,13 @@ impl MergeStrategy for AnyApplicationMerge {
             return Ok(UpdateResult::Skip);
         }
 
+        let name = incoming.get_namespaced_name();
         let mut incoming: AnyApplication = incoming.clone().try_parse()?;
 
         let is_acceptable_zone = incoming.is_acceptable_zone(node_zone);
         if !is_acceptable_zone {
             return Ok(UpdateResult::Skip);
         }
-
         let is_owned_zone = incoming.is_owned_zone(node_zone);
         match current {
             VersionedObject::Object(current) => {
@@ -137,7 +143,7 @@ impl MergeStrategy for AnyApplicationMerge {
                     .get_resource_version()
                     .ok_or(anyhow!("resource version is absent"));
                 if maybe_current_version.is_err() {
-                    error!("current resource version is not available: {current:?}");
+                    error!(parent: span, %name, "current resource version is not available: {current:?}");
                 }
                 let current_version = maybe_current_version.unwrap();
                 if current_version >= incoming_resource_version {
@@ -168,7 +174,11 @@ impl MergeStrategy for AnyApplicationMerge {
                     if incoming_resource_version > current_version {
                         object.set_resource_version(incoming_resource_version);
                     }
-                    Ok(UpdateResult::Update { object })
+                    debug!(parent: span, %name, "resource updated");
+                    Ok(UpdateResult::Update {
+                        object,
+                        version: incoming_resource_version,
+                    })
                 } else {
                     Ok(UpdateResult::Skip)
                 }
@@ -179,7 +189,11 @@ impl MergeStrategy for AnyApplicationMerge {
                 }
                 let mut object = incoming.to_object()?;
                 object.set_resource_version(incoming_resource_version);
-                Ok(UpdateResult::Create { object })
+                debug!(parent: span, %name, "resource created, previous non-existing");
+                Ok(UpdateResult::Create {
+                    object,
+                    version: incoming_resource_version,
+                })
             }
             VersionedObject::Tombstone(tombstone) => {
                 if tombstone.owner_version >= incoming_resource_version {
@@ -190,7 +204,11 @@ impl MergeStrategy for AnyApplicationMerge {
                     }
                     let mut object = incoming.to_object()?;
                     object.set_resource_version(incoming_resource_version);
-                    Ok(UpdateResult::Create { object })
+                    debug!(parent: span, %name, "resource created, previous tombstone");
+                    Ok(UpdateResult::Create {
+                        object,
+                        version: incoming_resource_version,
+                    })
                 }
             }
         }
@@ -198,6 +216,7 @@ impl MergeStrategy for AnyApplicationMerge {
 
     fn kube_delete(
         &self,
+        span: &Span,
         current: VersionedObject,
         incoming: DynamicObject,
         incoming_version: Version,
@@ -218,8 +237,10 @@ impl MergeStrategy for AnyApplicationMerge {
                 let mut object = incoming.to_object()?;
 
                 object.set_resource_version(incoming_version);
+                debug!(parent: span, %name, "resource deleted, previous existing");
                 Ok(UpdateResult::Delete {
                     object,
+                    version: incoming_version,
                     tombstone: Tombstone {
                         gvk: self.gvk.to_owned(),
                         name,
@@ -230,16 +251,20 @@ impl MergeStrategy for AnyApplicationMerge {
                     },
                 })
             }
-            VersionedObject::NonExisting => Ok(UpdateResult::Tombstone(Tombstone {
-                gvk: self.gvk.to_owned(),
-                name,
-                owner_version: incoming_version,
-                owner_zone: node_zone.to_owned(),
-                resource_version: incoming_version,
-                deletion_timestamp: now_millis,
-            })),
+            VersionedObject::NonExisting => {
+                debug!(parent: span, %name, "resource tombstone created, previous non-existing");
+                Ok(UpdateResult::Tombstone(Tombstone {
+                    gvk: self.gvk.to_owned(),
+                    name,
+                    owner_version: incoming_version,
+                    owner_zone: node_zone.to_owned(),
+                    resource_version: incoming_version,
+                    deletion_timestamp: now_millis,
+                }))
+            }
             VersionedObject::Tombstone(tombstone) => {
                 let max_version = Version::max(tombstone.owner_version, incoming_version);
+                debug!(parent: span, %name, "resource tombstone updated, previous tombstone");
                 Ok(UpdateResult::Tombstone(Tombstone {
                     gvk: self.gvk.to_owned(),
                     name,
@@ -278,12 +303,15 @@ impl MergeStrategy for AnyApplicationMerge {
 
     fn mesh_membership_change(
         &self,
+        span: &Span,
         current: VersionedObject,
         membership: &Membership,
         node_zone: &str,
     ) -> Result<Vec<MergeResult>> {
         match current {
             VersionedObject::Object(current) => {
+                let resource_version = current.get_resource_version();
+                let name = current.get_namespaced_name();
                 let mut current: AnyApplication = current.try_parse()?;
                 let maybe_instance = membership.get_instance(&current.get_owner_zone());
                 if maybe_instance.is_some() {
@@ -305,13 +333,16 @@ impl MergeStrategy for AnyApplicationMerge {
                         if let Some(status) = &mut current.status {
                             status.ownership.owner = instance.zone.to_owned();
                             status.ownership.epoch += 1;
+                            debug!(parent: span, %name, "taking over ownership: new epoch = {}", status.ownership.epoch);
                             let merge_result = current.clone().to_object()?;
                             let mut event_object = current.to_object()?;
+                            event_object.set_owner_version(resource_version);
                             event_object.unset_resource_version();
                             return Ok(vec![MergeResult::Update {
                                 object: merge_result,
                                 event: Some(MeshEvent::Update {
                                     object: event_object,
+                                    version: 0,
                                 }),
                             }]);
                         }
@@ -339,12 +370,14 @@ impl AnyApplicationMerge {
 
     fn mesh_update_update(
         &self,
+        span: &Span,
         current: DynamicObject,
         incoming: DynamicObject,
         received_from_zone: &str,
         node_zone: &str,
         membership: &Membership,
     ) -> Result<MergeResult> {
+        let name = current.get_namespaced_name();
         let mut current: AnyApplication = current.try_parse()?;
         let current_owner_version = current.get_owner_version()?;
         let current_owner_zone = current.get_owner_zone();
@@ -355,6 +388,10 @@ impl AnyApplicationMerge {
         let incoming_owner_zone = incoming.get_owner_zone();
         let incoming_owner_epoch = incoming.get_owner_epoch();
         let incoming_zones = incoming.get_status_zone_ids();
+
+        debug!(parent: span, %name, "merge-update, current{{version = {current_owner_version}, zone = {current_owner_zone}, epoch = {current_owner_epoch} }}, incoming {{ version = {incoming_owner_version}, zone = {incoming_owner_zone}, epoch = {incoming_owner_epoch} }}");
+
+        let mut event: Option<MeshEvent> = None;
 
         // 1. Owner is merging statuses from local zones
         // if current.ownership.zone == incoming.ownership.zone
@@ -377,12 +414,10 @@ impl AnyApplicationMerge {
                 };
             }
             if updated {
+                debug!(parent: span, %name, "owner merge local zone statuses");
                 let object = current.to_object()?;
                 object.dump_status("merge_update_internal - merging local zone statuses");
-                return Ok(MergeResult::Update {
-                    object,
-                    event: None,
-                });
+                return Ok(MergeResult::Update { object, event });
             }
         }
 
@@ -427,22 +462,22 @@ impl AnyApplicationMerge {
                     current.status = Some(status);
                     updated = true;
                 }
+                current.set_owner_version(incoming_owner_version);
+                debug!(parent: span, %name, "non owner receives update from owner");
             } else if current_owner_zone != incoming_owner_zone
                 && incoming_owner_epoch > current_owner_epoch
             {
                 current.spec = incoming.spec.clone();
                 current.status = incoming.status.clone();
+                current.set_owner_version(incoming_owner_version);
                 updated = true;
+                debug!(parent: span, %name, "non owner receives update from owner with new epoch");
             }
 
             if updated {
-                current.set_owner_version(incoming_owner_version);
                 let object = current.to_object()?;
                 object.dump_status("merge_update_internal - non owner merge");
-                return Ok(MergeResult::Update {
-                    object,
-                    event: None,
-                });
+                return Ok(MergeResult::Update { object, event });
             }
         }
 
@@ -475,16 +510,26 @@ impl AnyApplicationMerge {
             && incoming_owner_zone != node_zone
         {
             let mut updated = false;
-            let mut force_send = false;
             match current_owner_epoch.cmp(&incoming_owner_epoch) {
                 std::cmp::Ordering::Greater => {
                     if let Some(merged_current) =
                         self.merge_owners_current_greater(&current, &incoming)
                     {
                         current = merged_current;
-                        updated = true;
                     }
-                    force_send = true;
+                    updated = true;
+                    debug!(parent: span, %name, "owner conflict: current owner confirms ownership");
+                    current.set_owner_version(current_owner_version);
+
+                    // Sending event to confirm the ownership
+                    let mut event_object = current.clone().to_object()?;
+                    event_object.set_owner_version(current_owner_version);
+                    event_object.unset_resource_version();
+                    debug!(parent: span, %name, "confirm ownership event");
+                    event = Some(MeshEvent::Update {
+                        object: event_object,
+                        version: 0,
+                    });
                 }
                 std::cmp::Ordering::Equal => {
                     //      if current.startTime is greater then incoming.startTime
@@ -504,39 +549,41 @@ impl AnyApplicationMerge {
                             self.merge_owners_current_greater(&current, &incoming)
                         {
                             current = merged_current;
-                            updated = true;
                         }
                         if let Some(status) = current.status.as_mut() {
                             status.ownership.epoch += 1;
-                            updated = true;
                         }
-                        force_send = true;
+                        updated = true;
+                        debug!(parent: span, %name, "owner conflict equal epoch: current owner takes ownership");
+                        let mut event_object = current.clone().to_object()?;
+                        event_object.set_owner_version(current_owner_version);
+                        event_object.unset_resource_version();
+                        debug!(parent: span, "establish ownership event");
+                        event = Some(MeshEvent::Update {
+                            object: event_object,
+                            version: 0,
+                        });
+                    } else {
+                        debug!(parent: span, %name, "owner conflict equal epoch: current owner follows");
                     }
                 }
                 std::cmp::Ordering::Less => {
                     current.spec = incoming.spec.clone();
                     current.status = incoming.status.clone();
-                    current.set_owner_version(incoming_owner_version);
+                    current.set_owner_version(current_owner_version);
                     updated = true;
+                    debug!(parent: span, %name, "owner conflict: current owner becomes follower, following_leader = {incoming_owner_zone}");
                 }
             }
 
             if updated {
                 let object = current.to_object()?;
                 object.dump_status("merge_update_internal - owner merge");
-                let mut object_event = object.clone();
-                let event = if force_send {
-                    object_event.unset_resource_version();
-                    Some(MeshEvent::Update {
-                        object: object_event,
-                    })
-                } else {
-                    None
-                };
                 return Ok(MergeResult::Update { object, event });
             }
         }
 
+        debug!(parent: span, %name, "skipping update");
         Ok(MergeResult::Skip)
     }
 
@@ -662,7 +709,7 @@ impl AnyApplicationMerge {
         current: &Option<AnyApplicationStatus>,
         incoming: &Option<AnyApplicationStatus>,
     ) -> Option<Vec<AnyApplicationStatusZones>> {
-        let maybe_zones = self.merge_zone_section(
+        self.merge_zone_section(
             current
                 .as_ref()
                 .and_then(|v| v.zones.as_ref())
@@ -671,8 +718,7 @@ impl AnyApplicationMerge {
                 .as_ref()
                 .and_then(|v| v.zones.as_ref())
                 .unwrap_or(&vec![]),
-        );
-        maybe_zones
+        )
     }
 
     fn merge_placements_into_current(
@@ -741,9 +787,11 @@ impl AnyApplicationMerge {
 
     fn mesh_update_create(
         &self,
+        span: &Span,
         incoming: DynamicObject,
         received_from_zone: &str,
     ) -> Result<MergeResult> {
+        let name = incoming.get_namespaced_name();
         let mut incoming: AnyApplication = incoming.try_parse()?;
         let incoming_owner_zone = incoming.get_owner_zone();
         // Create is possible from owning zone
@@ -751,19 +799,23 @@ impl AnyApplicationMerge {
         if acceptable_zone {
             incoming.metadata.managed_fields = None;
             incoming.metadata.uid = None;
+            tracing::info!(parent: span, %name, "merge update over non existing: create new");
             let object = incoming.to_object()?;
             Ok(MergeResult::Create { object })
         } else {
+            tracing::info!(parent: span, %name, "merge update over non existing: skipping update");
             Ok(MergeResult::Skip)
         }
     }
 
     fn mesh_update_tombstone(
         &self,
+        span: &Span,
         current: Tombstone,
         incoming: DynamicObject,
         received_from_zone: &str,
     ) -> Result<MergeResult> {
+        let name = current.name;
         let current_owner_version = current.owner_version;
         let current_owner_zone = current.owner_zone;
         let current_delete_timestamp = current.deletion_timestamp as i64;
@@ -771,8 +823,10 @@ impl AnyApplicationMerge {
         let incoming_app: AnyApplication = incoming.clone().try_parse()?;
         let incoming_owner_version = incoming_app.get_owner_version()?;
         let incoming_owner_zone = incoming_app.get_owner_zone();
+        let incoming_owner_epoch = incoming_app.get_owner_epoch();
         let incoming_create_timestamp = incoming_app.get_create_timestamp();
 
+        tracing::info!(parent: span, %name, "merge-update-tombstone, current{{version = {current_owner_version}, zone = {current_owner_zone}, delete_timestamp = {current_delete_timestamp} }}, incoming {{ version = {incoming_owner_version}, zone = {incoming_owner_zone}, epoch = {incoming_owner_epoch}, create_timestamp = {incoming_create_timestamp} }}");
         // tombstone update is possible only from owning zone
         let acceptable_zone = incoming_owner_zone == received_from_zone;
         if !acceptable_zone {
@@ -784,9 +838,11 @@ impl AnyApplicationMerge {
         let is_other_zone_greater_timestamp = incoming_owner_zone != current_owner_zone
             && current_delete_timestamp < incoming_create_timestamp;
         if is_other_zone_greater_timestamp || is_same_zone_greater_version {
-            // tomstone is older than incoming => create
-            self.mesh_update_create(incoming, received_from_zone)
+            // tomstone is older than incoming =>
+            tracing::info!(parent: span, %name, "merge update over tombstone: creating resource");
+            self.mesh_update_create(span, incoming, received_from_zone)
         } else {
+            tracing::info!(parent: span, %name, "merge update over tombstone: skipping update");
             // tombstone is newer than incoming => ignore
             Ok(MergeResult::Skip)
         }
@@ -794,6 +850,7 @@ impl AnyApplicationMerge {
 
     fn mesh_delete_internal(
         &self,
+        span: &Span,
         current: DynamicObject,
         incoming: DynamicObject,
         received_from_zone: &str,
@@ -827,6 +884,11 @@ impl AnyApplicationMerge {
                 .deletion_timestamp
                 .map(|t| t.0.timestamp_millis() as u64)
                 .unwrap_or(now_millis);
+            if is_same_zone_greater_version {
+                tracing::info!(parent: span, %name, "mesh delete - new version received");
+            } else {
+                tracing::info!(parent: span, %name, "mesh delete - new epoch received");
+            }
             Ok(MergeResult::Delete(Tombstone {
                 gvk: self.gvk.to_owned(),
                 name,
@@ -836,6 +898,7 @@ impl AnyApplicationMerge {
                 deletion_timestamp,
             }))
         } else {
+            tracing::info!(%name, "skipping delete");
             Ok(MergeResult::Skip)
         }
     }
@@ -919,6 +982,9 @@ impl AnyApplicationMerge {
 #[cfg(test)]
 pub mod tests {
 
+    use tracing::Level;
+    use tracing::span;
+
     use super::*;
     use crate::kube::dynamic_object_ext::DynamicObjectExt;
     use crate::merge::anyapplication_strategy::AnyApplicationMerge;
@@ -937,6 +1003,7 @@ pub mod tests {
 
     #[test]
     pub fn mesh_update_create_non_existing() {
+        let span = span!(Level::DEBUG, "mesh_update_create_non_existing");
         let membership = Membership::default();
         let incoming = anyapp(1, "zone1", 0);
 
@@ -947,6 +1014,7 @@ pub mod tests {
             },
             strategy
                 .mesh_update(
+                    &span,
                     VersionedObject::NonExisting,
                     incoming,
                     "zone1",
@@ -959,6 +1027,7 @@ pub mod tests {
 
     #[test]
     pub fn mesh_update_create_tombstone_different_zone() {
+        let span = span!(Level::DEBUG, "mesh_update_create_tombstone_different_zone");
         let membership = Membership::default();
         let incoming = anyapp(1, "zone1", 0);
         let existing = VersionedObject::Tombstone(Tombstone {
@@ -976,13 +1045,14 @@ pub mod tests {
                 object: incoming.clone()
             },
             strategy
-                .mesh_update(existing, incoming, "zone1", "zone1", &membership)
+                .mesh_update(&span, existing, incoming, "zone1", "zone1", &membership)
                 .unwrap()
         );
     }
 
     #[test]
     pub fn mesh_update_create_tombstone_same_zone() {
+        let span = span!(Level::DEBUG, "mesh_update_create_tombstone_same_zone");
         let membership = Membership::default();
         let incoming = anyapp(1, "zone1", 0);
         let existing = VersionedObject::Tombstone(Tombstone {
@@ -1000,13 +1070,17 @@ pub mod tests {
                 object: incoming.clone()
             },
             strategy
-                .mesh_update(existing, incoming, "zone1", "zone2", &membership)
+                .mesh_update(&span, existing, incoming, "zone1", "zone2", &membership)
                 .unwrap()
         );
     }
 
     #[test]
     pub fn mesh_update_create_skip_if_tombstone_is_newer() {
+        let span = span!(
+            Level::DEBUG,
+            "mesh_update_create_skip_if_tombstone_is_newer"
+        );
         let membership = Membership::default();
         let incoming = anyapp(1, "zone1", 0);
         let existing = VersionedObject::Tombstone(Tombstone {
@@ -1022,13 +1096,14 @@ pub mod tests {
         assert_eq!(
             MergeResult::Skip,
             strategy
-                .mesh_update(existing, incoming, "zone1", "zone3", &membership)
+                .mesh_update(&span, existing, incoming, "zone1", "zone3", &membership)
                 .unwrap()
         );
     }
 
     #[test]
     pub fn mesh_update_non_existing_other_zone() {
+        let span = span!(Level::DEBUG, "mesh_update_non_existing_other_zone");
         let membership = Membership::default();
         let incoming = anyapp(1, "zone1", 0);
 
@@ -1037,6 +1112,7 @@ pub mod tests {
             MergeResult::Skip,
             strategy
                 .mesh_update(
+                    &span,
                     VersionedObject::NonExisting,
                     incoming,
                     "test",
@@ -1049,6 +1125,7 @@ pub mod tests {
 
     #[test]
     pub fn mesh_update_same_version() {
+        let span = span!(Level::DEBUG, "");
         let membership = Membership::default();
         let current = anyapp(1, "zone1", 0);
         let incoming = anyapp(1, "zone1", 1);
@@ -1057,13 +1134,21 @@ pub mod tests {
         assert_eq!(
             MergeResult::Skip,
             strategy
-                .mesh_update(current.into(), incoming, "zone1", "zone1", &membership)
+                .mesh_update(
+                    &span,
+                    current.into(),
+                    incoming,
+                    "zone1",
+                    "zone1",
+                    &membership
+                )
                 .unwrap()
         );
     }
 
     #[test]
     pub fn mesh_update_greater_version_spec() {
+        let span = span!(Level::DEBUG, "mesh_update_greater_version_spec");
         let membership = Membership::default();
         let current = anyapp(1, "zone1", 0);
         let incoming = anyapp(2, "zone1", 1);
@@ -1076,6 +1161,7 @@ pub mod tests {
             },
             strategy
                 .mesh_update(
+                    &span,
                     current.clone().into(),
                     incoming.clone(),
                     "zone1",
@@ -1089,13 +1175,21 @@ pub mod tests {
         assert_eq!(
             MergeResult::Skip,
             strategy
-                .mesh_update(current.into(), incoming, "zone2", "zone1", &membership)
+                .mesh_update(
+                    &span,
+                    current.into(),
+                    incoming,
+                    "zone2",
+                    "zone1",
+                    &membership
+                )
                 .unwrap()
         );
     }
 
     #[test]
     pub fn mesh_update_greater_version_status_ownership() {
+        let span = span!(Level::DEBUG, "mesh_update_greater_version_status_ownership");
         let membership = Membership::default();
         let current = anyapp(1, "zone1", 0);
         let incoming = anyapp(2, "zone1", 1);
@@ -1107,13 +1201,24 @@ pub mod tests {
                 event: None,
             },
             strategy
-                .mesh_update(current.into(), incoming, "zone1", "zone2", &membership)
+                .mesh_update(
+                    &span,
+                    current.into(),
+                    incoming,
+                    "zone1",
+                    "zone2",
+                    &membership
+                )
                 .unwrap()
         );
     }
 
     #[test]
     pub fn mesh_update_greater_version_status_conditions() {
+        let span = span!(
+            Level::DEBUG,
+            "mesh_update_greater_version_status_conditions"
+        );
         let membership = Membership::default();
         let current = anyapp(1, "zone1", 0);
         let incoming = anyapp(2, "zone1", 1);
@@ -1125,13 +1230,24 @@ pub mod tests {
                 event: None,
             },
             strategy
-                .mesh_update(current.into(), incoming, "zone1", "zone2", &membership)
+                .mesh_update(
+                    &span,
+                    current.into(),
+                    incoming,
+                    "zone1",
+                    "zone2",
+                    &membership
+                )
                 .unwrap()
         );
     }
 
     #[test]
     pub fn mesh_update_greater_version_unacceptable_zone() {
+        let span = span!(
+            Level::DEBUG,
+            "mesh_update_greater_version_unacceptable_zone"
+        );
         let membership = Membership::default();
         let current = anyapp(1, "zone1", 0);
         let incoming = anyapp(2, "unacceptable", 1);
@@ -1140,13 +1256,21 @@ pub mod tests {
         assert_eq!(
             MergeResult::Skip,
             strategy
-                .mesh_update(current.into(), incoming, "zone1", "zone1", &membership)
+                .mesh_update(
+                    &span,
+                    current.into(),
+                    incoming,
+                    "zone1",
+                    "zone1",
+                    &membership
+                )
                 .unwrap()
         );
     }
 
     #[test]
     pub fn mesh_update_the_same_owner_greater_epoch() {
+        let span = span!(Level::DEBUG, "mesh_update_the_same_owner_greater_epoch");
         let membership = Membership::default();
 
         let current = make_anyapplication_with_conditions(
@@ -1194,13 +1318,21 @@ pub mod tests {
                 event: None,
             },
             strategy
-                .mesh_update(current.into(), incoming, "zone1", "zone3", &membership)
+                .mesh_update(
+                    &span,
+                    current.into(),
+                    incoming,
+                    "zone1",
+                    "zone3",
+                    &membership
+                )
                 .unwrap()
         );
     }
 
     #[test]
     pub fn mesh_update_different_owner_greater_epoch() {
+        let span = span!(Level::DEBUG, "mesh_update_different_owner_greater_epoch");
         let membership = Membership::default();
 
         let current = make_anyapplication_with_conditions(
@@ -1248,13 +1380,21 @@ pub mod tests {
                 event: None,
             },
             strategy
-                .mesh_update(current.into(), incoming, "zone2", "zone3", &membership)
+                .mesh_update(
+                    &span,
+                    current.into(),
+                    incoming,
+                    "zone2",
+                    "zone3",
+                    &membership
+                )
                 .unwrap()
         );
     }
 
     #[test]
     pub fn mesh_update_ownership_conflict_greater_epoch() {
+        let span = span!(Level::DEBUG, "mesh_update_ownership_conflict_greater_epoch");
         let membership = Membership::default();
 
         let current = make_anyapplication_with_conditions(
@@ -1303,17 +1443,26 @@ pub mod tests {
             MergeResult::Update {
                 object: expected,
                 event: Some(MeshEvent::Update {
-                    object: expected_event
+                    object: expected_event,
+                    version: 0,
                 }),
             },
             strategy
-                .mesh_update(current.into(), incoming, "zone3", "zone1", &membership)
+                .mesh_update(
+                    &span,
+                    current.into(),
+                    incoming,
+                    "zone3",
+                    "zone1",
+                    &membership
+                )
                 .unwrap()
         );
     }
 
     #[test]
     pub fn mesh_update_ownership_conflict_equal_epoch_current_owner() {
+        let span = span!(Level::DEBUG, "");
         let mut membership = Membership::default();
         membership.add(InstanceId {
             zone: "zone1".into(),
@@ -1370,17 +1519,29 @@ pub mod tests {
             MergeResult::Update {
                 object: expected,
                 event: Some(MeshEvent::Update {
-                    object: expected_event
+                    object: expected_event,
+                    version: 0,
                 }),
             },
             strategy
-                .mesh_update(current.into(), incoming, "zone3", "zone1", &membership)
+                .mesh_update(
+                    &span,
+                    current.into(),
+                    incoming,
+                    "zone3",
+                    "zone1",
+                    &membership
+                )
                 .unwrap()
         );
     }
 
     #[test]
     pub fn mesh_update_ownership_conflict_equal_epoch_incoming_owner() {
+        let span = span!(
+            Level::DEBUG,
+            "mesh_update_ownership_conflict_equal_epoch_incoming_owner"
+        );
         let mut membership = Membership::default();
         membership.add(InstanceId {
             zone: "zone1".into(),
@@ -1420,13 +1581,21 @@ pub mod tests {
         assert_eq!(
             MergeResult::Skip,
             strategy
-                .mesh_update(current.into(), incoming, "zone3", "zone1", &membership)
+                .mesh_update(
+                    &span,
+                    current.into(),
+                    incoming,
+                    "zone3",
+                    "zone1",
+                    &membership
+                )
                 .unwrap()
         );
     }
 
     #[test]
     pub fn mesh_update_ownership_conflict_less_epoch() {
+        let span = span!(Level::DEBUG, "mesh_update_ownership_conflict_less_epoch");
         let membership = Membership::default();
 
         let current = make_anyapplication_with_conditions(
@@ -1474,13 +1643,21 @@ pub mod tests {
                 event: None,
             },
             strategy
-                .mesh_update(current.into(), incoming, "zone3", "zone1", &membership)
+                .mesh_update(
+                    &span,
+                    current.into(),
+                    incoming,
+                    "zone3",
+                    "zone1",
+                    &membership
+                )
                 .unwrap()
         );
     }
 
     #[test]
     pub fn mesh_delete_non_existing_delete() {
+        let span = span!(Level::DEBUG, "mesh_delete_non_existing_delete");
         let incoming = anyapp(1, "zone1", 0);
 
         let strategy = AnyApplicationMerge::new();
@@ -1494,13 +1671,14 @@ pub mod tests {
                 deletion_timestamp: 17,
             }),
             strategy
-                .mesh_delete(VersionedObject::NonExisting, incoming, "zone1", 17)
+                .mesh_delete(&span, VersionedObject::NonExisting, incoming, "zone1", 17)
                 .unwrap()
         );
     }
 
     #[test]
     pub fn mesh_delete_tombstone_from_the_same_zone() {
+        let span = span!(Level::DEBUG, "");
         let incoming = anyapp(1, "zone1", 0);
         let existing = VersionedObject::Tombstone(Tombstone {
             gvk: incoming.get_gvk().expect("gvk expected"),
@@ -1522,13 +1700,17 @@ pub mod tests {
                 deletion_timestamp: 17,
             }),
             strategy
-                .mesh_delete(existing, incoming, "zone1", 17)
+                .mesh_delete(&span, existing, incoming, "zone1", 17)
                 .unwrap()
         );
     }
 
     #[test]
     pub fn mesh_delete_existing_tombstone_has_higher_version() {
+        let span = span!(
+            Level::DEBUG,
+            "mesh_delete_existing_tombstone_has_higher_version"
+        );
         let incoming = anyapp(1, "zone1", 0);
         let existing = VersionedObject::Tombstone(Tombstone {
             gvk: incoming.get_gvk().expect("gvk expected"),
@@ -1543,13 +1725,17 @@ pub mod tests {
         assert_eq!(
             MergeResult::Skip,
             strategy
-                .mesh_delete(existing, incoming, "zone1", 17)
+                .mesh_delete(&span, existing, incoming, "zone1", 17)
                 .unwrap()
         );
     }
 
     #[test]
     pub fn mesh_delete_tombstone_different_zone_newer_timestamp() {
+        let span = span!(
+            Level::DEBUG,
+            "mesh_delete_tombstone_different_zone_newer_timestamp"
+        );
         let incoming = anyapp(1, "zone1", 0);
         let existing = VersionedObject::Tombstone(Tombstone {
             gvk: incoming.get_gvk().expect("gvk expected"),
@@ -1571,13 +1757,14 @@ pub mod tests {
                 deletion_timestamp: 17
             }),
             strategy
-                .mesh_delete(existing, incoming, "zone1", 17)
+                .mesh_delete(&span, existing, incoming, "zone1", 17)
                 .unwrap()
         );
     }
 
     #[test]
     pub fn mesh_delete_the_same_version_delete() {
+        let span = span!(Level::DEBUG, "mesh_delete_the_same_version_delete");
         let incoming = anyapp(1, "zone1", 1);
         let mut current = anyapp(1, "zone1", 0);
         current.set_resource_version(10);
@@ -1586,13 +1773,14 @@ pub mod tests {
         assert_eq!(
             MergeResult::Skip,
             strategy
-                .mesh_delete(current.into(), incoming, "zone1", 17)
+                .mesh_delete(&span, current.into(), incoming, "zone1", 17)
                 .unwrap()
         );
     }
 
     #[test]
     pub fn mesh_delete_greater_version_delete() {
+        let span = span!(Level::DEBUG, "mesh_delete_greater_version_delete");
         let incoming = anyapp(2, "zone1", 1);
         let mut current = anyapp(1, "zone1", 0);
         current.set_resource_version(10);
@@ -1608,13 +1796,14 @@ pub mod tests {
                 deletion_timestamp: 17,
             }),
             strategy
-                .mesh_delete(current.into(), incoming, "zone1", 17)
+                .mesh_delete(&span, current.into(), incoming, "zone1", 17)
                 .unwrap()
         );
     }
 
     #[test]
     pub fn mesh_update_condition_from_replica_zone() {
+        let span = span!(Level::DEBUG, "");
         let membership = Membership::default();
         let current = make_anyapplication_with_conditions(
             1,
@@ -1661,13 +1850,21 @@ pub mod tests {
                 event: None,
             },
             strategy
-                .mesh_update(current.into(), incoming, "zone2", "zone1", &membership)
+                .mesh_update(
+                    &span,
+                    current.into(),
+                    incoming,
+                    "zone2",
+                    "zone1",
+                    &membership
+                )
                 .unwrap()
         );
     }
 
     #[test]
     pub fn mesh_create_condition_from_replica_zone() {
+        let span = span!(Level::DEBUG, "mesh_create_condition_from_replica_zone");
         let membership = Membership::default();
         let current = make_anyapplication_with_conditions(
             1,
@@ -1711,13 +1908,21 @@ pub mod tests {
                 event: None,
             },
             strategy
-                .mesh_update(current.into(), incoming, "zone2", "zone1", &membership)
+                .mesh_update(
+                    &span,
+                    current.into(),
+                    incoming,
+                    "zone2",
+                    "zone1",
+                    &membership
+                )
                 .unwrap()
         );
     }
 
     #[test]
     pub fn mesh_delete_condition_from_replica_zone() {
+        let span = span!(Level::DEBUG, "mesh_delete_condition_from_replica_zone");
         let membership = Membership::default();
         let current = make_anyapplication_with_conditions(
             1,
@@ -1764,27 +1969,85 @@ pub mod tests {
                 event: None,
             },
             strategy
-                .mesh_update(current.into(), incoming, "zone2", "zone1", &membership)
+                .mesh_update(
+                    &span,
+                    current.into(),
+                    incoming,
+                    "zone2",
+                    "zone1",
+                    &membership
+                )
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn mesh_membership_change() {
+        let span = span!(Level::DEBUG, "mesh_membership_change");
+        let mut membership = Membership::default();
+        membership.add(InstanceId::new("zone2".into()));
+        let current = make_anyapplication_with_conditions(
+            1,
+            1,
+            "zone1",
+            1,
+            0,
+            &["zone1", "zone2"],
+            &[
+                anyzone("zone1", 2, &[anycond("zone1", "type")]),
+                anyzone("zone2", 2, &[anycond("zone2", "type")]),
+            ],
+        );
+
+        let expected = make_anyapplication_with_conditions(
+            1,
+            1,
+            "zone2",
+            2,
+            0,
+            &["zone1", "zone2"],
+            &[
+                anyzone("zone1", 2, &[anycond("zone1", "type")]),
+                anyzone("zone2", 2, &[anycond("zone2", "type")]),
+            ],
+        );
+        let mut expected_event = expected.clone();
+        expected_event.unset_resource_version();
+
+        let strategy = AnyApplicationMerge::new();
+        assert_eq!(
+            vec![MergeResult::Update {
+                object: expected,
+                event: Some(MeshEvent::Update {
+                    version: 0,
+                    object: expected_event
+                }),
+            }],
+            strategy
+                .mesh_membership_change(&span, current.into(), &membership, "zone2")
                 .unwrap()
         );
     }
 
     #[test]
     pub fn local_update_create_non_existing() {
+        let span = span!(Level::DEBUG, "local_update_create_non_existing");
         let incoming = make_anyapplication_with_conditions(1, 1, "zone1", 1, 0, &["zone1"], &[]);
 
         assert_eq!(
             UpdateResult::Create {
-                object: incoming.clone()
+                object: incoming.clone(),
+                version: 1,
             },
             AnyApplicationMerge::new()
-                .kube_update(VersionedObject::NonExisting, incoming, 1, "zone1")
+                .kube_update(&span, VersionedObject::NonExisting, incoming, 1, "zone1")
                 .unwrap()
         );
     }
 
     #[test]
     pub fn local_update_create_tombstone() {
+        let span = span!(Level::DEBUG, "");
         let incoming = make_anyapplication_with_conditions(1, 1, "zone1", 1, 0, &["zone1"], &[]);
         let existing = VersionedObject::Tombstone(Tombstone {
             gvk: incoming.get_gvk().expect("gvk expected"),
@@ -1797,16 +2060,18 @@ pub mod tests {
 
         assert_eq!(
             UpdateResult::Create {
-                object: incoming.clone()
+                object: incoming.clone(),
+                version: 1,
             },
             AnyApplicationMerge::new()
-                .kube_update(existing, incoming, 1, "zone1")
+                .kube_update(&span, existing, incoming, 1, "zone1")
                 .unwrap()
         );
     }
 
     #[test]
     pub fn local_update_skip_create_tombstone_is_newer() {
+        let span = span!(Level::DEBUG, "local_update_skip_create_tombstone_is_newer");
         let incoming = make_anyapplication_with_conditions(1, 1, "zone1", 1, 0, &["zone1"], &[]);
 
         let existing = VersionedObject::Tombstone(Tombstone {
@@ -1821,13 +2086,14 @@ pub mod tests {
         assert_eq!(
             UpdateResult::Skip,
             AnyApplicationMerge::new()
-                .kube_update(existing, incoming, 1, "zone1")
+                .kube_update(&span, existing, incoming, 1, "zone1")
                 .unwrap()
         );
     }
 
     #[test]
     pub fn local_update_skip_old_version() {
+        let span = span!(Level::DEBUG, "");
         let incoming = make_anyapplication_with_conditions(1, 1, "zone1", 1, 0, &["zone1"], &[]);
 
         let existing = make_anyapplication_with_conditions(2, 2, "zone1", 1, 0, &["zone1"], &[]);
@@ -1835,13 +2101,14 @@ pub mod tests {
         assert_eq!(
             UpdateResult::Skip,
             AnyApplicationMerge::new()
-                .kube_update(existing.into(), incoming, 1, "zone1")
+                .kube_update(&span, existing.into(), incoming, 1, "zone1")
                 .unwrap()
         );
     }
 
     #[test]
     pub fn local_update_incoming_has_diff() {
+        let span = span!(Level::DEBUG, "local_update_incoming_has_diff");
         let incoming = make_anyapplication_with_conditions(1, 2, "zone1", 1, 2, &["zone1"], &[]);
         let existing = make_anyapplication_with_conditions(1, 1, "zone1", 1, 0, &["zone1"], &[]);
 
@@ -1849,15 +2116,19 @@ pub mod tests {
         expected.set_owner_version(2);
 
         assert_eq!(
-            UpdateResult::Update { object: expected },
+            UpdateResult::Update {
+                object: expected,
+                version: 2
+            },
             AnyApplicationMerge::new()
-                .kube_update(existing.into(), incoming, 2, "zone1")
+                .kube_update(&span, existing.into(), incoming, 2, "zone1")
                 .unwrap()
         );
     }
 
     #[test]
     pub fn local_delete_skip_non_existing() {
+        let span = span!(Level::DEBUG, "local_delete_skip_non_existing");
         let incoming = anyapp(2, "zone1", 2);
 
         assert_eq!(
@@ -1870,13 +2141,21 @@ pub mod tests {
                 deletion_timestamp: 17
             }),
             AnyApplicationMerge::new()
-                .kube_delete(VersionedObject::NonExisting, incoming, 2, "zone1", 17)
+                .kube_delete(
+                    &span,
+                    VersionedObject::NonExisting,
+                    incoming,
+                    2,
+                    "zone1",
+                    17
+                )
                 .unwrap()
         );
     }
 
     #[test]
     pub fn local_delete_tombstone() {
+        let span = span!(Level::DEBUG, "local_delete_tombstone");
         let incoming = anyapp(2, "zone1", 2);
         let existing = VersionedObject::Tombstone(Tombstone {
             gvk: incoming.get_gvk().expect("gvk expected"),
@@ -1897,13 +2176,14 @@ pub mod tests {
                 deletion_timestamp: 17,
             }),
             AnyApplicationMerge::new()
-                .kube_delete(existing, incoming, 2, "zone1", 17)
+                .kube_delete(&span, existing, incoming, 2, "zone1", 17)
                 .unwrap()
         );
     }
 
     #[test]
     pub fn local_delete_tombstone_other_zone() {
+        let span = span!(Level::DEBUG, "local_delete_tombstone_other_zone");
         let incoming = anyapp(2, "zone1", 2);
         let existing = VersionedObject::Tombstone(Tombstone {
             gvk: incoming.get_gvk().expect("gvk expected"),
@@ -1924,13 +2204,17 @@ pub mod tests {
                 deletion_timestamp: 17
             }),
             AnyApplicationMerge::new()
-                .kube_delete(existing, incoming, 2, "zone1", 17)
+                .kube_delete(&span, existing, incoming, 2, "zone1", 17)
                 .unwrap()
         );
     }
 
     #[test]
     pub fn local_delete_incoming_resource_version_greater() {
+        let span = span!(
+            Level::DEBUG,
+            "local_delete_incoming_resource_version_greater"
+        );
         let current = make_anyapplication_with_conditions(1, 1, "zone1", 1, 1, &["zone1"], &[]);
         let incoming = make_anyapplication_with_conditions(1, 2, "zone1", 1, 1, &["zone1"], &[]);
 
@@ -1939,6 +2223,7 @@ pub mod tests {
 
         assert_eq!(
             UpdateResult::Delete {
+                version: 2,
                 object: expected,
                 tombstone: Tombstone {
                     gvk: incoming.get_gvk().expect("expect gvk"),
@@ -1950,13 +2235,14 @@ pub mod tests {
                 },
             },
             AnyApplicationMerge::new()
-                .kube_delete(current.into(), incoming, 2, "zone1", 17)
+                .kube_delete(&span, current.into(), incoming, 2, "zone1", 17)
                 .unwrap()
         );
     }
 
     #[test]
     pub fn local_update_from_placement_zone() {
+        let span = span!(Level::DEBUG, "local_update_from_placement_zone");
         let current = make_anyapplication_with_conditions(
             1,
             1,
@@ -1997,15 +2283,19 @@ pub mod tests {
 
         let strategy = AnyApplicationMerge::new();
         assert_eq!(
-            UpdateResult::Update { object: expected },
+            UpdateResult::Update {
+                object: expected,
+                version: 5
+            },
             strategy
-                .kube_update(current.into(), incoming, 5, "zone2")
+                .kube_update(&span, current.into(), incoming, 5, "zone2")
                 .unwrap()
         );
     }
 
     #[test]
     pub fn local_create_from_placement_zone() {
+        let span = span!(Level::DEBUG, "");
         let current = make_anyapplication_with_conditions(
             1,
             1,
@@ -2043,15 +2333,19 @@ pub mod tests {
 
         let strategy = AnyApplicationMerge::new();
         assert_eq!(
-            UpdateResult::Update { object: expected },
+            UpdateResult::Update {
+                object: expected,
+                version: 5
+            },
             strategy
-                .kube_update(current.into(), incoming, 5, "zone2")
+                .kube_update(&span, current.into(), incoming, 5, "zone2")
                 .unwrap()
         );
     }
 
     #[test]
     pub fn local_delete_from_placement_zone() {
+        let span = span!(Level::DEBUG, "local_delete_from_placement_zone");
         let current = make_anyapplication_with_conditions(
             1,
             1,
@@ -2093,9 +2387,12 @@ pub mod tests {
 
         let strategy = AnyApplicationMerge::new();
         assert_eq!(
-            UpdateResult::Update { object: expected },
+            UpdateResult::Update {
+                object: expected,
+                version: 4
+            },
             strategy
-                .kube_update(current.into(), incoming, 4, "zone2")
+                .kube_update(&span, current.into(), incoming, 4, "zone2")
                 .unwrap()
         );
     }

@@ -14,12 +14,15 @@ use crate::{
     kube::{dynamic_object_ext::DynamicObjectExt, event::KubeEvent, types::NamespacedName},
     merge::types::{MergeResult, MergeStrategy, UpdateResult},
 };
-use anyhow::Result;
+use anyapplication::{anyapplication::AnyApplication, anyapplication_ext::AnyApplicationExt};
+use anyhow::{Context, Result};
 use kube::api::DynamicObject;
-use tracing::{debug, warn};
+use tracing::{Span, debug, warn};
 
 pub struct Partition {
     resources: BTreeMap<NamespacedName, VersionedObject>,
+    remote_zone_versions: BTreeMap<String, Version>,
+    zone_version: Version,
     merge_strategy: Arc<dyn MergeStrategy>,
     clock: Arc<dyn Clock>,
     initialized: bool,
@@ -32,6 +35,8 @@ impl Partition {
     {
         Partition {
             resources: BTreeMap::new(),
+            remote_zone_versions: BTreeMap::new(),
+            zone_version: 0,
             merge_strategy: Arc::new(merge_strategy),
             clock,
             initialized: false,
@@ -40,13 +45,29 @@ impl Partition {
 
     pub fn mesh_apply(
         &mut self,
+        span: &Span,
         incoming: MeshEvent,
         incoming_zone: &str,
         current_zone: &str,
         membership: &Membership,
     ) -> Result<Vec<MergeResult>> {
         match incoming {
-            MeshEvent::Update { object: incoming } => {
+            MeshEvent::Update {
+                object: incoming,
+                version,
+            } => {
+                let max_known_zone_version =
+                    self.remote_zone_versions.get(incoming_zone).unwrap_or(&0);
+                if max_known_zone_version >= &version {
+                    debug!(
+                        parent: span,
+                        zone = ?incoming_zone,
+                        %version, max_known_version = ?max_known_zone_version,
+                        "skipping update"
+                    );
+                    return Ok(vec![]);
+                }
+
                 let name = incoming.get_namespaced_name();
                 let current = self
                     .resources
@@ -55,6 +76,7 @@ impl Partition {
                     .unwrap_or(VersionedObject::NonExisting);
 
                 let result = self.merge_strategy.mesh_update(
+                    span,
                     current,
                     incoming,
                     incoming_zone,
@@ -63,9 +85,25 @@ impl Partition {
                 )?;
 
                 self.mesh_update_partition(&result);
+                self.mesh_update_zone_version(incoming_zone, version);
                 Ok(vec![result])
             }
-            MeshEvent::Delete { object: incoming } => {
+            MeshEvent::Delete {
+                object: incoming,
+                version,
+            } => {
+                let max_known_zone_version =
+                    self.remote_zone_versions.get(incoming_zone).unwrap_or(&0);
+                if max_known_zone_version >= &version {
+                    debug!(
+                        parent: span,
+                        zone = ?incoming_zone,
+                        %version, max_known_version = ?max_known_zone_version,
+                        "skipping delete",
+                    );
+                    return Ok(vec![]);
+                }
+
                 let name = incoming.get_namespaced_name();
                 let current = self
                     .resources
@@ -73,16 +111,37 @@ impl Partition {
                     .cloned()
                     .unwrap_or(VersionedObject::NonExisting);
                 let result = self.merge_strategy.mesh_delete(
+                    span,
                     current,
                     incoming,
                     incoming_zone,
                     self.clock.now_millis(),
                 )?;
                 self.mesh_update_partition(&result);
+                self.mesh_update_zone_version(incoming_zone, version);
                 Ok(vec![result])
             }
-            MeshEvent::Snapshot { snapshot } => {
-                self.mesh_apply_snapshot(snapshot, incoming_zone, current_zone, membership)
+            MeshEvent::Snapshot { snapshot, version } => {
+                let max_known_zone_version =
+                    self.remote_zone_versions.get(incoming_zone).unwrap_or(&0);
+                if max_known_zone_version >= &version {
+                    debug!(
+                        parent: span,
+                        zone = ?incoming_zone,
+                        %version, max_known_version = ?max_known_zone_version,
+                        "skipping snapshot",
+                    );
+                    return Ok(vec![]);
+                }
+                let apply_result = self.mesh_apply_snapshot(
+                    span,
+                    snapshot,
+                    incoming_zone,
+                    current_zone,
+                    membership,
+                )?;
+                self.mesh_update_zone_version(incoming_zone, version);
+                Ok(apply_result)
             }
         }
     }
@@ -113,8 +172,17 @@ impl Partition {
         }
     }
 
+    fn mesh_update_zone_version(&mut self, incoming_zone: &str, version: Version) {
+        let current = self
+            .remote_zone_versions
+            .entry(incoming_zone.into())
+            .or_insert(version);
+        *current = Version::max(*current, version);
+    }
+
     pub fn mesh_apply_snapshot(
         &mut self,
+        span: &Span,
         snapshot: BTreeMap<NamespacedName, DynamicObject>,
         incoming_zone: &str,
         current_zone: &str,
@@ -127,16 +195,18 @@ impl Partition {
             .map(|(k, _)| k.to_owned())
             .collect();
 
-        let incoming: HashSet<NamespacedName> = snapshot
-            .iter()
-            .filter(|(_, v)| self.merge_strategy.is_owner_zone_object(v, incoming_zone))
-            .map(|(k, _)| k.to_owned())
-            .collect();
+        let incoming: HashSet<NamespacedName> = snapshot.keys().map(|k| k.to_owned()).collect();
 
         let to_update = incoming.clone();
         let to_delete_non_existing: HashSet<&NamespacedName> =
             in_partition.difference(&incoming).collect();
 
+        debug!(
+            parent: span,
+            "mesh_apply_snapshot: update = {:?}, delete = {:?}",
+            to_update,
+            to_delete_non_existing
+        );
         let mut results = vec![];
 
         for name in to_delete_non_existing {
@@ -144,12 +214,14 @@ impl Partition {
                 .resources
                 .remove(name)
                 .unwrap_or(VersionedObject::NonExisting);
+
             let Some(tombstone) = self
                 .merge_strategy
                 .tombstone(current, self.clock.now_millis())?
             else {
                 continue;
             };
+            debug!(parent: span, %name, "resource not in snapshot: adding tombstone");
             self.resources
                 .insert(name.to_owned(), VersionedObject::Tombstone(tombstone));
         }
@@ -161,6 +233,7 @@ impl Partition {
                 .unwrap_or(VersionedObject::NonExisting);
             let incoming = snapshot.get(&name).cloned().unwrap();
             let result = self.merge_strategy.mesh_update(
+                span,
                 current,
                 incoming,
                 incoming_zone,
@@ -173,7 +246,7 @@ impl Partition {
         Ok(results)
     }
 
-    pub fn get_mesh_snapshot(&self, current_zone: &str) -> MeshEvent {
+    pub fn get_mesh_snapshot(&mut self, current_zone: &str, version: Version) -> MeshEvent {
         let owned: HashSet<NamespacedName> = self
             .resources
             .iter()
@@ -182,7 +255,6 @@ impl Partition {
             .collect();
 
         let mut snapshot = BTreeMap::new();
-
         for name in owned {
             let VersionedObject::Object(object) = self
                 .resources
@@ -193,17 +265,23 @@ impl Partition {
             };
             snapshot.insert(name, object.to_owned());
         }
-        MeshEvent::Snapshot { snapshot }
+        self.zone_version = version; // TODO ugly mutation
+        MeshEvent::Snapshot {
+            snapshot,
+            version: self.zone_version,
+        }
     }
 
     pub fn mesh_membership_change(
         &mut self,
+        span: &Span,
         membership: &Membership,
         node_zone: &str,
     ) -> Result<Vec<MergeResult>> {
         let mut out = vec![];
         for (_, current) in self.resources.iter() {
             let mut merge_results = self.merge_strategy.mesh_membership_change(
+                span,
                 current.to_owned(),
                 membership,
                 node_zone,
@@ -216,7 +294,12 @@ impl Partition {
         Ok(out)
     }
 
-    pub fn kube_apply(&mut self, event: KubeEvent, current_zone: &str) -> Result<UpdateResult> {
+    pub fn kube_apply(
+        &mut self,
+        span: &Span,
+        event: KubeEvent,
+        current_zone: &str,
+    ) -> Result<UpdateResult> {
         match event {
             KubeEvent::Update {
                 version, object, ..
@@ -227,10 +310,15 @@ impl Partition {
                     .get(&name)
                     .cloned()
                     .unwrap_or(VersionedObject::NonExisting);
-                let result =
-                    self.merge_strategy
-                        .kube_update(current, object, version, current_zone)?;
-                self.kube_update_partition(&result)?;
+                let result = self.merge_strategy.kube_update(
+                    span,
+                    current,
+                    object,
+                    version,
+                    current_zone,
+                )?;
+                self.kube_update_partition(span, &result)?;
+                self.zone_version = Version::max(self.zone_version, version);
                 Ok(result)
             }
             KubeEvent::Delete {
@@ -243,13 +331,15 @@ impl Partition {
                     .cloned()
                     .unwrap_or(VersionedObject::NonExisting);
                 let result = self.merge_strategy.kube_delete(
+                    span,
                     current,
                     object,
                     version,
                     current_zone,
                     self.clock.now_millis(),
                 )?;
-                self.kube_update_partition(&result)?;
+                self.kube_update_partition(span, &result)?;
+                self.zone_version = Version::max(self.zone_version, version);
                 Ok(result)
             }
             KubeEvent::Snapshot {
@@ -257,23 +347,26 @@ impl Partition {
             } => {
                 if !self.initialized {
                     let snapshot_result =
-                        self.kube_apply_snapshot(version, snapshot, current_zone, true)?;
+                        self.kube_apply_snapshot(span, version, snapshot, current_zone, true)?;
                     self.initialized = true;
-                    tracing::info!("partition initialized");
+                    self.zone_version = Version::max(self.zone_version, version);
+                    debug!("partition initialized");
                     Ok(snapshot_result)
                 } else {
                     let snapshot_result =
-                        self.kube_apply_snapshot(version, snapshot, current_zone, false)?;
+                        self.kube_apply_snapshot(span, version, snapshot, current_zone, false)?;
+                    self.zone_version = Version::max(self.zone_version, version);
                     Ok(snapshot_result)
                 }
             }
         }
     }
 
-    fn kube_update_partition(&mut self, result: &UpdateResult) -> Result<()> {
+    fn kube_update_partition(&mut self, span: &Span, result: &UpdateResult) -> Result<()> {
         match result {
-            UpdateResult::Create { object } => {
+            UpdateResult::Create { object, .. } => {
                 debug!(
+                    parent: span,
                     "kube_update_partition: create: version set to {:?}",
                     object.metadata.resource_version
                 );
@@ -282,8 +375,9 @@ impl Partition {
                     VersionedObject::Object(object.clone()),
                 );
             }
-            UpdateResult::Update { object } => {
+            UpdateResult::Update { object, .. } => {
                 debug!(
+                    parent: span,
                     "kube_update_partition: update: version set to {:?}",
                     object.metadata.resource_version
                 );
@@ -292,8 +386,11 @@ impl Partition {
                     VersionedObject::Object(object.clone()),
                 );
             }
-            UpdateResult::Delete { object, tombstone } => {
+            UpdateResult::Delete {
+                object, tombstone, ..
+            } => {
                 debug!(
+                    parent: span,
                     "kube_update_partition: delete: version set to {:?}",
                     object.metadata.resource_version
                 );
@@ -305,6 +402,7 @@ impl Partition {
             }
             UpdateResult::Tombstone(tombstone) => {
                 debug!(
+                    parent: span,
                     "kube_update_partition: tombstone: version set to {:?}",
                     tombstone.resource_version
                 );
@@ -315,7 +413,7 @@ impl Partition {
                 );
             }
             UpdateResult::Snapshot { .. } => {
-                warn!("Snapshot is not applied in kube_update_partition. Algorithm error.")
+                warn!(parent: span, "Snapshot is not applied in kube_update_partition. Algorithm error.")
             }
             UpdateResult::Skip => {}
         }
@@ -324,31 +422,56 @@ impl Partition {
 
     fn kube_apply_snapshot(
         &mut self,
-        version: Version,
+        span: &Span,
+        snapshot_version: Version,
         mut snapshot: BTreeMap<NamespacedName, DynamicObject>,
         current_zone: &str,
         initial: bool,
     ) -> Result<UpdateResult> {
+        if initial {
+            // Initialize known remote zones versions from resources
+            let mut remote_zone_versions: BTreeMap<String, Version> = BTreeMap::new();
+            // TODO move into the anyapplication strategy
+            for object in snapshot.values() {
+                let remote_version = object.get_owner_version();
+                let name = object.get_namespaced_name();
+                let application: AnyApplication = object
+                    .to_owned()
+                    .try_parse()
+                    .context("parsing AnyApplication resource from snapshot")?;
+                let zone = application.get_owner_zone();
+                if zone != current_zone {
+                    if let Some(remote_version) = remote_version {
+                        let current = remote_zone_versions.entry(zone).or_insert(remote_version);
+                        *current = Version::max(*current, remote_version);
+                    } else {
+                        warn!(parent: span, %name, "kube apply snapshot (initial), resource has no owner version. Skipping...")
+                    }
+                }
+            }
+            self.remote_zone_versions = remote_zone_versions;
+        }
+
         let owned_resources: HashSet<NamespacedName> = snapshot
             .iter()
             .filter(|(_, v)| self.merge_strategy.is_owner_zone_object(v, current_zone))
             .map(|(k, _)| k.to_owned())
             .collect();
-
         let mut owned_snapshot = BTreeMap::new();
         for name in owned_resources.into_iter() {
             let object = snapshot
                 .remove(&name)
                 .expect("Invariant failure. expected object in snapshot");
             let result = self.merge_strategy.kube_update(
+                span,
                 VersionedObject::NonExisting,
                 object,
-                version,
+                snapshot_version,
                 current_zone,
             )?;
-            self.kube_update_partition(&result)?;
+            self.kube_update_partition(span, &result)?;
             match result {
-                UpdateResult::Create { object } | UpdateResult::Update { object } => {
+                UpdateResult::Create { object, .. } | UpdateResult::Update { object, .. } => {
                     owned_snapshot.insert(name.to_owned(), object.clone());
                 }
                 UpdateResult::Delete { .. } | UpdateResult::Snapshot { .. } => {
@@ -359,6 +482,7 @@ impl Partition {
         }
         let snapshot_result = UpdateResult::Snapshot {
             snapshot: owned_snapshot,
+            version: snapshot_version,
         };
 
         // partition should reflect the state of the kubernetes for not owned resources as well
@@ -383,6 +507,8 @@ impl Partition {
                 .collect();
 
             // Inserting tombstone if partition contains object which is absent in kube snapshot
+            // This is probably not possible anymore since the owner can change
+            // TODO reconsider
             for name in owned_by_current_zone_not_in_snapshot {
                 match self
                     .resources
@@ -469,6 +595,7 @@ pub mod tests {
     use anyapplication::{anyapplication::*, anyapplication_ext::*};
     use kube::api::{DynamicObject, ObjectMeta};
     use maplit::btreemap;
+    use tracing::{Level, span};
 
     use crate::{
         kube::{
@@ -477,15 +604,128 @@ pub mod tests {
         },
         merge::{
             anyapplication_strategy::AnyApplicationMerge,
-            anyapplication_test_support::tests::{anycond, anyplacements, anyspec, anystatus},
+            anyapplication_test_support::tests::{
+                anycond, anyplacements, anyspec, anystatus, anyzone,
+                make_anyapplication_with_conditions,
+            },
             types::{MergeResult, Tombstone, UpdateResult},
         },
-        mesh::{event::MeshEvent, partition::Partition},
+        mesh::{event::MeshEvent, partition::Partition, topic::InstanceId},
         utils::clock::FakeClock,
     };
 
     #[test]
+    fn get_mesh_snapshot() {
+        let span = span!(Level::TRACE, "get_mesh_snapshot");
+
+        let name_a1 = NamespacedName::new("default".into(), "nginx-app-a1".into());
+        let mut app_a1 = anyapp(
+            &name_a1,
+            1,
+            anyspec(1),
+            Some(anystatus("A", anyplacements("A", None), None)),
+        );
+        app_a1.set_resource_version(1);
+
+        let name_a2 = NamespacedName::new("default".into(), "nginx-app-a2".into());
+        let mut app_a2 = anyapp(
+            &name_a2,
+            1,
+            anyspec(1),
+            Some(anystatus("A", anyplacements("A", None), None)),
+        );
+        app_a2.set_resource_version(1);
+
+        let mut partition = Partition::new(AnyApplicationMerge::new(), Arc::new(FakeClock::new()));
+
+        // 1. Outgoing initial snapshot
+        kube_apply_snapshot(
+            &span,
+            &mut partition,
+            btreemap! {
+                name_a1.clone() => app_a1.to_owned(),
+                name_a2.clone() => app_a2.to_owned(),
+            },
+            1,
+        );
+
+        // 2. Incremental snapshot
+        let actual_incremental_snapshot = partition.get_mesh_snapshot("A", 1);
+        assert_eq!(
+            actual_incremental_snapshot,
+            MeshEvent::Snapshot {
+                version: 1,
+                snapshot: btreemap! {
+                    name_a1.clone() => app_a1.to_owned(),
+                    name_a2.clone() => app_a2.to_owned(),
+                }
+            }
+        );
+    }
+
+    #[test]
+    fn mesh_membership_change() {
+        let span = span!(Level::TRACE, "get_mesh_snapshot");
+        let clock = Arc::new(FakeClock::new());
+
+        let app_a1 = make_anyapplication_with_conditions(
+            1,
+            1,
+            "A",
+            1,
+            1,
+            &["A"],
+            &[anyzone("A", 2, &[anycond("A", "type")])],
+        );
+        let name_a1 = app_a1.get_namespaced_name();
+
+        let mut partition = Partition::new(AnyApplicationMerge::new(), clock.to_owned());
+
+        // 1. Outgoing initial snapshot
+        kube_apply_snapshot(
+            &span,
+            &mut partition,
+            btreemap! {
+                name_a1.clone() => app_a1.to_owned(),
+            },
+            1,
+        );
+
+        let mut membership = Membership::new(clock.now_millis());
+        membership.add(InstanceId::new("B".into()));
+
+        let actual_change_result = partition
+            .mesh_membership_change(&span, &membership, "B")
+            .unwrap();
+
+        let app_a1_expected = make_anyapplication_with_conditions(
+            1,
+            1,
+            "B",
+            2,
+            1,
+            &["A"],
+            &[anyzone("A", 2, &[anycond("A", "type")])],
+        );
+
+        let mut event = app_a1_expected.clone();
+        event.unset_resource_version();
+
+        assert_eq!(
+            actual_change_result,
+            vec![MergeResult::Update {
+                object: app_a1_expected,
+                event: Some(MeshEvent::Update {
+                    version: 0,
+                    object: event
+                })
+            }]
+        )
+    }
+
+    #[test]
     fn snapshot_handling() {
+        let span = span!(Level::TRACE, "snapshot_handling");
         let membership = Membership::default();
         let name_a1 = NamespacedName::new("default".into(), "nginx-app-a1".into());
         let mut app_a1 = anyapp(
@@ -536,6 +776,7 @@ pub mod tests {
 
         // 1. Outgoing initial snapshot
         let actual_snapshot = kube_apply_snapshot(
+            &span,
             &mut partition,
             btreemap! {
                 name_a1.clone() => app_a1.to_owned(),
@@ -561,7 +802,7 @@ pub mod tests {
             name_b2.clone() => app_b2.to_owned(),
         };
 
-        let actual_snapshot = kube_apply_snapshot(&mut partition, snapshot, 2);
+        let actual_snapshot = kube_apply_snapshot(&span, &mut partition, snapshot, 2);
 
         // app_a1 should be in the snapshot with updated version
         app_a1.set_owner_version(2);
@@ -590,7 +831,7 @@ pub mod tests {
         };
 
         let mut actual_merge_result = partition
-            .mesh_apply_snapshot(snapshot, "B", "A", &membership)
+            .mesh_apply_snapshot(&span, snapshot, "B", "A", &membership)
             .expect("Incoming snapshot should be applied");
         sort_merge_results(&mut actual_merge_result);
 
@@ -618,16 +859,18 @@ pub mod tests {
     }
 
     fn kube_apply_snapshot(
+        span: &Span,
         partition: &mut Partition,
         snapshot: BTreeMap<NamespacedName, DynamicObject>,
         version: Version,
     ) -> BTreeMap<NamespacedName, DynamicObject> {
         let update_result = partition
-            .kube_apply(KubeEvent::Snapshot { version, snapshot }, "A")
+            .kube_apply(span, KubeEvent::Snapshot { version, snapshot }, "A")
             .expect("Snapshot should be applied");
 
         let UpdateResult::Snapshot {
             snapshot: actual_snapshot,
+            ..
         } = update_result
         else {
             panic!("Expected snapshot result");
@@ -638,6 +881,7 @@ pub mod tests {
 
     #[test]
     fn should_drop_tombstones_periodically() {
+        let span = span!(Level::TRACE, "should_drop_tombstones_periodically");
         let name_a1 = NamespacedName::new("default".into(), "nginx-app-a1".into());
         let mut app_a1 = anyapp(
             &name_a1,
@@ -653,6 +897,7 @@ pub mod tests {
 
         // 1. Outgoing initial snapshot
         let actual_snapshot = kube_apply_snapshot(
+            &span,
             &mut partition,
             btreemap! {
                 name_a1.clone() => app_a1.to_owned(),
@@ -663,7 +908,7 @@ pub mod tests {
         assert_eq!(actual_snapshot.get(&name_a1).unwrap(), &app_a1);
 
         // 1. Applying empty snapshot and deleting object a1
-        kube_apply_snapshot(&mut partition, btreemap! {}, 1);
+        kube_apply_snapshot(&span, &mut partition, btreemap! {}, 1);
 
         assert_eq!(
             partition.get_tombstone(&name_a1).unwrap(),
@@ -697,7 +942,7 @@ pub mod tests {
         // 1.1 Do not replicate object that has no status (new resource)
         runner.kube_partition_a(
             &anyapp_a.kube_snap(),
-            &mesh_snap(vec![]),
+            &mesh_snap(vec![], 1),
             Vec::<MergeResult>::new(),
         );
 
@@ -746,7 +991,7 @@ pub mod tests {
         anyapp_a.inc_version();
         anyapp_a.set_conditions(1, "A", vec![anycond("A", "type")]);
 
-        let anyapp_a_updated = anyapp_a.with_updated_owner_version();
+        let mut anyapp_a_updated = anyapp_a.with_updated_owner_version();
         let mut anyapp_b = anyapp_a_updated.with_resource_version(anyapp_b.resource_version);
 
         runner.kube_partition_a(
@@ -756,7 +1001,7 @@ pub mod tests {
         );
 
         // 3.2 persistence step and update of partition
-        anyapp_a = anyapp_a_with_version.with_incremented_version();
+        anyapp_a = anyapp_a_updated.with_incremented_version();
         anyapp_b = anyapp_b.with_incremented_version();
         runner.post_merge_update_version_a(&mut anyapp_a);
         runner.post_merge_update_version_b(&mut anyapp_b);
@@ -765,7 +1010,7 @@ pub mod tests {
         anyapp_a.inc_version();
         anyapp_a.set_conditions(2, "A", vec![anycond("A", "type2")]);
 
-        let anyapp_a_updated = anyapp_a.with_updated_owner_version();
+        let mut anyapp_a_updated = anyapp_a.with_updated_owner_version();
         let mut anyapp_b = anyapp_a_updated.with_resource_version(anyapp_b.resource_version);
 
         runner.kube_partition_a(
@@ -775,7 +1020,7 @@ pub mod tests {
         );
 
         // 4.2 persistence step and update of partition
-        anyapp_a = anyapp_a_with_version.with_incremented_version();
+        anyapp_a = anyapp_a_updated.with_incremented_version();
         anyapp_b = anyapp_b.with_incremented_version();
         runner.post_merge_update_version_a(&mut anyapp_a);
         runner.post_merge_update_version_b(&mut anyapp_b);
@@ -818,7 +1063,7 @@ pub mod tests {
         // 1.1 Do not replicate object that has no status (new resource)
         runner.kube_partition_a(
             &anyapp_a.kube_snap(),
-            &mesh_snap(vec![]),
+            &mesh_snap(vec![], 1),
             Vec::<MergeResult>::new(),
         );
 
@@ -844,23 +1089,6 @@ pub mod tests {
         anyapp_a = anyapp_a_with_version.with_incremented_version();
         runner.post_merge_update_version_a(&mut anyapp_a);
         runner.post_merge_update_version_b(&mut anyapp_a_with_version);
-
-        dbg!(
-            runner
-                .partition_a
-                .get(&anyapp_a.get_namespaced_name())
-                .unwrap()
-                .metadata
-                .resource_version
-        );
-        dbg!(
-            runner
-                .partition_b
-                .get(&anyapp_a.get_namespaced_name())
-                .unwrap()
-                .metadata
-                .resource_version
-        );
 
         // 3.1 Replicate object to zone B update with placements
         anyapp_a.inc_version();
@@ -1004,13 +1232,13 @@ pub mod tests {
         );
     }
 
-    fn mesh_snap(objects: Vec<&DynamicObject>) -> MeshEvent {
+    fn mesh_snap(objects: Vec<&DynamicObject>, version: Version) -> MeshEvent {
         let mut snapshot = BTreeMap::new();
         objects.into_iter().for_each(|o| {
             let name = o.get_namespaced_name();
             snapshot.insert(name, o.clone());
         });
-        MeshEvent::Snapshot { snapshot }
+        MeshEvent::Snapshot { snapshot, version }
     }
 
     pub fn anyapp(
@@ -1061,8 +1289,9 @@ pub mod tests {
         }
 
         pub fn init_partition_a(&mut self, event: KubeEvent) {
+            let span = span!(Level::DEBUG, "kube_partition_a");
             self.partition_a
-                .kube_apply(event, &self.zone_a)
+                .kube_apply(&span, event, &self.zone_a)
                 .expect("init partition a should succeed");
         }
 
@@ -1072,9 +1301,10 @@ pub mod tests {
             mesh_event_a: &MeshEvent,
             merge_result_b: Vec<MergeResult>,
         ) {
+            let span = span!(Level::DEBUG, "kube_partition_a");
             let actual_mesh_event: Option<MeshEvent> = self
                 .partition_a
-                .kube_apply(kube_event_a.to_owned(), &self.zone_a)
+                .kube_apply(&span, kube_event_a.to_owned(), &self.zone_a)
                 .expect("partition_a.kube_apply() succeeds")
                 .into();
             assert_eq!(
@@ -1086,6 +1316,7 @@ pub mod tests {
             let actual_merge_result = self
                 .partition_b
                 .mesh_apply(
+                    &span,
                     actual_mesh_event.unwrap(),
                     &self.zone_a,
                     &self.zone_b,
@@ -1101,9 +1332,10 @@ pub mod tests {
             mesh_event_b: &MeshEvent,
             merge_result_a: Vec<MergeResult>,
         ) {
+            let span = span!(Level::DEBUG, "kube_partition_b");
             let actual_mesh_event: Option<MeshEvent> = self
                 .partition_b
-                .kube_apply(kube_event_b.to_owned(), &self.zone_b)
+                .kube_apply(&span, kube_event_b.to_owned(), &self.zone_b)
                 .expect("partition_b.kube_apply() succeeds")
                 .into();
             assert_eq!(
@@ -1115,6 +1347,7 @@ pub mod tests {
             let actual_merge_result = self
                 .partition_a
                 .mesh_apply(
+                    &span,
                     actual_mesh_event.unwrap(),
                     &self.zone_b,
                     &self.zone_a,
@@ -1406,13 +1639,19 @@ pub mod tests {
         fn mesh_upd(&self) -> MeshEvent {
             let mut object = self.object();
             object.unset_resource_version();
-            MeshEvent::Update { object }
+            MeshEvent::Update {
+                object,
+                version: self.resource_version,
+            }
         }
 
         fn mesh_del(&self) -> MeshEvent {
             let mut object = self.object();
             object.unset_resource_version();
-            MeshEvent::Delete { object }
+            MeshEvent::Delete {
+                object,
+                version: self.resource_version,
+            }
         }
 
         fn merge_cre(&self) -> MergeResult {

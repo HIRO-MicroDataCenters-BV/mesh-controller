@@ -41,11 +41,11 @@ impl KubeEvent {
         let (event_type, id) = match self {
             KubeEvent::Update { version, object } => (
                 "update",
-                format!("{}/{}", object.get_namespaced_name().to_string(), version),
+                format!("{}/{}", object.get_namespaced_name(), version),
             ),
             KubeEvent::Delete { version, object } => (
                 "delete",
-                format!("{}/{}", object.get_namespaced_name().to_string(), version),
+                format!("{}/{}", object.get_namespaced_name(), version),
             ),
             KubeEvent::Snapshot { version, .. } => ("snapshot", version.to_string()),
         };
