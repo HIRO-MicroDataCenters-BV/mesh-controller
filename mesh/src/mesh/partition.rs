@@ -56,15 +56,7 @@ impl Partition {
                 object: incoming,
                 version,
             } => {
-                let max_known_zone_version =
-                    self.remote_zone_versions.get(incoming_zone).unwrap_or(&0);
-                if max_known_zone_version >= &version {
-                    debug!(
-                        parent: span,
-                        zone = ?incoming_zone,
-                        %version, max_known_version = ?max_known_zone_version,
-                        "skipping update"
-                    );
+                if self.skip_update_if_old(span, incoming_zone, version, "update") {
                     return Ok(vec![]);
                 }
 
@@ -92,15 +84,7 @@ impl Partition {
                 object: incoming,
                 version,
             } => {
-                let max_known_zone_version =
-                    self.remote_zone_versions.get(incoming_zone).unwrap_or(&0);
-                if max_known_zone_version >= &version {
-                    debug!(
-                        parent: span,
-                        zone = ?incoming_zone,
-                        %version, max_known_version = ?max_known_zone_version,
-                        "skipping delete",
-                    );
+                if self.skip_update_if_old(span, incoming_zone, version, "delete") {
                     return Ok(vec![]);
                 }
 
@@ -122,17 +106,10 @@ impl Partition {
                 Ok(vec![result])
             }
             MeshEvent::Snapshot { snapshot, version } => {
-                let max_known_zone_version =
-                    self.remote_zone_versions.get(incoming_zone).unwrap_or(&0);
-                if max_known_zone_version >= &version {
-                    debug!(
-                        parent: span,
-                        zone = ?incoming_zone,
-                        %version, max_known_version = ?max_known_zone_version,
-                        "skipping snapshot",
-                    );
+                if self.skip_update_if_old(span, incoming_zone, version, "snapshot") {
                     return Ok(vec![]);
                 }
+
                 let apply_result = self.mesh_apply_snapshot(
                     span,
                     snapshot,
@@ -169,6 +146,27 @@ impl Partition {
                 );
             }
             MergeResult::Skip => {}
+        }
+    }
+
+    fn skip_update_if_old(
+        &self,
+        span: &Span,
+        incoming_zone: &str,
+        incoming_version: Version,
+        event_type: &str,
+    ) -> bool {
+        let max_known_zone_version = self.remote_zone_versions.get(incoming_zone).unwrap_or(&0);
+        if max_known_zone_version >= &incoming_version {
+            debug!(
+                parent: span,
+                zone = ?incoming_zone,
+                version = ?incoming_version, max_known_version = ?max_known_zone_version,
+                "skipping {event_type}",
+            );
+            true
+        } else {
+            false
         }
     }
 
