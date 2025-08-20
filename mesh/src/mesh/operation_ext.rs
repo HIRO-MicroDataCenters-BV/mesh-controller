@@ -14,6 +14,6 @@ impl OperationExt for Operation<Extensions> {
         };
         let seq_num = self.header.seq_num;
         let log_id = &extensions.log_id;
-        Ok(format!("{}#{}", log_id.0, seq_num))
+        Ok(format!("{}/{}", log_id.0, seq_num))
     }
 }
