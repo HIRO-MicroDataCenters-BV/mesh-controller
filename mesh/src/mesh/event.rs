@@ -4,19 +4,22 @@ use kube::api::DynamicObject;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    kube::{dynamic_object_ext::DynamicObjectExt, types::NamespacedName},
+    kube::{dynamic_object_ext::DynamicObjectExt, subscriptions::Version, types::NamespacedName},
     merge::types::UpdateResult,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum MeshEvent {
     Update {
+        version: Version,
         object: DynamicObject,
     },
     Delete {
+        version: Version,
         object: DynamicObject,
     },
     Snapshot {
+        version: Version,
         snapshot: BTreeMap<NamespacedName, DynamicObject>,
     },
 }
@@ -26,6 +29,15 @@ impl MeshEvent {
         let mut bytes = Vec::new();
         ciborium::into_writer(&self, &mut bytes).expect("encoding network message");
         bytes
+    }
+
+    pub fn set_zone_version(&mut self, new_version: Version) {
+        let version = match self {
+            MeshEvent::Update { version, .. } => version,
+            MeshEvent::Delete { version, .. } => version,
+            MeshEvent::Snapshot { version, .. } => version,
+        };
+        *version = new_version;
     }
 }
 
@@ -40,14 +52,14 @@ impl TryFrom<Vec<u8>> for MeshEvent {
 impl Display for MeshEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            MeshEvent::Update { object } => {
+            MeshEvent::Update { object, .. } => {
                 write!(f, "Update({:?})", object.get_namespaced_name())
             }
-            MeshEvent::Delete { object } => {
+            MeshEvent::Delete { object, .. } => {
                 write!(f, "Delete({:?})", object.get_namespaced_name())
             }
-            MeshEvent::Snapshot { snapshot } => {
-                write!(f, "Snapshot({} items)", snapshot.len())
+            MeshEvent::Snapshot { snapshot, version } => {
+                write!(f, "Snapshot({} items, version{})", snapshot.len(), version)
             }
         }
     }
@@ -56,19 +68,33 @@ impl Display for MeshEvent {
 impl From<UpdateResult> for Option<MeshEvent> {
     fn from(update_result: UpdateResult) -> Option<MeshEvent> {
         match update_result {
-            UpdateResult::Create { mut object } | UpdateResult::Update { mut object } => {
-                object.unset_resource_version();
-                Some(MeshEvent::Update { object })
+            UpdateResult::Create {
+                mut object,
+                version,
             }
-            UpdateResult::Delete { mut object, .. } => {
+            | UpdateResult::Update {
+                mut object,
+                version,
+            } => {
                 object.unset_resource_version();
-                Some(MeshEvent::Delete { object })
+                Some(MeshEvent::Update { object, version })
             }
-            UpdateResult::Snapshot { mut snapshot, .. } => {
+            UpdateResult::Delete {
+                mut object,
+                version,
+                ..
+            } => {
+                object.unset_resource_version();
+                Some(MeshEvent::Delete { object, version })
+            }
+            UpdateResult::Snapshot {
+                mut snapshot,
+                version,
+            } => {
                 snapshot.iter_mut().for_each(|(_, object)| {
                     object.unset_resource_version();
                 });
-                Some(MeshEvent::Snapshot { snapshot })
+                Some(MeshEvent::Snapshot { snapshot, version })
             }
             UpdateResult::Skip | UpdateResult::Tombstone { .. } => None,
         }
