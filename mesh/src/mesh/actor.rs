@@ -369,11 +369,7 @@ impl MeshActor {
                     )?;
                     let event_types: Vec<&str> =
                         merge_results.iter().map(|e| e.event_type()).collect();
-                    debug!(
-                        parent: &span,
-                        "merge result: {:?}",
-                        event_types
-                    );
+                    debug!(parent: &span, "merge result: {:?}", event_types);
                     self.on_merge_results(&span, merge_results).await;
                     self.operation_log.advance_log_pointer(&log_id, pointer + 1);
                 } else {
@@ -454,6 +450,7 @@ impl MeshActor {
         while attempts > 0 {
             if let Some(object) = self.subscriptions.client().get(&gvk, &name).await? {
                 let version = object.get_resource_version();
+                debug!(parent: span, "forced_sync: existing resource version {}", version);
                 let name = object.get_namespaced_name();
                 let event = match operation_type {
                     OperationType::Update => KubeEvent::Update { version, object },
@@ -475,6 +472,7 @@ impl MeshActor {
                         return Ok(persistence_result);
                     };
                 } else {
+                    debug!(parent: span, "forced_sync: resource does not exist. skipping...");
                     return Ok(PersistenceResult::Skipped);
                 }
             } else {
@@ -498,6 +496,7 @@ impl MeshActor {
     ) -> Result<PersistenceResult> {
         let gvk = object.get_gvk()?;
         let name = object.get_namespaced_name();
+        let current_version = object.metadata.resource_version.to_owned();
 
         let existing = self.subscriptions.client().get(&gvk, &name).await?;
 
@@ -508,11 +507,16 @@ impl MeshActor {
             object.metadata.uid = existing.metadata.uid;
             debug!(
                 parent: span,
-                "patch apply: existing version {}, object version {}",
+                "patch apply (update): existing version {}, object version {}",
                 existing_version,
                 object.get_resource_version()
             )
         } else {
+            debug!(
+                parent: span,
+                "patch apply (create): existing version {:?}",
+                current_version
+            );
             object.metadata.uid = None;
             object.metadata.resource_version = None;
         }
@@ -525,7 +529,7 @@ impl MeshActor {
                 Ok(PersistenceResult::Persisted(new_version))
             }
             Err(ClientError::VersionConflict) => {
-                debug!(parent: span, "Version Conflict for resource {}", name);
+                debug!(parent: span, "Version Conflict for resource {}, current version {:?}", name, current_version);
                 Ok(PersistenceResult::Conflict {
                     gvk,
                     name,

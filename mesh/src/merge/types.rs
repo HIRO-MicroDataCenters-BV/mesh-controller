@@ -90,6 +90,7 @@ pub trait MergeStrategy: Send + Sync {
         incoming: DynamicObject,
         incoming_resource_version: Version,
         node_zone: &str,
+        now_millis: u64,
     ) -> Result<UpdateResult>;
 
     fn kube_delete(
