@@ -313,6 +313,7 @@ impl Partition {
                     object,
                     version,
                     current_zone,
+                    self.clock.now_millis(),
                 )?;
                 self.kube_update_partition(span, &result)?;
                 self.zone_version = Version::max(self.zone_version, version);
@@ -447,6 +448,7 @@ impl Partition {
                 object,
                 snapshot_version,
                 current_zone,
+                self.clock.now_millis(),
             )?;
             self.kube_update_partition(span, &result)?;
             match result {

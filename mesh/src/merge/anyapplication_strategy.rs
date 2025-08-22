@@ -18,9 +18,9 @@ use anyapplication::{
     },
     anyapplication_ext::{AnyApplicationExt, AnyApplicationStatusOwnershipExt},
 };
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result};
 use kube::api::{DynamicObject, GroupVersionKind};
-use tracing::{Span, debug, error, warn};
+use tracing::{Span, debug, warn};
 
 pub struct AnyApplicationMerge {
     gvk: GroupVersionKind,
@@ -86,6 +86,12 @@ impl MergeStrategy for AnyApplicationMerge {
                     && tombstone.deletion_timestamp < incoming_timestamp;
 
                 if is_same_zone_greater_version || is_other_zone_greater_timestamp {
+                    if is_same_zone_greater_version {
+                        debug!(parent: span, %name, "mesh delete over tombstone - new version received");
+                    } else {
+                        debug!(parent: span, %name, "mesh delete over tombstone - new epoch received");
+                    }
+
                     Ok(MergeResult::Tombstone(Tombstone {
                         gvk: self.gvk.to_owned(),
                         name,
@@ -95,6 +101,7 @@ impl MergeStrategy for AnyApplicationMerge {
                         deletion_timestamp: now_millis,
                     }))
                 } else {
+                    debug!(parent: span, %name, "mesh delete over tombstone, skipping");
                     Ok(MergeResult::Skip)
                 }
             }
@@ -125,30 +132,32 @@ impl MergeStrategy for AnyApplicationMerge {
         incoming: DynamicObject,
         incoming_resource_version: Version,
         node_zone: &str,
+        now_millis: u64,
     ) -> Result<UpdateResult> {
+        let name = incoming.get_namespaced_name();
         // Object is in deleting state
         if incoming.metadata.deletion_timestamp.is_some() {
+            debug!(parent: span, %name, "deletion timestamp is set, skipping");
             return Ok(UpdateResult::Skip);
         }
 
-        let name = incoming.get_namespaced_name();
         let mut incoming: AnyApplication = incoming.clone().try_parse()?;
 
         let is_acceptable_zone = incoming.is_acceptable_zone(node_zone);
         if !is_acceptable_zone {
+            debug!(parent: span, %name, "not acceptable zone, skipping");
             return Ok(UpdateResult::Skip);
         }
         let is_owned_zone = incoming.is_owned_zone(node_zone);
         match current {
             VersionedObject::Object(current) => {
                 let mut current: AnyApplication = current.clone().try_parse()?;
-                let maybe_current_version = current
-                    .get_resource_version()
-                    .ok_or(anyhow!("resource version is absent"));
-                if maybe_current_version.is_err() {
-                    error!(parent: span, %name, "current resource version is not available: {current:?}");
+                let maybe_current_version = current.get_resource_version();
+                if maybe_current_version.is_none() {
+                    warn!(parent: span, %name, "resource version is not set, probably new resource");
                 }
-                let current_version = maybe_current_version.unwrap();
+                // version=0 typically means that resource is new and it did not get the resource_version yet
+                let current_version = maybe_current_version.unwrap_or(0);
                 if current_version >= incoming_resource_version {
                     return Ok(UpdateResult::Skip);
                 }
@@ -199,9 +208,21 @@ impl MergeStrategy for AnyApplicationMerge {
                 })
             }
             VersionedObject::Tombstone(tombstone) => {
-                if tombstone.owner_version >= incoming_resource_version {
-                    Ok(UpdateResult::Skip)
-                } else {
+                let incoming_timestamp = now_millis;
+                let incoming_owner_version = incoming_resource_version;
+
+                let is_same_zone_greater_version = tombstone.owner_zone == node_zone
+                    && tombstone.owner_version < incoming_owner_version;
+                let is_other_zone_greater_timestamp = tombstone.owner_zone != node_zone
+                    && tombstone.deletion_timestamp < incoming_timestamp;
+
+                if is_same_zone_greater_version || is_other_zone_greater_timestamp {
+                    if is_same_zone_greater_version {
+                        debug!(parent: span, %name, "mesh update over tombstone - creating new as new version is greater");
+                    } else {
+                        debug!(parent: span, %name, "mesh update over tombstone - creating new as new epoch is received");
+                    }
+
                     if is_owned_zone {
                         incoming.set_owner_version(incoming_resource_version);
                     }
@@ -212,6 +233,9 @@ impl MergeStrategy for AnyApplicationMerge {
                         object,
                         version: incoming_resource_version,
                     })
+                } else {
+                    debug!(parent: span, %name, "update over tombstone, tombstone.owner version is high than incoming version, skipping");
+                    Ok(UpdateResult::Skip)
                 }
             }
         }
@@ -909,11 +933,7 @@ impl AnyApplicationMerge {
             incoming_owner_zone != current_owner_zone && current_owner_epoch < incoming_owner_epoch;
 
         if is_same_zone_greater_version || is_other_zone_greater_epoch {
-            let deletion_timestamp = incoming
-                .metadata
-                .deletion_timestamp
-                .map(|t| t.0.timestamp_millis() as u64)
-                .unwrap_or(now_millis);
+            let deletion_timestamp = now_millis;
             if is_same_zone_greater_version {
                 debug!(parent: span, %name, "mesh delete - new version received");
             } else {
@@ -2070,7 +2090,7 @@ pub mod tests {
                 version: 1,
             },
             AnyApplicationMerge::new()
-                .kube_update(&span, VersionedObject::NonExisting, incoming, 1, "zone1")
+                .kube_update(&span, VersionedObject::NonExisting, incoming, 1, "zone1", 0)
                 .unwrap()
         );
     }
@@ -2094,7 +2114,7 @@ pub mod tests {
                 version: 1,
             },
             AnyApplicationMerge::new()
-                .kube_update(&span, existing, incoming, 1, "zone1")
+                .kube_update(&span, existing, incoming, 1, "zone1", 0)
                 .unwrap()
         );
     }
@@ -2116,7 +2136,7 @@ pub mod tests {
         assert_eq!(
             UpdateResult::Skip,
             AnyApplicationMerge::new()
-                .kube_update(&span, existing, incoming, 1, "zone1")
+                .kube_update(&span, existing, incoming, 1, "zone1", 0)
                 .unwrap()
         );
     }
@@ -2131,7 +2151,7 @@ pub mod tests {
         assert_eq!(
             UpdateResult::Skip,
             AnyApplicationMerge::new()
-                .kube_update(&span, existing.into(), incoming, 1, "zone1")
+                .kube_update(&span, existing.into(), incoming, 1, "zone1", 0)
                 .unwrap()
         );
     }
@@ -2151,7 +2171,7 @@ pub mod tests {
                 version: 2
             },
             AnyApplicationMerge::new()
-                .kube_update(&span, existing.into(), incoming, 2, "zone1")
+                .kube_update(&span, existing.into(), incoming, 2, "zone1", 0)
                 .unwrap()
         );
     }
@@ -2318,7 +2338,7 @@ pub mod tests {
                 version: 5
             },
             strategy
-                .kube_update(&span, current.into(), incoming, 5, "zone2")
+                .kube_update(&span, current.into(), incoming, 5, "zone2", 0)
                 .unwrap()
         );
     }
@@ -2368,7 +2388,7 @@ pub mod tests {
                 version: 5
             },
             strategy
-                .kube_update(&span, current.into(), incoming, 5, "zone2")
+                .kube_update(&span, current.into(), incoming, 5, "zone2", 0)
                 .unwrap()
         );
     }
@@ -2422,7 +2442,7 @@ pub mod tests {
                 version: 4
             },
             strategy
-                .kube_update(&span, current.into(), incoming, 4, "zone2")
+                .kube_update(&span, current.into(), incoming, 4, "zone2", 0)
                 .unwrap()
         );
     }

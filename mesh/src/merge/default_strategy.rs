@@ -92,6 +92,7 @@ impl MergeStrategy for DefaultMerge {
         mut incoming: DynamicObject,
         incoming_resource_version: Version,
         incoming_zone: &str,
+        _now_millis: u64,
     ) -> Result<UpdateResult> {
         if incoming.metadata.deletion_timestamp.is_some() {
             return Ok(UpdateResult::Skip);
@@ -641,7 +642,7 @@ pub mod tests {
                 version: 2,
             },
             DefaultMerge::new(gvk)
-                .kube_update(&span, VersionedObject::NonExisting, incoming, 2, "test")
+                .kube_update(&span, VersionedObject::NonExisting, incoming, 2, "test", 0)
                 .unwrap()
         );
     }
@@ -667,7 +668,7 @@ pub mod tests {
                 version: 2,
             },
             DefaultMerge::new(gvk)
-                .kube_update(&span, existing, incoming, 2, "test")
+                .kube_update(&span, existing, incoming, 2, "test", 0)
                 .unwrap()
         );
     }
@@ -683,7 +684,7 @@ pub mod tests {
         assert_eq!(
             UpdateResult::Skip,
             DefaultMerge::new(gvk)
-                .kube_update(&span, existing.into(), incoming, 1, "test")
+                .kube_update(&span, existing.into(), incoming, 1, "test", 0)
                 .unwrap()
         );
     }
@@ -700,7 +701,7 @@ pub mod tests {
         assert_eq!(
             UpdateResult::Skip,
             DefaultMerge::new(gvk)
-                .kube_update(&span, existing.into(), incoming, 2, "test")
+                .kube_update(&span, existing.into(), incoming, 2, "test", 0)
                 .unwrap()
         );
     }
@@ -719,7 +720,7 @@ pub mod tests {
                 version: 2,
             },
             DefaultMerge::new(gvk)
-                .kube_update(&span, existing.into(), incoming, 2, "test")
+                .kube_update(&span, existing.into(), incoming, 2, "test", 0)
                 .unwrap()
         );
     }
