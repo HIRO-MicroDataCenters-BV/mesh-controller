@@ -56,6 +56,7 @@ schemars.workspace=true
 either.workspace = true
 fake-kube-api.workspace = true
 anyapplication.workspace = true
+mesh-kube.workspace = true
 
 [dev-dependencies]
 figment = { workspace = true, features = ["test"] }

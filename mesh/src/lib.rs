@@ -4,7 +4,7 @@ pub mod config;
 pub mod context;
 pub mod context_builder;
 mod http;
-pub mod kube;
+// pub mod kube;
 pub mod merge;
 pub mod mesh;
 pub mod metrics;

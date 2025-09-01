@@ -369,23 +369,22 @@ impl LogPointers {
 
 #[cfg(test)]
 pub mod tests {
-    use std::collections::{BTreeMap, HashMap};
 
     use anyhow::Result;
     use kube::api::DynamicObject;
     use maplit::hashmap;
+    use meshkube::kube::dynamic_object_ext::DynamicObjectExt;
+    use meshkube::kube::subscriptions::Version;
     use p2panda_core::{PrivateKey, PublicKey};
     use p2panda_store::MemoryStore;
+    use std::collections::{BTreeMap, HashMap};
     use tracing::{Level, Span, span};
 
-    use crate::{
-        kube::{dynamic_object_ext::DynamicObjectExt, subscriptions::Version},
-        mesh::{
-            event::MeshEvent,
-            operation_log::OperationLog,
-            operations::LinkedOperations,
-            topic::{InstanceId, MeshLogId},
-        },
+    use crate::mesh::{
+        event::MeshEvent,
+        operation_log::OperationLog,
+        operations::LinkedOperations,
+        topic::{InstanceId, MeshLogId},
     };
 
     #[tokio::test]

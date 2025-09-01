@@ -3,7 +3,6 @@ use std::pin::Pin;
 
 use crate::JoinErrToStr;
 use crate::config::configuration::Config;
-use crate::kube::event::KubeEvent;
 use crate::mesh::mesh::Mesh;
 use crate::mesh::operations::Extensions;
 use crate::mesh::topic::MeshTopic;
@@ -11,6 +10,8 @@ use crate::network::Panda;
 use anyhow::{Context, Result, anyhow};
 use futures_util::future::{MapErr, Shared};
 use futures_util::{FutureExt, TryFutureExt};
+use meshkube::config::KubeConfiguration;
+use meshkube::kube::event::KubeEvent;
 use p2panda_core::{Hash, Operation, PrivateKey, PublicKey};
 use p2panda_net::Config as NetworkConfig;
 use p2panda_net::NodeAddress;
@@ -74,10 +75,8 @@ impl MeshNode {
         config: &Config,
     ) -> Result<(NodeConfig, NetworkConfig), anyhow::Error> {
         let topic: String = match &config.kubernetes {
-            crate::config::configuration::KubeConfiguration::InCluster => String::from("unknown"),
-            crate::config::configuration::KubeConfiguration::External(
-                kube_configuration_external,
-            ) => kube_configuration_external
+            KubeConfiguration::InCluster => String::from("unknown"),
+            KubeConfiguration::External(kube_configuration_external) => kube_configuration_external
                 .kube_context
                 .as_ref()
                 .unwrap()

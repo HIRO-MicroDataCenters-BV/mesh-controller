@@ -1,8 +1,7 @@
 use dashmap::DashMap;
 use fake_kube_api::service::FakeEtcdServiceWrapper;
+use meshkube::{client::KubeClient, config::KubeConfiguration};
 use once_cell::sync::Lazy;
-
-use crate::{client::kube_client::KubeClient, config::configuration::KubeConfiguration};
 
 pub static TEST_FAKE_SERVER: Lazy<DashMap<KubeConfiguration, FakeEtcdServer>> =
     Lazy::new(DashMap::new);

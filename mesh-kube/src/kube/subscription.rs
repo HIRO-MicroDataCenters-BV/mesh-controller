@@ -2,7 +2,7 @@ use super::dynamic_object_ext::DynamicObjectExt;
 use super::event::KubeEvent;
 use super::types::NamespacedName;
 use crate::JoinErrToStr;
-use crate::client::kube_client::KubeClient;
+use crate::client::KubeClient;
 use crate::kube::subscriptions::Version;
 use anyhow::Result;
 use anyhow::bail;

@@ -89,12 +89,10 @@ pub mod tests {
     use std::collections::BTreeMap;
 
     use kube::api::DynamicObject;
+    use meshkube::kube::{dynamic_object_ext::DynamicObjectExt, subscriptions::Version};
     use p2panda_core::PrivateKey;
 
-    use crate::{
-        kube::{dynamic_object_ext::DynamicObjectExt, subscriptions::Version},
-        mesh::{event::MeshEvent, operations::LinkedOperations, topic::InstanceId},
-    };
+    use crate::mesh::{event::MeshEvent, operations::LinkedOperations, topic::InstanceId};
 
     #[test]
     fn test_ordinary_operation_flow() {

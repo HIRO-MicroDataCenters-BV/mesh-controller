@@ -3047,6 +3047,7 @@ dependencies = [
  "kube 1.1.0",
  "loole",
  "maplit",
+ "mesh-kube",
  "once_cell",
  "p2panda-core",
  "p2panda-discovery",
@@ -3070,6 +3071,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "mesh-kube"
+version = "0.1.1"
+dependencies = [
+ "anyapplication",
+ "anyhow",
+ "ciborium",
+ "dashmap",
+ "either",
+ "fake-kube-api",
+ "futures",
+ "k8s-openapi 0.25.0",
+ "kube 1.1.0",
+ "loole",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.16",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "mesh-resource"
 version = "0.1.1"
 dependencies = [
@@ -3077,10 +3102,16 @@ dependencies = [
  "built",
  "k8s-openapi 0.25.0",
  "kube 1.1.0",
+ "mesh-kube",
  "schemars",
  "serde",
  "serde_json",
  "stackable-operator",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

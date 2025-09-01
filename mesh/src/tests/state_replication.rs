@@ -1,6 +1,5 @@
 use std::time::Duration;
 
-use crate::kube::dynamic_object_ext::DynamicObjectExt;
 use crate::tests::utils::wait_for_condition;
 use crate::{
     tests::{
@@ -15,6 +14,7 @@ use anyapplication::anyapplication::{
 };
 use anyhow::{Context, Result};
 use kube::api::{ApiResource, DynamicObject, GroupVersionKind, ObjectMeta};
+use meshkube::kube::dynamic_object_ext::DynamicObjectExt;
 use p2panda_core::PrivateKey;
 use tokio::runtime::Runtime;
 use tracing::info;

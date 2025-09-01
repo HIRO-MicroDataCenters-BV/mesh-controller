@@ -4,18 +4,18 @@ use std::{
 };
 
 use super::event::MeshEvent;
+use crate::merge::types::{MergeResult, MergeStrategy, UpdateResult};
 use crate::{
-    kube::subscriptions::Version,
     merge::types::{Tombstone, VersionedObject},
     network::discovery::types::Membership,
     utils::types::Clock,
 };
-use crate::{
-    kube::{dynamic_object_ext::DynamicObjectExt, event::KubeEvent, types::NamespacedName},
-    merge::types::{MergeResult, MergeStrategy, UpdateResult},
-};
 use anyhow::Result;
 use kube::api::DynamicObject;
+use meshkube::kube::{
+    dynamic_object_ext::DynamicObjectExt, event::KubeEvent, subscriptions::Version,
+    types::NamespacedName,
+};
 use tracing::{Span, debug, warn};
 
 pub struct Partition {
@@ -574,13 +574,10 @@ pub mod tests {
     use anyapplication::{anyapplication::*, anyapplication_ext::*};
     use kube::api::{DynamicObject, ObjectMeta};
     use maplit::btreemap;
+    use meshkube::kube::subscriptions::Version;
     use tracing::{Level, span};
 
     use crate::{
-        kube::{
-            dynamic_object_ext::DynamicObjectExt, event::KubeEvent, subscriptions::Version,
-            types::NamespacedName,
-        },
         merge::{
             anyapplication_strategy::AnyApplicationMerge,
             anyapplication_test_support::tests::{

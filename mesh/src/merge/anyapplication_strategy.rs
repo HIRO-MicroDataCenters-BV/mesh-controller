@@ -1,12 +1,8 @@
 use std::collections::BTreeMap;
 
 use super::types::{MergeResult, MergeStrategy, UpdateResult};
+
 use crate::{
-    kube::{
-        dynamic_object_ext::{DynamicObjectExt, dump_zones},
-        subscriptions::Version,
-        types::NamespacedName,
-    },
     merge::types::{Tombstone, VersionedObject},
     mesh::{event::MeshEvent, topic::InstanceId},
     network::discovery::types::Membership,
@@ -20,6 +16,11 @@ use anyapplication::{
 };
 use anyhow::{Context, Result};
 use kube::api::{DynamicObject, GroupVersionKind};
+use meshkube::kube::{
+    dynamic_object_ext::{DynamicObjectExt, dump_zones},
+    subscriptions::Version,
+    types::NamespacedName,
+};
 use tracing::{Span, debug, warn};
 
 pub struct AnyApplicationMerge {
@@ -1036,7 +1037,6 @@ pub mod tests {
     use tracing::span;
 
     use super::*;
-    use crate::kube::dynamic_object_ext::DynamicObjectExt;
     use crate::merge::anyapplication_strategy::AnyApplicationMerge;
     use crate::merge::anyapplication_test_support::tests::anyapp;
     use crate::merge::anyapplication_test_support::tests::anycond;

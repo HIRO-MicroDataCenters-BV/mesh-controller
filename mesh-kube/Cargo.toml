@@ -1,0 +1,32 @@
+[package]
+name = "mesh-kube"
+description = ""
+version = "0.1.1"
+edition = "2024"
+publish = false
+
+[lints]
+workspace = true
+
+[lib]
+name = "meshkube"
+
+[dependencies]
+anyhow.workspace = true
+kube.workspace = true
+k8s-openapi.workspace=true
+tokio.workspace = true
+tokio-stream.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+futures.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+either.workspace = true
+anyapplication.workspace = true
+ciborium.workspace = true
+loole.workspace = true
+dashmap.workspace = true
+fake-kube-api.workspace = true

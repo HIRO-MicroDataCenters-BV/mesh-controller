@@ -2,13 +2,10 @@ use std::collections::BTreeMap;
 
 use anyhow::Result;
 use kube::api::{DynamicObject, GroupVersionKind};
+use meshkube::kube::{subscriptions::Version, types::NamespacedName};
 use tracing::Span;
 
-use crate::{
-    kube::{subscriptions::Version, types::NamespacedName},
-    mesh::event::MeshEvent,
-    network::discovery::types::Membership,
-};
+use crate::{mesh::event::MeshEvent, network::discovery::types::Membership};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum MergeResult {

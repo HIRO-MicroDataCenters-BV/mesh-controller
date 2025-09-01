@@ -1,5 +1,6 @@
 use anyhow::{Context as AnyhowContext, Result, bail};
 use kube::api::GroupVersionKind;
+use meshkube::kube::subscriptions::Subscriptions;
 use p2panda_core::PublicKey;
 use tokio::runtime::Runtime;
 use tokio::signal;
@@ -7,7 +8,6 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::config::configuration::Config;
-use crate::kube::subscriptions::Subscriptions;
 use crate::mesh::topic::MeshTopic;
 use crate::node::mesh::MeshNode;
 
