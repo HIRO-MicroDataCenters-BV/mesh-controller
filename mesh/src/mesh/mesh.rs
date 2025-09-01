@@ -1,19 +1,23 @@
+use std::pin::Pin;
 use std::sync::Arc;
 
 use super::actor::MeshActor;
 use super::partition::Partition;
 use super::topic::InstanceId;
 use super::{operations::Extensions, topic::MeshLogId};
+use crate::JoinErrToStr;
 use crate::client::kube_client::KubeClient;
 use crate::config::configuration::MergeStrategyType;
 use crate::config::configuration::MeshConfig;
+use crate::kube::event::KubeEvent;
 use crate::merge::anyapplication_strategy::AnyApplicationMerge;
 use crate::merge::default_strategy::DefaultMerge;
+use crate::mesh::actor::ToNodeActor;
 use crate::mesh::topic::MeshTopic;
 use crate::network::discovery::nodes::Nodes;
 use crate::utils::types::Clock;
-use crate::{JoinErrToStr, kube::subscriptions::Subscriptions};
 use anyhow::Result;
+use anyhow::anyhow;
 use futures::future::{MapErr, Shared};
 use futures::{FutureExt, TryFutureExt};
 use p2panda_core::{Operation, PrivateKey};
@@ -21,6 +25,7 @@ use p2panda_net::SystemEvent;
 use p2panda_store::MemoryStore;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc;
+use tokio::sync::oneshot;
 use tokio::task::JoinError;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::AbortOnDropHandle;
@@ -29,6 +34,7 @@ use tracing::error;
 pub struct Mesh {
     #[allow(dead_code)]
     handle: Shared<MapErr<AbortOnDropHandle<()>, JoinErrToStr>>,
+    mesh_actor_tx: mpsc::Sender<ToNodeActor>,
 }
 
 impl Mesh {
@@ -42,8 +48,6 @@ impl Mesh {
         clock: Arc<dyn Clock>,
         nodes: Nodes,
         store: MemoryStore<MeshLogId, Extensions>,
-        network_tx: mpsc::Sender<Operation<Extensions>>,
-        network_rx: mpsc::Receiver<Operation<Extensions>>,
         system_events: broadcast::Receiver<SystemEvent<MeshTopic>>,
     ) -> Result<Mesh> {
         let gvk = config.resource.get_gvk();
@@ -56,24 +60,19 @@ impl Mesh {
                 Partition::new(AnyApplicationMerge::new(), clock.clone())
             }
         };
-        let subscriptions = Subscriptions::new(client);
-        let (subscriber_rx, _) = subscriptions
-            .subscribe(&gvk, &config.resource.namespace)
-            .await?;
+        let (mesh_actor_tx, mesh_actor_rx) = mpsc::channel(512);
         let actor = MeshActor::new(
             key,
             config.snapshot.to_owned(),
             config.tombstone.to_owned(),
             instance_id,
+            client,
             partition,
             clock,
             cancelation,
             nodes,
-            network_tx,
-            network_rx,
-            subscriber_rx.into_stream(),
+            mesh_actor_rx,
             system_events,
-            subscriptions,
             store,
         );
         let handle = tokio::spawn(async {
@@ -85,6 +84,34 @@ impl Mesh {
             .map_err(Box::new(|e: JoinError| e.to_string()) as JoinErrToStr)
             .shared();
 
-        Ok(Mesh { handle })
+        Ok(Mesh {
+            handle,
+            mesh_actor_tx,
+        })
+    }
+
+    pub async fn kube_subscribe(
+        &self,
+        subscriber_rx: Pin<Box<dyn futures::Stream<Item = KubeEvent> + Send + Sync + 'static>>,
+    ) -> Result<()> {
+        let (reply, reply_rx) = oneshot::channel();
+        self.mesh_actor_tx
+            .send(ToNodeActor::KubeSubscribe {
+                subscriber_rx,
+                reply,
+            })
+            .await?;
+        reply_rx.await?
+    }
+
+    pub async fn connect_network(
+        &self,
+        incoming: broadcast::Receiver<Operation<Extensions>>,
+    ) -> Result<broadcast::Receiver<Operation<Extensions>>> {
+        let (reply, reply_rx) = oneshot::channel();
+        self.mesh_actor_tx
+            .send(ToNodeActor::ConnectNetwork { incoming, reply })
+            .await?;
+        reply_rx.await.map_err(|e| anyhow!("{e}"))
     }
 }

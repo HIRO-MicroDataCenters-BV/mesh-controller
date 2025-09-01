@@ -1,7 +1,9 @@
 use std::net::SocketAddr;
+use std::pin::Pin;
 
 use crate::JoinErrToStr;
 use crate::config::configuration::Config;
+use crate::kube::event::KubeEvent;
 use crate::mesh::mesh::Mesh;
 use crate::mesh::operations::Extensions;
 use crate::mesh::topic::MeshTopic;
@@ -12,7 +14,7 @@ use futures_util::{FutureExt, TryFutureExt};
 use p2panda_core::{Hash, Operation, PrivateKey, PublicKey};
 use p2panda_net::Config as NetworkConfig;
 use p2panda_net::NodeAddress;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::task::JoinError;
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{error, warn};
@@ -44,21 +46,9 @@ pub struct MeshNode {
 }
 
 impl MeshNode {
-    pub async fn new(
-        panda: Panda,
-        mesh: Mesh,
-        mesh_tx: mpsc::Sender<Operation<Extensions>>,
-        options: NodeOptions,
-    ) -> Result<Self> {
+    pub async fn new(panda: Panda, mesh: Mesh, options: NodeOptions) -> Result<Self> {
         let (node_actor_tx, node_actor_rx) = mpsc::channel(512);
-        let node_actor = MeshNodeActor::new(
-            options.node_config,
-            options.private_key,
-            panda,
-            node_actor_rx,
-            mesh_tx,
-        )
-        .await;
+        let node_actor = MeshNodeActor::new(panda, node_actor_rx).await;
         let actor_handle = tokio::task::spawn(async move {
             if let Err(err) = node_actor.run().await {
                 error!("node actor failed: {err:?}");
@@ -129,33 +119,6 @@ impl MeshNode {
         Ok((node_config, network_config))
     }
 
-    pub async fn subscribe(&self, topic: MeshTopic) -> Result<()> {
-        let (reply, reply_rx) = oneshot::channel();
-        self.node_actor_tx
-            .send(ToNodeActor::Subscribe { topic, reply })
-            .await?;
-        reply_rx.await?
-    }
-
-    pub async fn publish(&self, topic: MeshTopic) -> Result<()> {
-        let (reply, reply_rx) = oneshot::channel();
-        self.node_actor_tx
-            .send(ToNodeActor::Publish { topic, reply })
-            .await?;
-        reply_rx.await?
-    }
-
-    pub async fn publish_operations(
-        &self,
-        mesh_rx: mpsc::Receiver<Operation<Extensions>>,
-    ) -> Result<()> {
-        let (reply, reply_rx) = oneshot::channel();
-        self.node_actor_tx
-            .send(ToNodeActor::PublishOperations { rx: mesh_rx, reply })
-            .await?;
-        reply_rx.await?
-    }
-
     /// Graceful shutdown of the rhio node.
     pub async fn shutdown(self) -> Result<()> {
         let (reply, reply_rx) = oneshot::channel();
@@ -165,5 +128,49 @@ impl MeshNode {
         reply_rx.await?;
         self.actor_handle.await.map_err(|err| anyhow!("{err}"))?;
         Ok(())
+    }
+
+    pub async fn subscribe_mesh(
+        &self,
+        topic: MeshTopic,
+        subscriber_rx: Pin<Box<dyn futures::Stream<Item = KubeEvent> + Send + Sync + 'static>>,
+    ) -> Result<()> {
+        self.mesh.kube_subscribe(subscriber_rx).await?;
+        self.subscribe_topic(topic).await?;
+        let network_rx = self.subscribe_network().await?;
+        let network_tx = self.mesh.connect_network(network_rx).await?;
+        self.publish_network(network_tx).await?;
+
+        Ok(())
+    }
+
+    pub async fn subscribe_topic(&self, topic: MeshTopic) -> Result<()> {
+        let (reply, reply_rx) = oneshot::channel();
+        self.node_actor_tx
+            .send(ToNodeActor::SubscribeTopic { topic, reply })
+            .await?;
+        reply_rx.await?
+    }
+
+    async fn subscribe_network(&self) -> Result<broadcast::Receiver<Operation<Extensions>>> {
+        let (reply, reply_rx) = oneshot::channel();
+        self.node_actor_tx
+            .send(ToNodeActor::SubscribeNetwork { reply })
+            .await?;
+        reply_rx.await.map_err(|e| anyhow!("{e}"))
+    }
+
+    pub async fn publish_network(
+        &self,
+        stream: broadcast::Receiver<Operation<Extensions>>,
+    ) -> Result<()> {
+        let (reply, reply_rx) = oneshot::channel();
+        self.node_actor_tx
+            .send(ToNodeActor::PublishNetwork {
+                receiver: stream,
+                reply,
+            })
+            .await?;
+        reply_rx.await?
     }
 }

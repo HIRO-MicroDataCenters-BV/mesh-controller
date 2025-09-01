@@ -3,7 +3,6 @@ use crate::mesh::topic::MeshTopic;
 use crate::metrics::MESSAGE_RECEIVE_TOTAL;
 use crate::network::message::NetworkMessage;
 use crate::network::message::NetworkPayload;
-use crate::node::mesh::NodeConfig;
 use anyhow::{Context, Result, anyhow};
 use axum_prometheus::metrics;
 use futures_util::stream::SelectAll;
@@ -11,12 +10,13 @@ use p2panda_core::Body;
 use p2panda_core::Header;
 use p2panda_core::Operation;
 use p2panda_core::cbor::decode_cbor;
-use p2panda_core::{PrivateKey, PublicKey};
 use p2panda_net::TopicId;
 use p2panda_net::network::FromNetwork;
 use std::io::Cursor;
+use tokio::sync::broadcast;
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::StreamExt;
+use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::{debug, error, trace, warn};
 
@@ -26,49 +26,36 @@ pub enum ToNodeActor {
     Shutdown {
         reply: oneshot::Sender<()>,
     },
-    Subscribe {
+    SubscribeTopic {
         topic: MeshTopic,
         reply: oneshot::Sender<Result<()>>,
     },
-    Publish {
-        topic: MeshTopic,
-        reply: oneshot::Sender<Result<()>>,
+    SubscribeNetwork {
+        reply: oneshot::Sender<broadcast::Receiver<Operation<Extensions>>>,
     },
-    PublishOperations {
-        rx: mpsc::Receiver<Operation<Extensions>>,
+    PublishNetwork {
+        receiver: broadcast::Receiver<Operation<Extensions>>,
         reply: oneshot::Sender<Result<()>>,
     },
 }
 
 pub struct MeshNodeActor {
-    _config: NodeConfig,
-    _private_key: PrivateKey,
-    _public_key: PublicKey,
     inbox: mpsc::Receiver<ToNodeActor>,
-    operations_rx: SelectAll<ReceiverStream<Operation<Extensions>>>,
-    mesh_tx: mpsc::Sender<Operation<Extensions>>,
+    network_rx: SelectAll<BroadcastStream<Operation<Extensions>>>,
+    network_tx: Option<tokio::sync::broadcast::Sender<Operation<Extensions>>>,
     p2panda_topic_rx: SelectAll<ReceiverStream<FromNetwork>>,
     panda: Panda,
 }
 
 impl MeshNodeActor {
     #[allow(clippy::too_many_arguments)]
-    pub async fn new(
-        config: NodeConfig,
-        private_key: PrivateKey,
-        panda: Panda,
-        inbox: mpsc::Receiver<ToNodeActor>,
-        mesh_tx: mpsc::Sender<Operation<Extensions>>,
-    ) -> Self {
+    pub async fn new(panda: Panda, inbox: mpsc::Receiver<ToNodeActor>) -> Self {
         MeshNodeActor {
-            _config: config,
-            _public_key: private_key.public_key(),
-            _private_key: private_key,
             inbox,
-            operations_rx: SelectAll::new(),
+            network_rx: SelectAll::new(),
+            network_tx: None,
             p2panda_topic_rx: SelectAll::new(),
             panda,
-            mesh_tx,
         }
     }
 
@@ -105,7 +92,7 @@ impl MeshNodeActor {
                         }
                     }
                 },
-                Some(operation) = self.operations_rx.next() => {
+                Some(Ok(operation)) = self.network_rx.next() => {
                     if let Err(err) = self.on_operation(operation).await {
                         warn!("error during operation handling: {}", err);
                     }
@@ -128,20 +115,20 @@ impl MeshNodeActor {
 
     async fn on_actor_message(&mut self, msg: ToNodeActor) {
         match msg {
-            ToNodeActor::Subscribe { topic, reply } => {
+            ToNodeActor::SubscribeTopic { topic, reply } => {
                 let result = self.on_subscribe(topic).await;
                 reply.send(result).ok();
             }
-            ToNodeActor::Publish { topic, reply } => {
-                let result = self.on_publish(topic).await;
-                reply.send(result).ok();
+            ToNodeActor::SubscribeNetwork { reply } => {
+                let network_rx = self.network_rx();
+                reply.send(network_rx).ok();
+            }
+            ToNodeActor::PublishNetwork { receiver, reply } => {
+                self.network_rx.push(BroadcastStream::new(receiver));
+                reply.send(Ok(())).ok();
             }
             ToNodeActor::Shutdown { .. } => {
                 unreachable!("handled in run_inner");
-            }
-            ToNodeActor::PublishOperations { rx, reply } => {
-                self.operations_rx.push(ReceiverStream::new(rx));
-                reply.send(Ok(())).ok();
             }
         }
     }
@@ -157,14 +144,14 @@ impl MeshNodeActor {
         Ok(())
     }
 
-    async fn on_publish(&mut self, topic: MeshTopic) -> Result<()> {
-        let network_rx = self.panda.subscribe(topic).await?;
-
-        if let Some(network_rx) = network_rx {
-            self.p2panda_topic_rx.push(ReceiverStream::new(network_rx));
+    fn network_rx(&mut self) -> tokio::sync::broadcast::Receiver<Operation<Extensions>> {
+        if let Some(network_tx) = &self.network_tx {
+            network_tx.subscribe()
+        } else {
+            let (network_tx, network_rx) = tokio::sync::broadcast::channel(512);
+            self.network_tx = Some(network_tx);
+            network_rx
         }
-
-        Ok(())
     }
 
     async fn on_operation(&mut self, operation: Operation<Extensions>) -> Result<()> {
@@ -234,9 +221,15 @@ impl MeshNodeActor {
             body: body.clone(),
         };
 
-        self.mesh_tx.send(operation).await.ok();
+        self.subscribers_send(operation);
 
         Ok(())
+    }
+
+    fn subscribers_send(&mut self, operation: Operation<Extensions>) {
+        if let Some(subscribers_tx) = &mut self.network_tx {
+            subscribers_tx.send(operation).ok();
+        }
     }
 
     async fn shutdown(&self) -> Result<()> {
