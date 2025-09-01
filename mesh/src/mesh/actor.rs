@@ -1,13 +1,14 @@
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::SystemTime;
 
 use crate::client::kube_client::ClientError;
+use crate::client::kube_client::KubeClient;
 use crate::config::configuration::PeriodicSnapshotConfig;
 use crate::config::configuration::TombstoneConfig;
 use crate::kube::dynamic_object_ext::DynamicObjectExt;
 use crate::kube::event::KubeEvent;
-use crate::kube::subscriptions::Subscriptions;
 use crate::kube::subscriptions::Version;
 use crate::kube::types::NamespacedName;
 use crate::merge::types::MergeResult;
@@ -24,9 +25,9 @@ use crate::utils::types::Clock;
 use anyhow::Context;
 use anyhow::Result;
 use futures::StreamExt;
+use futures::stream::SelectAll;
 use kube::api::DynamicObject;
 use kube::api::GroupVersionKind;
-use loole::RecvStream;
 use p2panda_core::PublicKey;
 use p2panda_core::{Operation, PrivateKey};
 use p2panda_net::SystemEvent;
@@ -34,6 +35,8 @@ use p2panda_store::MemoryStore;
 use p2panda_stream::operation::IngestError;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc;
+use tokio::sync::oneshot;
+use tokio_stream::wrappers::BroadcastStream;
 use tokio_util::sync::CancellationToken;
 use tracing::Level;
 use tracing::Span;
@@ -48,6 +51,20 @@ use super::{operations::Extensions, topic::MeshLogId};
 const DEFAULT_TICK_INTERVAL: Duration = Duration::from_secs(1);
 const DEFAULT_FORCED_SYNC_MAX_ATTEMPTS: usize = 10;
 
+pub type KubeEventStream = Pin<Box<dyn futures::Stream<Item = KubeEvent> + Send + Sync + 'static>>;
+
+pub enum ToNodeActor {
+    KubeSubscribe {
+        subscriber_rx: Pin<Box<dyn futures::Stream<Item = KubeEvent> + Send + Sync + 'static>>,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
+    ConnectNetwork {
+        incoming: broadcast::Receiver<Operation<Extensions>>,
+        reply: oneshot::Sender<broadcast::Receiver<Operation<Extensions>>>,
+    },
+}
+
 #[derive(Clone, Debug)]
 pub struct UpdateLogIdResult {
     pub is_obsolete_operation: bool,
@@ -57,11 +74,12 @@ pub struct UpdateLogIdResult {
 
 pub struct MeshActor {
     instance_id: InstanceId,
-    network_tx: mpsc::Sender<Operation<Extensions>>,
-    network_rx: mpsc::Receiver<Operation<Extensions>>,
-    event_rx: RecvStream<KubeEvent>,
+    inbox: mpsc::Receiver<ToNodeActor>,
+    events_rx: SelectAll<KubeEventStream>,
     system_events: broadcast::Receiver<SystemEvent<MeshTopic>>,
-    subscriptions: Subscriptions,
+    network_rx: SelectAll<BroadcastStream<Operation<Extensions>>>,
+    network_tx: Option<tokio::sync::broadcast::Sender<Operation<Extensions>>>,
+    kube_client: KubeClient,
     operation_log: OperationLog,
     operations: LinkedOperations,
     partition: Partition,
@@ -82,15 +100,13 @@ impl MeshActor {
         snapshot_config: PeriodicSnapshotConfig,
         tombstone_config: TombstoneConfig,
         instance_id: InstanceId,
+        kube_client: KubeClient,
         partition: Partition,
         clock: Arc<dyn Clock>,
         cancelation: CancellationToken,
         nodes: Nodes,
-        network_tx: mpsc::Sender<Operation<Extensions>>,
-        network_rx: mpsc::Receiver<Operation<Extensions>>,
-        event_rx: RecvStream<KubeEvent>,
+        inbox: mpsc::Receiver<ToNodeActor>,
         system_events: broadcast::Receiver<SystemEvent<MeshTopic>>,
-        subscriptions: Subscriptions,
         store: MemoryStore<MeshLogId, Extensions>,
     ) -> MeshActor {
         let own_log_id = MeshLogId(instance_id.clone());
@@ -104,10 +120,11 @@ impl MeshActor {
             operations,
             operation_log,
             instance_id,
-            network_tx,
-            network_rx,
-            event_rx,
-            subscriptions,
+            inbox,
+            kube_client,
+            network_rx: SelectAll::new(),
+            events_rx: SelectAll::new(),
+            network_tx: None,
             partition,
             clock,
             cancelation,
@@ -124,13 +141,13 @@ impl MeshActor {
         let mut interval = tokio::time::interval(DEFAULT_TICK_INTERVAL);
         loop {
             tokio::select! {
-                Some(event) = self.event_rx.next() => {
+                Some(event) = self.events_rx.next() => {
                     let span = span!(Level::DEBUG, "kube_event", id = event.get_id());
                     if let Err(err) = self.on_outgoing_to_network(&span, event).await {
                         error!(parent: &span, "error while processing kube event, {}", err);
                     }
                 }
-                Some(operation) = self.network_rx.recv() => {
+                Some(Ok(operation)) = self.network_rx.next() => {
                     let span = span!(Level::DEBUG, "incoming", op = %operation.get_id()?);
                     if let Err(err) = self.on_incoming_from_network(&span, operation).await {
                         error!(parent: &span, "error while processing network event, {}", err);
@@ -144,7 +161,10 @@ impl MeshActor {
                 },
                 Ok(event) = self.system_events.recv() => {
                     self.on_system_event(event).await;
-                }
+                },
+                Some(message) = self.inbox.recv() => {
+                    self.on_actor_message(message).await;
+                },
                 _ = self.cancelation.cancelled() => break,
             }
         }
@@ -164,6 +184,33 @@ impl MeshActor {
                 tracing::trace!("sync failed: {}", peer.to_hex())
             }
             _ => {}
+        }
+    }
+
+    async fn on_actor_message(&mut self, msg: ToNodeActor) {
+        match msg {
+            ToNodeActor::KubeSubscribe {
+                subscriber_rx,
+                reply,
+            } => {
+                self.events_rx.push(subscriber_rx);
+                reply.send(Ok(())).ok();
+            }
+            ToNodeActor::ConnectNetwork { incoming, reply } => {
+                self.network_rx.push(BroadcastStream::new(incoming));
+                let network_receiver = self.get_network_receiver();
+                reply.send(network_receiver).ok();
+            }
+        }
+    }
+
+    fn get_network_receiver(&mut self) -> tokio::sync::broadcast::Receiver<Operation<Extensions>> {
+        if let Some(network_tx) = &self.network_tx {
+            network_tx.subscribe()
+        } else {
+            let (network_tx, network_rx) = tokio::sync::broadcast::channel(512);
+            self.network_tx = Some(network_tx);
+            network_rx
         }
     }
 
@@ -448,7 +495,7 @@ impl MeshActor {
         let mut attempts = DEFAULT_FORCED_SYNC_MAX_ATTEMPTS;
         let mut persistence_result = PersistenceResult::Skipped;
         while attempts > 0 {
-            if let Some(object) = self.subscriptions.client().get(&gvk, &name).await? {
+            if let Some(object) = self.kube_client.get(&gvk, &name).await? {
                 let version = object.get_resource_version();
                 debug!(parent: span, "forced_sync: existing resource version {}", version);
                 let name = object.get_namespaced_name();
@@ -498,7 +545,7 @@ impl MeshActor {
         let name = object.get_namespaced_name();
         let current_version = object.metadata.resource_version.to_owned();
 
-        let existing = self.subscriptions.client().get(&gvk, &name).await?;
+        let existing = self.kube_client.get(&gvk, &name).await?;
 
         object.metadata.managed_fields = None;
         if let Some(existing) = existing {
@@ -521,7 +568,7 @@ impl MeshActor {
             object.metadata.resource_version = None;
         }
 
-        let ok_or_error = self.subscriptions.client().patch_apply(object).await;
+        let ok_or_error = self.kube_client.patch_apply(object).await;
 
         match ok_or_error {
             Ok(new_version) => {
@@ -547,7 +594,7 @@ impl MeshActor {
         name: &NamespacedName,
         version: Version,
     ) -> Result<PersistenceResult> {
-        let existing = self.subscriptions.client().get(gvk, name).await?;
+        let existing = self.kube_client.get(gvk, name).await?;
 
         if let Some(existing) = existing {
             let existing_version = existing.get_resource_version();
@@ -560,7 +607,7 @@ impl MeshActor {
                 });
             }
 
-            let object_or_status = self.subscriptions.client().delete(gvk, name).await?;
+            let object_or_status = self.kube_client.delete(gvk, name).await?;
             object_or_status.map_right(|status|{
                 if status.is_failure() {
                     error!(parent: span, %name, %status.code, %status.message, %status.reason, "delete object failure");
@@ -569,14 +616,14 @@ impl MeshActor {
         } else {
             warn!(parent: span, %name, "Object not found. Skipping delete.");
         }
-        let version = self.subscriptions.client().get_latest_version().await?;
+        let version = self.kube_client.get_latest_version().await?;
         Ok(PersistenceResult::Persisted(version))
     }
 
     async fn on_ready_outgoing(&mut self, ready: &mut Ready) {
         for operation in ready.take_outgoing().into_iter() {
             let pointer = operation.header.seq_num;
-            self.network_tx.send(operation).await.ok();
+            self.network_send(operation);
             self.operation_log
                 .advance_log_pointer(&self.own_log_id, pointer + 1);
         }
@@ -625,7 +672,7 @@ impl MeshActor {
 
     async fn send_snapshot(&mut self, span: &Span) -> Result<()> {
         trace!(parent: span, "Periodic snapshot");
-        let version = self.subscriptions.client().get_latest_version().await?;
+        let version = self.kube_client.get_latest_version().await?;
         let event = self
             .partition
             .mesh_gen_snapshot(&self.instance_id.zone, version);
@@ -633,6 +680,12 @@ impl MeshActor {
         self.on_incoming_from_network(span, operation).await?;
         self.last_snapshot_time = self.clock.now();
         Ok(())
+    }
+
+    fn network_send(&mut self, operation: Operation<Extensions>) {
+        if let Some(network_tx) = &mut self.network_tx {
+            network_tx.send(operation).ok();
+        }
     }
 }
 

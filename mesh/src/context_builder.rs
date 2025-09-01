@@ -7,9 +7,9 @@ use crate::context::Context;
 use crate::http::api::MeshApiImpl;
 
 use crate::api::server::MeshHTTPServer;
+use crate::kube::subscriptions::Subscriptions;
 use crate::mesh::mesh::Mesh;
 use crate::mesh::operations::Extensions;
-use crate::mesh::topic::MeshTopic;
 use crate::mesh::topic::{InstanceId, MeshLogId};
 use crate::network::Panda;
 use crate::network::discovery::nodes::Nodes;
@@ -22,7 +22,6 @@ use p2panda_net::{NetworkBuilder, ResyncConfiguration, SyncConfiguration};
 use p2panda_store::MemoryStore;
 use p2panda_sync::log_sync::LogSyncProtocol;
 use tokio::runtime::{Builder, Runtime};
-use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
@@ -79,19 +78,21 @@ impl ContextBuilder {
             .expect("Mesh Controller tokio runtime");
 
         let cancellation = CancellationToken::new();
-        let mesh_node = mesh_runtime.block_on(async {
+        let (mesh_node, client) = mesh_runtime.block_on(async {
             let client = ContextBuilder::build_kube_client(&self.config).await?;
 
             let node = ContextBuilder::init(
                 self.config.clone(),
                 self.private_key.clone(),
-                client,
+                client.clone(),
                 cancellation.clone(),
             )
             .await
             .context("failed to initialize mesh node")?;
-            Ok::<_, anyhow::Error>(node)
+            Ok::<_, anyhow::Error>((node, client))
         })?;
+
+        let subscriptions = Subscriptions::new(client);
 
         let http_runtime = Builder::new_multi_thread()
             .enable_io()
@@ -104,6 +105,7 @@ impl ContextBuilder {
         Ok(Context::new(
             self.config.clone(),
             mesh_node,
+            subscriptions,
             self.public_key,
             http_handle,
             http_runtime,
@@ -130,9 +132,6 @@ impl ContextBuilder {
             Duration::from_secs(config.mesh.peer_timeout.peer_unavailable_after_seconds),
         );
 
-        let (mesh_tx, network_rx) = mpsc::channel(512);
-        let (network_tx, mesh_rx) = mpsc::channel(512);
-
         let sync_protocol = LogSyncProtocol::new(nodes.clone(), log_store.clone());
         let sync_config = SyncConfiguration::new(sync_protocol).resync(resync_config);
 
@@ -158,8 +157,6 @@ impl ContextBuilder {
             clock,
             nodes.clone(),
             log_store.clone(),
-            network_tx,
-            network_rx,
             network.events().await?,
         )
         .await?;
@@ -178,10 +175,7 @@ impl ContextBuilder {
             node_config,
         };
 
-        let node = MeshNode::new(panda, mesh, mesh_tx, options.clone()).await?;
-        node.subscribe(MeshTopic::default()).await?;
-        node.publish_operations(mesh_rx).await.ok();
-        Ok(node)
+        MeshNode::new(panda, mesh, options.clone()).await
     }
 
     /// Starts the HTTP server with health endpoint.
