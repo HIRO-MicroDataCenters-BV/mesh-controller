@@ -11,6 +11,10 @@ workspace = true
 [lib]
 name = "meshresource"
 
+[[bin]]
+name = "meshcrd"
+path = "src/main.rs"
+
 [dependencies]
 anyhow.workspace = true
 serde.workspace = true
@@ -19,6 +23,12 @@ schemars.workspace = true
 kube.workspace = true
 k8s-openapi.workspace=true
 stackable-operator.workspace = true
+tokio.workspace = true
+tokio-stream.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+mesh-kube.workspace = true
 
 [build-dependencies]
 built.workspace = true

@@ -1,0 +1,157 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: meshpeers.dcp.hiro.io
+spec:
+  group: dcp.hiro.io
+  names:
+    categories: []
+    kind: MeshPeer
+    plural: meshpeers
+    shortNames:
+    - meshpeer
+    singular: meshpeer
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns: []
+    name: v1
+    schema:
+      openAPIV3Schema:
+        description: Auto-generated derived type for MeshPeerSpec via `CustomResource`
+        properties:
+          spec:
+            properties:
+              identity:
+                properties:
+                  endpoints:
+                    items:
+                      type: string
+                    type: array
+                  publicKey:
+                    type: string
+                required:
+                - endpoints
+                - publicKey
+                type: object
+              status:
+                nullable: true
+                properties:
+                  conditions:
+                    default: []
+                    items:
+                      properties:
+                        lastTransitionTime:
+                          description: Last time the condition transitioned from one status to another.
+                          format: date-time
+                          nullable: true
+                          type: string
+                        lastUpdateTime:
+                          description: The last time this condition was updated.
+                          format: date-time
+                          nullable: true
+                          type: string
+                        message:
+                          description: A human readable message indicating details about the transition.
+                          nullable: true
+                          type: string
+                        reason:
+                          description: The reason for the condition's last transition.
+                          nullable: true
+                          type: string
+                        status:
+                          description: Status of the condition, one of True, False, Unknown.
+                          enum:
+                          - 'True'
+                          - 'False'
+                          - Unknown
+                          type: string
+                        type:
+                          description: Type of deployment condition.
+                          enum:
+                          - Available
+                          - Degraded
+                          - Progressing
+                          - ReconciliationPaused
+                          - Stopped
+                          type: string
+                      required:
+                      - status
+                      - type
+                      type: object
+                    type: array
+                  status:
+                    enum:
+                    - Ready
+                    - NotReady
+                    - Unavailable
+                    type: string
+                required:
+                - status
+                type: object
+            required:
+            - identity
+            type: object
+          status:
+            nullable: true
+            properties:
+              conditions:
+                default: []
+                items:
+                  properties:
+                    lastTransitionTime:
+                      description: Last time the condition transitioned from one status to another.
+                      format: date-time
+                      nullable: true
+                      type: string
+                    lastUpdateTime:
+                      description: The last time this condition was updated.
+                      format: date-time
+                      nullable: true
+                      type: string
+                    message:
+                      description: A human readable message indicating details about the transition.
+                      nullable: true
+                      type: string
+                    reason:
+                      description: The reason for the condition's last transition.
+                      nullable: true
+                      type: string
+                    status:
+                      description: Status of the condition, one of True, False, Unknown.
+                      enum:
+                      - 'True'
+                      - 'False'
+                      - Unknown
+                      type: string
+                    type:
+                      description: Type of deployment condition.
+                      enum:
+                      - Available
+                      - Degraded
+                      - Progressing
+                      - ReconciliationPaused
+                      - Stopped
+                      type: string
+                  required:
+                  - status
+                  - type
+                  type: object
+                type: array
+              status:
+                enum:
+                - Ready
+                - NotReady
+                - Unavailable
+                type: string
+            required:
+            - status
+            type: object
+        required:
+        - spec
+        title: MeshPeer
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
