@@ -55,7 +55,7 @@ pub type KubeEventStream = Pin<Box<dyn futures::Stream<Item = KubeEvent> + Send 
 
 pub enum ToNodeActor {
     KubeSubscribe {
-        subscriber_rx: Pin<Box<dyn futures::Stream<Item = KubeEvent> + Send + Sync + 'static>>,
+        subscriber_rx: KubeEventStream,
         reply: oneshot::Sender<Result<()>>,
     },
 
