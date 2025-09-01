@@ -1,3 +1,5 @@
+use anyhow::{Context, Result};
+use kube::api::DynamicObject;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use stackable_operator::kube::CustomResource;
@@ -22,7 +24,6 @@ use stackable_operator::status::condition::HasStatusCondition;
 #[serde(rename_all = "camelCase")]
 pub struct MeshPeerSpec {
     pub identity: PeerIdentity,
-    pub status: Option<MeshPeerStatus>,
 }
 
 #[derive(Clone, Deserialize, Debug, Eq, JsonSchema, PartialEq, Serialize, Default)]
@@ -53,5 +54,20 @@ impl HasStatusCondition for MeshPeer {
             Some(status) => status.conditions.clone(),
             None => vec![],
         }
+    }
+}
+
+pub trait MeshPeerExt {
+    fn to_object(self) -> Result<DynamicObject>;
+}
+
+impl MeshPeerExt for MeshPeer {
+    fn to_object(self) -> Result<DynamicObject>
+    where
+        Self: Sized + Serialize,
+    {
+        let value = serde_json::to_value(self).context("Failed to serialize merged object")?;
+        let object: DynamicObject = serde_json::from_value(value)?;
+        Ok(object)
     }
 }

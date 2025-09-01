@@ -3,8 +3,9 @@ use anyhow::Result;
 use meshkube::client::KubeClient;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
+use tracing::error;
 
-use crate::types::PeerUpdate;
+use crate::{meshpeer::MeshPeerExt, peers::Peers, types::PeerUpdate};
 
 pub enum ToNodeActor {
     MeshPeerUpdate(PeerUpdate),
@@ -13,7 +14,8 @@ pub enum ToNodeActor {
 pub struct MeshPeerActor {
     inbox: mpsc::Receiver<ToNodeActor>,
     cancelation: CancellationToken,
-    _client: KubeClient,
+    client: KubeClient,
+    peers: Peers,
 }
 
 impl MeshPeerActor {
@@ -23,7 +25,8 @@ impl MeshPeerActor {
         cancelation: CancellationToken,
     ) -> MeshPeerActor {
         MeshPeerActor {
-            _client: client,
+            peers: Peers::new(),
+            client,
             inbox,
             cancelation,
         }
@@ -33,7 +36,9 @@ impl MeshPeerActor {
         loop {
             tokio::select! {
                 Some(message) = self.inbox.recv() => {
-                    self.on_actor_message(message).await;
+                    if let Err(err) = self.on_actor_message(message).await {
+                        error!("MeshPeerActor: error updating mesh peer state {err}");
+                    }
                 },
                 _ = self.cancelation.cancelled() => break,
             }
@@ -41,11 +46,16 @@ impl MeshPeerActor {
         Ok(())
     }
 
-    async fn on_actor_message(&mut self, message: ToNodeActor) {
+    async fn on_actor_message(&mut self, message: ToNodeActor) -> Result<()> {
         match message {
-            ToNodeActor::MeshPeerUpdate(update) => self.on_peer_update(update),
+            ToNodeActor::MeshPeerUpdate(update) => self.on_peer_update(update).await,
         }
     }
 
-    fn on_peer_update(&mut self, _update: PeerUpdate) {}
+    async fn on_peer_update(&mut self, update: PeerUpdate) -> Result<()> {
+        let peer = self.peers.update_and_get(update);
+        let object = peer.to_owned().to_object()?;
+        self.client.patch_apply(object).await?;
+        Ok(())
+    }
 }
