@@ -1,5 +1,5 @@
 [package]
-name = "fake-kube-api"
+name = "mesh-kube-fake-api"
 description = ""
 version = "0.1.1"
 edition = "2024"

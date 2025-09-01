@@ -13,7 +13,7 @@ pub enum ToNodeActor {
 pub struct MeshPeerActor {
     inbox: mpsc::Receiver<ToNodeActor>,
     cancelation: CancellationToken,
-    client: KubeClient,
+    _client: KubeClient,
 }
 
 impl MeshPeerActor {
@@ -23,7 +23,7 @@ impl MeshPeerActor {
         cancelation: CancellationToken,
     ) -> MeshPeerActor {
         MeshPeerActor {
-            client,
+            _client: client,
             inbox,
             cancelation,
         }
@@ -47,5 +47,5 @@ impl MeshPeerActor {
         }
     }
 
-    fn on_peer_update(&mut self, update: PeerUpdate) {}
+    fn on_peer_update(&mut self, _update: PeerUpdate) {}
 }

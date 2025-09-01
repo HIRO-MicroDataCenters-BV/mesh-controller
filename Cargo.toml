@@ -1,10 +1,10 @@
 [workspace]
 members = [
     "mesh",
-    "fake-kube-api",
+    "mesh-kube-fake-api",
     "mesh-kube",
+    "mesh-resource",
     "anyapplication",
-    "mesh-resource"
 ]
 resolver = "3"
 
@@ -27,7 +27,7 @@ p2panda-store = { git = "https://github.com/p2panda/p2panda.git", features=["mem
 p2panda-stream = { git = "https://github.com/p2panda/p2panda.git", tag="v0.3.1" }
 iroh-base = "0.34.1"
 mesh = { path = "mesh" }
-fake-kube-api = { path = "fake-kube-api" }
+mesh-kube-fake-api = { path = "mesh-kube-fake-api" }
 mesh-kube = { path = "mesh-kube" }
 anyapplication = { path = "anyapplication" }
 serde = { version = "1.0.219", features = ["derive"] }
@@ -80,6 +80,4 @@ maplit = { version = "1.0.2" }
 # pinned version due to vulnerability
 openssl = "=0.10.73"
 slab = "=0.4.11"
-
 stackable-operator = { git = "https://github.com/stackabletech/operator-rs.git", tag = "stackable-operator-0.83.0" }
-product-config = { git = "https://github.com/stackabletech/product-config.git", tag = "0.7.0" }

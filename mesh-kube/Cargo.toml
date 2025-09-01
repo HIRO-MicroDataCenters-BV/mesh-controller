@@ -29,4 +29,4 @@ anyapplication.workspace = true
 ciborium.workspace = true
 loole.workspace = true
 dashmap.workspace = true
-fake-kube-api.workspace = true
+mesh-kube-fake-api.workspace = true
