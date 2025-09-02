@@ -2,5 +2,12 @@
 pub struct PeerUpdate {
     pub peer_id: String,
     pub state: String,
-    pub timestamp: u64,
+    pub instance: InstanceId,
+    pub update_timestamp: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct InstanceId {
+    pub zone: String,
+    pub zone_start_time: u64,
 }

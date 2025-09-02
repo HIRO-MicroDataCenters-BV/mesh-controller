@@ -11,20 +11,20 @@ pub enum ToNodeActor {
     MeshPeerUpdate(PeerUpdate),
 }
 
-pub struct MeshPeerActor {
+pub struct MeshPeerResourceActor {
     inbox: mpsc::Receiver<ToNodeActor>,
     cancelation: CancellationToken,
     client: KubeClient,
     peers: Peers,
 }
 
-impl MeshPeerActor {
+impl MeshPeerResourceActor {
     pub fn new(
         inbox: mpsc::Receiver<ToNodeActor>,
         client: KubeClient,
         cancelation: CancellationToken,
-    ) -> MeshPeerActor {
-        MeshPeerActor {
+    ) -> MeshPeerResourceActor {
+        MeshPeerResourceActor {
             peers: Peers::new(),
             client,
             inbox,
@@ -37,7 +37,7 @@ impl MeshPeerActor {
             tokio::select! {
                 Some(message) = self.inbox.recv() => {
                     if let Err(err) = self.on_actor_message(message).await {
-                        error!("MeshPeerActor: error updating mesh peer state {err}");
+                        error!("MeshPeerResourceActor: error updating mesh peer state {err}");
                     }
                 },
                 _ = self.cancelation.cancelled() => break,

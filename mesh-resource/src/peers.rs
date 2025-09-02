@@ -11,6 +11,12 @@ pub struct Peers {
     peers: HashMap<String, MeshPeer>,
 }
 
+impl Default for Peers {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Peers {
     pub fn new() -> Peers {
         Peers {

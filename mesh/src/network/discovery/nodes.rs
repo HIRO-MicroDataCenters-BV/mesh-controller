@@ -31,14 +31,18 @@ impl Nodes {
 
     pub fn on_event(&self, span: &Span, event: PeerEvent) -> Option<Membership> {
         let now = event.timestamp();
-        let updated = match &event {
+        let updated_peers = match &event {
             PeerEvent::PeerDiscovered { peer, .. } => {
                 let mut entry = self
                     .inner
                     .peers
                     .entry(*peer)
                     .or_insert_with(|| PeerState::new(peer.to_owned(), self.timeout));
-                entry.value_mut().on_event(span, event)
+                if entry.value_mut().on_event(span, event) {
+                    vec![peer.to_owned()]
+                } else {
+                    Vec::new()
+                }
             }
             PeerEvent::PeerUp { peer, .. } => {
                 let mut entry = self
@@ -46,7 +50,11 @@ impl Nodes {
                     .peers
                     .entry(*peer)
                     .or_insert_with(|| PeerState::new(peer.to_owned(), self.timeout));
-                entry.value_mut().on_event(span, event)
+                if entry.value_mut().on_event(span, event) {
+                    vec![peer.to_owned()]
+                } else {
+                    Vec::new()
+                }
             }
             PeerEvent::PeerDown { peer, .. } => {
                 let mut entry = self
@@ -54,17 +62,26 @@ impl Nodes {
                     .peers
                     .entry(*peer)
                     .or_insert_with(|| PeerState::new(peer.to_owned(), self.timeout));
-                entry.value_mut().on_event(span, event)
+                if entry.value_mut().on_event(span, event) {
+                    vec![peer.to_owned()]
+                } else {
+                    Vec::new()
+                }
             }
             PeerEvent::Tick { .. } => self
                 .inner
                 .peers
                 .iter_mut()
-                .map(|mut entry| entry.value_mut().on_event(span, event))
-                .reduce(|left, right| left | right)
-                .unwrap_or(false),
+                .flat_map(|mut entry| {
+                    if entry.value_mut().on_event(span, event) {
+                        vec![entry.key().to_owned()]
+                    } else {
+                        Vec::new()
+                    }
+                })
+                .collect(),
         };
-        if updated {
+        if !updated_peers.is_empty() {
             Some(self.get_membership(now))
         } else {
             None

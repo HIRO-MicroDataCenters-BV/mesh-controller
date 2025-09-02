@@ -3019,6 +3019,7 @@ dependencies = [
  "maplit",
  "mesh-kube",
  "mesh-kube-fake-api",
+ "mesh-resource",
  "once_cell",
  "p2panda-core",
  "p2panda-discovery",
