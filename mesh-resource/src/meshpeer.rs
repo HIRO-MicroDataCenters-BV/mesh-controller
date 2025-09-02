@@ -2,11 +2,29 @@ use anyhow::{Context, Result};
 use kube::api::DynamicObject;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use stackable_operator::kube::CustomResource;
 use stackable_operator::status::condition::ClusterCondition;
 use stackable_operator::status::condition::HasStatusCondition;
 
-#[derive(CustomResource, Deserialize, Serialize, Clone, Debug, JsonSchema)]
+#[allow(unused_imports)]
+mod prelude {
+    pub use kube::CustomResource;
+    pub use schemars::JsonSchema;
+    pub use serde::{Deserialize, Serialize};
+}
+use self::prelude::*;
+
+// /// AnyApplicationSpec defines the desired state of AnyApplication.
+// #[derive(CustomResource, Serialize, Deserialize, Clone, Debug, JsonSchema, PartialEq)]
+// #[kube(
+//     group = "dcp.hiro.io",
+//     version = "v1",
+//     kind = "AnyApplication",
+//     plural = "anyapplications"
+// )]
+// #[kube(namespaced)]
+// #[kube(status = "AnyApplicationStatus")]
+
+#[derive(CustomResource, Serialize, Deserialize, Clone, Debug, JsonSchema, PartialEq)]
 #[kube(
     kind = "MeshPeer",
     group = "dcp.hiro.io",
@@ -14,12 +32,7 @@ use stackable_operator::status::condition::HasStatusCondition;
     status = "MeshPeerStatus",
     shortname = "meshpeer",
     plural = "meshpeers",
-    namespaced,
-    crates(
-        kube_core = "stackable_operator::kube::core",
-        k8s_openapi = "stackable_operator::k8s_openapi",
-        schemars = "stackable_operator::schemars"
-    )
+    namespaced
 )]
 #[serde(rename_all = "camelCase")]
 pub struct MeshPeerSpec {

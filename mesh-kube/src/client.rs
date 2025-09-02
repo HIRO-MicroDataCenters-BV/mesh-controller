@@ -112,6 +112,25 @@ impl KubeClient {
         }
     }
 
+    pub async fn list(
+        &self,
+        gvk: &GroupVersionKind,
+        namespace: &Option<String>,
+    ) -> Result<Vec<DynamicObject>> {
+        let namespace: &str = namespace
+            .as_ref()
+            .map(|ns| ns.as_str())
+            .unwrap_or("default");
+        let list_params = ListParams::default();
+        let results = self
+            .get_or_resolve_namespaced_api(gvk, namespace)
+            .await?
+            .list(&list_params)
+            .await
+            .map(|list| list.items)?;
+        Ok(results)
+    }
+
     pub async fn delete(
         &self,
         gvk: &GroupVersionKind,

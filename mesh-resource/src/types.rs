@@ -1,5 +1,5 @@
 #[derive(Debug, Clone)]
-pub struct PeerUpdate {
+pub struct PeerState {
     pub peer_id: String,
     pub state: String,
     pub instance: InstanceId,

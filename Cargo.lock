@@ -3101,6 +3101,7 @@ version = "0.1.1"
 dependencies = [
  "anyhow",
  "built",
+ "futures-util",
  "k8s-openapi 0.25.0",
  "kube 1.1.0",
  "mesh-kube",
