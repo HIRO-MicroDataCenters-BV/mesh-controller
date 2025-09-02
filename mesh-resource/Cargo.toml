@@ -13,7 +13,7 @@ name = "meshresource"
 
 [[bin]]
 name = "meshcrd"
-path = "src/main.rs"
+path = "src/crdmain.rs"
 
 [dependencies]
 anyhow.workspace = true
