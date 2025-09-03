@@ -3,7 +3,8 @@ use std::collections::HashMap;
 
 use crate::{
     meshpeer::{
-        MeshPeer, MeshPeerInstance, MeshPeerSpec, MeshPeerStatus, PeerIdentity, PeerStatus,
+        MeshPeer, MeshPeerInstance, MeshPeerSpec, MeshPeerStatus, MeshPeerStatusCondition,
+        PeerIdentity, PeerStatus,
     },
     types::PeerState,
 };
@@ -31,6 +32,10 @@ impl Peers {
             .map(|p| (p.spec.identity.public_key.clone(), p))
             .collect();
         Peers { peers }
+    }
+
+    pub fn get_all(&self) -> Vec<PeerState> {
+        self.peers.values().map(PeerState::from).collect()
     }
 
     pub fn update_and_get(&mut self, update: PeerState) -> &MeshPeer {
@@ -66,10 +71,12 @@ impl Peers {
 
     fn update(peer: &mut MeshPeer, peer_state: &PeerState) {
         peer.spec.identity.public_key = peer_state.peer_id.to_owned();
-        peer.status = Some(Self::create_peer_status(peer_state));
+        let mut status = Self::to_peer_status(peer_state);
+        Self::update_conditions(&mut status, peer_state);
+        peer.status = Some(status);
     }
 
-    fn create_peer_status(peer_state: &PeerState) -> MeshPeerStatus {
+    fn to_peer_status(peer_state: &PeerState) -> MeshPeerStatus {
         let instance = peer_state.instance.as_ref().map(|i| MeshPeerInstance {
             zone: i.zone.to_owned(),
             start_time: i.zone_start_time,
@@ -77,12 +84,34 @@ impl Peers {
         MeshPeerStatus {
             conditions: vec![],
             instance,
-            update_time: 0,
+            update_time: peer_state.update_timestamp,
             status: peer_state.state,
         }
     }
 
-    pub fn get_all(&self) -> Vec<PeerState> {
-        self.peers.values().map(PeerState::from).collect()
+    fn update_conditions(status: &mut MeshPeerStatus, incoming: &PeerState) {
+        match &incoming.state {
+            PeerStatus::Ready => {
+                let ready =
+                    MeshPeerStatusCondition::new(incoming.state.to_string(), incoming.state_since);
+                status.add_or_update(ready);
+                status.set_condition_if(&["NotReady"], "False", incoming.update_timestamp, "True");
+                status.remove_condition("Unavailable");
+            }
+            PeerStatus::NotReady => {
+                let not_ready =
+                    MeshPeerStatusCondition::new(incoming.state.to_string(), incoming.state_since);
+                status.add_or_update(not_ready);
+                status.set_condition_if(&["Ready"], "True", incoming.update_timestamp, "False");
+                status.remove_condition("Unavailable");
+            }
+            PeerStatus::Unavailable => {
+                let unavailable =
+                    MeshPeerStatusCondition::new(incoming.state.to_string(), incoming.state_since);
+                status.add_or_update(unavailable);
+                status.set_condition_if(&["Ready"], "True", incoming.update_timestamp, "False");
+                status.remove_condition("NotReady");
+            }
+        }
     }
 }

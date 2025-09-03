@@ -15,7 +15,6 @@ use tracing::error;
 
 #[derive(Debug)]
 pub enum ToNodeActor {
-    MeshPeerUpdate(PeerState),
     MeshPeerUpdates(Vec<PeerState>),
     GetAll {
         reply: oneshot::Sender<Result<Vec<PeerState>>>,
@@ -68,7 +67,6 @@ impl MeshPeerResourceActor {
 
     async fn on_actor_message(&mut self, message: ToNodeActor) -> Result<()> {
         match message {
-            ToNodeActor::MeshPeerUpdate(update) => self.on_peer_update(update).await,
             ToNodeActor::MeshPeerUpdates(updates) => self.on_peer_updates(updates).await,
             ToNodeActor::GetAll { reply } => self.on_get_all(reply),
         }
