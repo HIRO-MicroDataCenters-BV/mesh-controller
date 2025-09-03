@@ -113,7 +113,6 @@ impl MeshActor {
         system_events: broadcast::Receiver<SystemEvent<MeshTopic>>,
         store: MemoryStore<MeshLogId, Extensions>,
     ) -> MeshActor {
-
         let own_log_id = MeshLogId(instance_id.clone());
         let operations = LinkedOperations::new(key.clone(), instance_id.clone());
         let operation_log = OperationLog::new(own_log_id.clone(), key.public_key(), store.clone());
