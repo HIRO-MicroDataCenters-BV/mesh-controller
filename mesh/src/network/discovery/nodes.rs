@@ -1,6 +1,5 @@
 use async_trait::async_trait;
 use dashmap::DashMap;
-use meshresource::meshpeer::PeerStatus;
 use p2panda_core::PublicKey;
 use p2panda_sync::log_sync::TopicLogMap;
 use std::cmp::Ordering;
@@ -112,6 +111,7 @@ impl Nodes {
                 _ => None,
             })
             .for_each(|instance| membership.add(instance));
+        // Adding self
         membership.add(self.inner.log_id.0.to_owned());
         membership
     }
@@ -122,20 +122,36 @@ impl Nodes {
         now: Timestamp,
         updated_peers: &[PublicKey],
     ) -> Vec<PeerStateUpdate> {
-        self.inner
+        let mut peer_states: Vec<PeerStateUpdate> = self
+            .inner
             .peers
             .iter()
             .filter(|p| updated_peers.contains(&p.peer))
-            .map(|p| {
-                let state = p.value();
-                PeerStateUpdate {
-                    peer: state.peer.to_owned(),
-                    state: state.state,
-                    instance: state.active_log.as_ref().map(|log| log.0.clone()),
-                    timestamp: now,
-                }
-            })
-            .collect()
+            .map(
+                |p: dashmap::mapref::multiple::RefMulti<'_, PublicKey, PeerState>| {
+                    let state = p.value();
+                    PeerStateUpdate {
+                        peer: state.peer.to_owned(),
+                        state: state.state,
+                        instance: state.active_log.as_ref().map(|log| log.0.clone()),
+                        timestamp: now,
+                    }
+                },
+            )
+            .collect();
+
+        if updated_peers.contains(&self.inner.owner) {
+            // Adding self
+            peer_states.push(PeerStateUpdate {
+                peer: self.inner.owner,
+                state: MembershipState::Ready {
+                    since: self.inner.log_id.0.start_time,
+                },
+                instance: Some(self.inner.log_id.0.to_owned()),
+                timestamp: now,
+            });
+        }
+        peer_states
     }
 
     pub fn get_active_log(&self, peer: &PublicKey) -> Option<MeshLogId> {
@@ -230,9 +246,9 @@ struct NodesInner {
 
 #[derive(Clone, Debug)]
 pub struct PeerState {
-    peer: PublicKey,
-    state: MembershipState,
-    active_log: Option<MeshLogId>,
+    pub peer: PublicKey,
+    pub state: MembershipState,
+    pub active_log: Option<MeshLogId>,
     timeout: Duration,
 }
 
@@ -353,16 +369,6 @@ impl std::fmt::Display for MembershipState {
             MembershipState::Ready { since } => write!(f, "Ready(since = {since})"),
             MembershipState::NotReady { since } => write!(f, "NotReady(since = {since})"),
             MembershipState::Unavailable { since } => write!(f, "Unavailable(since = {since})"),
-        }
-    }
-}
-
-impl From<MembershipState> for PeerStatus {
-    fn from(val: MembershipState) -> Self {
-        match val {
-            MembershipState::Ready { .. } => PeerStatus::Ready,
-            MembershipState::NotReady { .. } => PeerStatus::NotReady,
-            MembershipState::Unavailable { .. } => PeerStatus::Unavailable,
         }
     }
 }
