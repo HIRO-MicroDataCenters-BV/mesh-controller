@@ -177,7 +177,6 @@ impl KubeClient {
             result_version = api
                 .patch_status(&name.name, &PatchParams::default(), &Patch::Merge(&status))
                 .await
-                .inspect(|obj| obj.dump_status("patched"))
                 .map(|obj| obj.get_resource_version())
                 .map_err(|err| {
                     if is_conflict(&err) {

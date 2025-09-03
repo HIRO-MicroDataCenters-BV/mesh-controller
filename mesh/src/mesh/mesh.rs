@@ -20,6 +20,7 @@ use futures::future::{MapErr, Shared};
 use futures::{FutureExt, TryFutureExt};
 use meshkube::client::KubeClient;
 use meshkube::kube::event::KubeEvent;
+use meshresource::mesh_status::MeshStatus;
 use p2panda_core::{Operation, PrivateKey};
 use p2panda_net::SystemEvent;
 use p2panda_store::MemoryStore;
@@ -41,12 +42,13 @@ impl Mesh {
     #[allow(clippy::too_many_arguments)]
     pub async fn new(
         key: PrivateKey,
-        config: &MeshConfig,
+        config: MeshConfig,
         instance_id: InstanceId,
         cancelation: CancellationToken,
         client: KubeClient,
         clock: Arc<dyn Clock>,
         nodes: Nodes,
+        mesh_status: MeshStatus,
         store: MemoryStore<MeshLogId, Extensions>,
         system_events: broadcast::Receiver<SystemEvent<MeshTopic>>,
     ) -> Result<Mesh> {
@@ -61,21 +63,24 @@ impl Mesh {
             }
         };
         let (mesh_actor_tx, mesh_actor_rx) = mpsc::channel(512);
-        let actor = MeshActor::new(
-            key,
-            config.snapshot.to_owned(),
-            config.tombstone.to_owned(),
-            instance_id,
-            client,
-            partition,
-            clock,
-            cancelation,
-            nodes,
-            mesh_actor_rx,
-            system_events,
-            store,
-        );
-        let handle = tokio::spawn(async {
+        let handle = tokio::spawn(async move {
+            let actor = MeshActor::new(
+                key,
+                config.snapshot.to_owned(),
+                config.tombstone.to_owned(),
+                instance_id,
+                client,
+                partition,
+                clock,
+                cancelation,
+                nodes,
+                mesh_status,
+                mesh_actor_rx,
+                system_events,
+                store,
+            )
+            .await;
+
             if let Err(error) = actor.run().await {
                 error!("mesh actor exited with {error}")
             }

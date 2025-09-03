@@ -16,6 +16,7 @@ use tracing::error;
 #[derive(Debug)]
 pub enum ToNodeActor {
     MeshPeerUpdate(PeerState),
+    MeshPeerUpdates(Vec<PeerState>),
     GetAll {
         reply: oneshot::Sender<Result<Vec<PeerState>>>,
     },
@@ -52,7 +53,7 @@ impl MeshPeerResourceActor {
             .collect()
     }
 
-    pub async fn run(mut self) -> Result<()> {
+    pub async fn run(mut self) {
         loop {
             tokio::select! {
                 Some(message) = self.inbox.recv() => {
@@ -63,12 +64,12 @@ impl MeshPeerResourceActor {
                 _ = self.cancelation.cancelled() => break,
             }
         }
-        Ok(())
     }
 
     async fn on_actor_message(&mut self, message: ToNodeActor) -> Result<()> {
         match message {
             ToNodeActor::MeshPeerUpdate(update) => self.on_peer_update(update).await,
+            ToNodeActor::MeshPeerUpdates(updates) => self.on_peer_updates(updates).await,
             ToNodeActor::GetAll { reply } => self.on_get_all(reply),
         }
     }
@@ -77,6 +78,13 @@ impl MeshPeerResourceActor {
         let peer = self.peers.update_and_get(update);
         let object = peer.to_owned().to_object()?;
         self.client.patch_apply(object).await?;
+        Ok(())
+    }
+
+    async fn on_peer_updates(&mut self, updates: Vec<PeerState>) -> Result<()> {
+        for update in updates {
+            self.on_peer_update(update).await?;
+        }
         Ok(())
     }
 

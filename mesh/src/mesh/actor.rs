@@ -15,6 +15,7 @@ use crate::mesh::topic::MeshTopic;
 use crate::network::discovery::nodes::Nodes;
 use crate::network::discovery::nodes::PeerEvent;
 use crate::network::discovery::types::Membership;
+use crate::network::discovery::types::MembershipUpdate;
 use crate::utils::types::Clock;
 use anyhow::Context;
 use anyhow::Result;
@@ -28,6 +29,7 @@ use meshkube::kube::dynamic_object_ext::DynamicObjectExt;
 use meshkube::kube::event::KubeEvent;
 use meshkube::kube::subscriptions::Version;
 use meshkube::kube::types::NamespacedName;
+use meshresource::mesh_status::MeshStatus;
 use p2panda_core::PublicKey;
 use p2panda_core::{Operation, PrivateKey};
 use p2panda_net::SystemEvent;
@@ -75,7 +77,7 @@ pub struct UpdateLogIdResult {
 pub struct MeshActor {
     instance_id: InstanceId,
     inbox: mpsc::Receiver<ToNodeActor>,
-    events_rx: SelectAll<KubeEventStream>,
+    kube_events_rx: SelectAll<KubeEventStream>,
     system_events: broadcast::Receiver<SystemEvent<MeshTopic>>,
     network_rx: SelectAll<BroadcastStream<Operation<Extensions>>>,
     network_tx: Option<tokio::sync::broadcast::Sender<Operation<Extensions>>>,
@@ -91,11 +93,12 @@ pub struct MeshActor {
     own_log_id: MeshLogId,
     membership: Membership,
     nodes: Nodes,
+    mesh_status: MeshStatus,
 }
 
 impl MeshActor {
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub async fn new(
         key: PrivateKey,
         snapshot_config: PeriodicSnapshotConfig,
         tombstone_config: TombstoneConfig,
@@ -105,17 +108,17 @@ impl MeshActor {
         clock: Arc<dyn Clock>,
         cancelation: CancellationToken,
         nodes: Nodes,
+        mesh_status: MeshStatus,
         inbox: mpsc::Receiver<ToNodeActor>,
         system_events: broadcast::Receiver<SystemEvent<MeshTopic>>,
         store: MemoryStore<MeshLogId, Extensions>,
     ) -> MeshActor {
+
         let own_log_id = MeshLogId(instance_id.clone());
         let operations = LinkedOperations::new(key.clone(), instance_id.clone());
         let operation_log = OperationLog::new(own_log_id.clone(), key.public_key(), store.clone());
 
-        let membership = nodes.get_membership(clock.now_millis());
-        tracing::info!("initial membership {}", membership.to_string());
-        MeshActor {
+        let mut actor = MeshActor {
             last_snapshot_time: clock.now(),
             operations,
             operation_log,
@@ -123,25 +126,39 @@ impl MeshActor {
             inbox,
             kube_client,
             network_rx: SelectAll::new(),
-            events_rx: SelectAll::new(),
+            kube_events_rx: SelectAll::new(),
             network_tx: None,
             partition,
-            clock,
+            clock: clock.clone(),
             cancelation,
             snapshot_config,
             tombstone_config,
             own_log_id,
-            membership,
+            membership: Membership::default(),
             system_events,
-            nodes,
-        }
+            nodes: nodes.clone(),
+            mesh_status,
+        };
+
+        let init_span = span!(
+            Level::DEBUG,
+            "initialization",
+            ts = clock.now_millis().to_string()
+        );
+        let updated_membership =
+            nodes.get_membership_update(clock.now_millis(), &[key.public_key()]);
+
+        actor
+            .update_membership(&init_span, Some(updated_membership))
+            .await;
+        actor
     }
 
     pub async fn run(mut self) -> Result<()> {
         let mut interval = tokio::time::interval(DEFAULT_TICK_INTERVAL);
         loop {
             tokio::select! {
-                Some(event) = self.events_rx.next() => {
+                Some(event) = self.kube_events_rx.next() => {
                     let span = span!(Level::DEBUG, "kube_event", id = event.get_id());
                     if let Err(err) = self.on_outgoing_to_network(&span, event).await {
                         error!(parent: &span, "error while processing kube event, {}", err);
@@ -193,7 +210,7 @@ impl MeshActor {
                 subscriber_rx,
                 reply,
             } => {
-                self.events_rx.push(subscriber_rx);
+                self.kube_events_rx.push(subscriber_rx);
                 reply.send(Ok(())).ok();
             }
             ToNodeActor::ConnectNetwork { incoming, reply } => {
@@ -247,12 +264,18 @@ impl MeshActor {
     async fn update_membership(
         &mut self,
         span: &Span,
-        maybe_updated_membership: Option<Membership>,
+        maybe_updated_membership: Option<MembershipUpdate>,
     ) {
-        if let Some(membership) = maybe_updated_membership {
+        if let Some(MembershipUpdate { membership, peers }) = maybe_updated_membership {
             if !self.membership.is_equal(&membership) {
                 if let Err(err) = self.on_membership_change(span, membership).await {
                     error!(parent: span, "membership change error {err:?}");
+                }
+            }
+            if !peers.is_empty() {
+                let peer_states = peers.into_iter().map(|p| p.into()).collect();
+                if let Err(err) = self.mesh_status.update(peer_states).await {
+                    error!(parent: span, "peer status update error {err:?}");
                 }
             }
         }
@@ -340,7 +363,9 @@ impl MeshActor {
         }
         if is_new_log {
             debug!(parent: span, instance_id = ?incoming_log_id.0.to_string(), "new log detected");
-            let membership = self.nodes.get_membership(self.clock.now_millis());
+            let membership = self
+                .nodes
+                .get_membership_update(self.clock.now_millis(), &[peer]);
             self.update_membership(span, Some(membership)).await;
         }
         Ok(())

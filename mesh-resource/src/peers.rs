@@ -2,7 +2,9 @@ use kube::api::ObjectMeta;
 use std::collections::HashMap;
 
 use crate::{
-    meshpeer::{MeshPeer, MeshPeerSpec, MeshPeerStatus, PeerIdentity, PeerStatus},
+    meshpeer::{
+        MeshPeer, MeshPeerInstance, MeshPeerSpec, MeshPeerStatus, PeerIdentity, PeerStatus,
+    },
     types::PeerState,
 };
 
@@ -40,14 +42,13 @@ impl Peers {
         peer
     }
 
-    pub fn get_all(&self) -> Vec<PeerState> {
-        // self.peers.iter().map(|(_,p)|PeerState::from(p)).collect()
-        todo!()
-    }
-
     fn create_peer(peer_id: &str) -> MeshPeer {
         MeshPeer {
-            metadata: ObjectMeta::default(),
+            metadata: ObjectMeta {
+                name: Some(peer_id.into()),
+                namespace: Some("default".into()),
+                ..Default::default()
+            },
             spec: MeshPeerSpec {
                 identity: PeerIdentity {
                     public_key: peer_id.into(),
@@ -56,10 +57,32 @@ impl Peers {
             },
             status: Some(MeshPeerStatus {
                 status: PeerStatus::Unavailable,
+                instance: None,
+                update_time: 0,
                 conditions: vec![],
             }),
         }
     }
 
-    fn update(_peer: &mut MeshPeer, _update: &PeerState) {}
+    fn update(peer: &mut MeshPeer, peer_state: &PeerState) {
+        peer.spec.identity.public_key = peer_state.peer_id.to_owned();
+        peer.status = Some(Self::create_peer_status(peer_state));
+    }
+
+    fn create_peer_status(peer_state: &PeerState) -> MeshPeerStatus {
+        let instance = peer_state.instance.as_ref().map(|i| MeshPeerInstance {
+            zone: i.zone.to_owned(),
+            start_time: i.zone_start_time,
+        });
+        MeshPeerStatus {
+            conditions: vec![],
+            instance,
+            update_time: 0,
+            status: peer_state.state,
+        }
+    }
+
+    pub fn get_all(&self) -> Vec<PeerState> {
+        self.peers.values().map(PeerState::from).collect()
+    }
 }

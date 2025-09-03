@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use meshresource::types::PeerState;
 use p2panda_core::PublicKey;
 
 use crate::{mesh::topic::InstanceId, network::discovery::nodes::MembershipState};
@@ -66,11 +67,32 @@ impl std::fmt::Display for Membership {
 }
 
 #[derive(Debug, Clone)]
+pub struct MembershipUpdate {
+    pub membership: Membership,
+    pub peers: Vec<PeerStateUpdate>,
+}
+
+#[derive(Debug, Clone)]
 pub struct PeerStateUpdate {
     pub peer: PublicKey,
     pub state: MembershipState,
     pub instance: Option<InstanceId>,
     pub timestamp: u64,
+}
+
+impl From<PeerStateUpdate> for PeerState {
+    fn from(val: PeerStateUpdate) -> Self {
+        PeerState {
+            peer_id: val.peer.to_hex(),
+            state: val.state.into(),
+            state_since: val.state.get_since(),
+            instance: val.instance.map(|i| meshresource::types::InstanceId {
+                zone: i.zone,
+                zone_start_time: i.start_time,
+            }),
+            update_timestamp: val.timestamp,
+        }
+    }
 }
 
 #[cfg(test)]

@@ -17,6 +17,7 @@ use crate::utils::clock::RealClock;
 use anyhow::{Context as AnyhowContext, Result, anyhow};
 use meshkube::client::KubeClient;
 use meshkube::kube::subscriptions::Subscriptions;
+use meshresource::mesh_status::MeshStatus;
 use p2panda_core::{PrivateKey, PublicKey};
 use p2panda_net::{NetworkBuilder, ResyncConfiguration, SyncConfiguration};
 use p2panda_store::MemoryStore;
@@ -120,6 +121,7 @@ impl ContextBuilder {
         client: KubeClient,
         cancelation: CancellationToken,
     ) -> Result<MeshNode> {
+        let mesh_status = MeshStatus::new(client.clone(), cancelation.child_token()).await?;
         let (node_config, p2p_network_config) = MeshNode::configure_p2p_network(&config).await?;
 
         let resync_config = ContextBuilder::to_resync_config(&config);
@@ -150,12 +152,13 @@ impl ContextBuilder {
 
         let mesh = Mesh::new(
             private_key.clone(),
-            &config.mesh,
+            config.mesh.to_owned(),
             instance_id,
             cancelation,
             client,
             clock,
             nodes.clone(),
+            mesh_status,
             log_store.clone(),
             network.events().await?,
         )

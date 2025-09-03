@@ -2,8 +2,6 @@ use anyhow::{Context, Result};
 use kube::api::DynamicObject;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use stackable_operator::status::condition::ClusterCondition;
-use stackable_operator::status::condition::HasStatusCondition;
 
 #[allow(unused_imports)]
 mod prelude {
@@ -12,17 +10,6 @@ mod prelude {
     pub use serde::{Deserialize, Serialize};
 }
 use self::prelude::*;
-
-// /// AnyApplicationSpec defines the desired state of AnyApplication.
-// #[derive(CustomResource, Serialize, Deserialize, Clone, Debug, JsonSchema, PartialEq)]
-// #[kube(
-//     group = "dcp.hiro.io",
-//     version = "v1",
-//     kind = "AnyApplication",
-//     plural = "anyapplications"
-// )]
-// #[kube(namespaced)]
-// #[kube(status = "AnyApplicationStatus")]
 
 #[derive(CustomResource, Serialize, Deserialize, Clone, Debug, JsonSchema, PartialEq)]
 #[kube(
@@ -47,13 +34,21 @@ pub struct PeerIdentity {
 }
 
 #[derive(Deserialize, Serialize, Clone, Default, Debug, JsonSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct MeshPeerStatus {
-    #[serde(default)]
-    pub conditions: Vec<ClusterCondition>,
     pub status: PeerStatus,
+    pub instance: Option<MeshPeerInstance>,
+    pub update_time: u64,
+    pub conditions: Vec<MeshPeerStatusCondition>,
 }
 
 #[derive(Deserialize, Serialize, Clone, Default, Debug, JsonSchema)]
+pub struct MeshPeerInstance {
+    pub zone: String,
+    pub start_time: u64,
+}
+
+#[derive(Deserialize, Serialize, Clone, Default, Debug, JsonSchema, Copy)]
 pub enum PeerStatus {
     Ready,
     NotReady,
@@ -61,13 +56,14 @@ pub enum PeerStatus {
     Unavailable,
 }
 
-impl HasStatusCondition for MeshPeer {
-    fn conditions(&self) -> Vec<ClusterCondition> {
-        match &self.status {
-            Some(status) => status.conditions.clone(),
-            None => vec![],
-        }
-    }
+#[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MeshPeerStatusCondition {
+    pub r#type: String,
+    pub status: String,
+    pub reason: Option<String>,
+    pub message: Option<String>,
+    pub last_transition_time: Option<k8s_openapi::apimachinery::pkg::apis::meta::v1::Time>,
 }
 
 pub trait MeshPeerExt {

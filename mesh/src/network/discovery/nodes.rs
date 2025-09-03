@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use dashmap::DashMap;
+use meshresource::meshpeer::PeerStatus;
 use p2panda_core::PublicKey;
 use p2panda_sync::log_sync::TopicLogMap;
 use std::cmp::Ordering;
@@ -7,7 +8,7 @@ use std::{collections::HashMap, sync::Arc};
 use tracing::{Span, info};
 
 use crate::mesh::topic::{Logs, MeshLogId, MeshTopic};
-use crate::network::discovery::types::{Membership, Timestamp};
+use crate::network::discovery::types::{Membership, MembershipUpdate, PeerStateUpdate, Timestamp};
 use std::time::Duration;
 
 #[derive(Debug, Clone)]
@@ -29,7 +30,7 @@ impl Nodes {
         }
     }
 
-    pub fn on_event(&self, span: &Span, event: PeerEvent) -> Option<Membership> {
+    pub fn on_event(&self, span: &Span, event: PeerEvent) -> Option<MembershipUpdate> {
         let now = event.timestamp();
         let updated_peers = match &event {
             PeerEvent::PeerDiscovered { peer, .. } => {
@@ -82,10 +83,21 @@ impl Nodes {
                 .collect(),
         };
         if !updated_peers.is_empty() {
-            Some(self.get_membership(now))
+            let update = self.get_membership_update(now, &updated_peers);
+            Some(update)
         } else {
             None
         }
+    }
+
+    pub fn get_membership_update(
+        &self,
+        now: Timestamp,
+        updated_peers: &[PublicKey],
+    ) -> MembershipUpdate {
+        let membership = self.get_membership(now);
+        let peers = self.get_peer_states(now, updated_peers);
+        MembershipUpdate { membership, peers }
     }
 
     pub fn get_membership(&self, now: Timestamp) -> Membership {
@@ -102,6 +114,28 @@ impl Nodes {
             .for_each(|instance| membership.add(instance));
         membership.add(self.inner.log_id.0.to_owned());
         membership
+    }
+
+    /// Returns a vector of peers that are currently in a 'Ready' state.
+    pub fn get_peer_states(
+        &self,
+        now: Timestamp,
+        updated_peers: &[PublicKey],
+    ) -> Vec<PeerStateUpdate> {
+        self.inner
+            .peers
+            .iter()
+            .filter(|p| updated_peers.contains(&p.peer))
+            .map(|p| {
+                let state = p.value();
+                PeerStateUpdate {
+                    peer: state.peer.to_owned(),
+                    state: state.state,
+                    instance: state.active_log.as_ref().map(|log| log.0.clone()),
+                    timestamp: now,
+                }
+            })
+            .collect()
     }
 
     pub fn get_active_log(&self, peer: &PublicKey) -> Option<MeshLogId> {
@@ -296,11 +330,21 @@ impl PeerEvent {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Copy)]
 pub enum MembershipState {
     Ready { since: Timestamp },
     NotReady { since: Timestamp },
     Unavailable { since: Timestamp },
+}
+
+impl MembershipState {
+    pub fn get_since(&self) -> u64 {
+        match self {
+            MembershipState::Ready { since } => *since,
+            MembershipState::NotReady { since } => *since,
+            MembershipState::Unavailable { since } => *since,
+        }
+    }
 }
 
 impl std::fmt::Display for MembershipState {
@@ -309,6 +353,16 @@ impl std::fmt::Display for MembershipState {
             MembershipState::Ready { since } => write!(f, "Ready(since = {since})"),
             MembershipState::NotReady { since } => write!(f, "NotReady(since = {since})"),
             MembershipState::Unavailable { since } => write!(f, "Unavailable(since = {since})"),
+        }
+    }
+}
+
+impl From<MembershipState> for PeerStatus {
+    fn from(val: MembershipState) -> Self {
+        match val {
+            MembershipState::Ready { .. } => PeerStatus::Ready,
+            MembershipState::NotReady { .. } => PeerStatus::NotReady,
+            MembershipState::Unavailable { .. } => PeerStatus::Unavailable,
         }
     }
 }
