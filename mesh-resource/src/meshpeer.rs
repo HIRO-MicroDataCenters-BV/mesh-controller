@@ -36,13 +36,24 @@ pub struct PeerIdentity {
     pub endpoints: Vec<String>,
 }
 
-#[derive(Deserialize, Serialize, Clone, Default, Debug, JsonSchema)]
+#[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct MeshPeerStatus {
     pub status: PeerStatus,
     pub instance: Option<MeshPeerInstance>,
-    pub update_time: u64,
+    pub update_time: Time,
     pub conditions: Vec<MeshPeerStatusCondition>,
+}
+
+impl Default for MeshPeerStatus {
+    fn default() -> Self {
+        MeshPeerStatus {
+            status: PeerStatus::default(),
+            instance: None,
+            update_time: 0.to_time(),
+            conditions: vec![],
+        }
+    }
 }
 
 impl MeshPeerStatus {
@@ -82,10 +93,11 @@ impl MeshPeerStatus {
     }
 }
 
-#[derive(Deserialize, Serialize, Clone, Default, Debug, JsonSchema)]
+#[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 pub struct MeshPeerInstance {
     pub zone: String,
-    pub start_time: u64,
+    pub start_time: Time,
+    pub start_timestamp: u64,
 }
 
 #[derive(Deserialize, Serialize, Clone, Default, Debug, JsonSchema, Copy)]
@@ -113,7 +125,7 @@ pub struct MeshPeerStatusCondition {
     pub status: String,
     pub reason: Option<String>,
     pub message: Option<String>,
-    pub last_transition_time: Option<k8s_openapi::apimachinery::pkg::apis::meta::v1::Time>,
+    pub last_transition_time: Option<Time>,
 }
 
 impl MeshPeerStatusCondition {
@@ -128,7 +140,7 @@ impl MeshPeerStatusCondition {
     }
 }
 
-trait IntoTimeExt {
+pub trait IntoTimeExt {
     fn to_time(self) -> k8s_openapi::apimachinery::pkg::apis::meta::v1::Time;
 }
 

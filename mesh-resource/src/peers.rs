@@ -3,8 +3,8 @@ use std::collections::HashMap;
 
 use crate::{
     meshpeer::{
-        MeshPeer, MeshPeerInstance, MeshPeerSpec, MeshPeerStatus, MeshPeerStatusCondition,
-        PeerIdentity, PeerStatus,
+        IntoTimeExt, MeshPeer, MeshPeerInstance, MeshPeerSpec, MeshPeerStatus,
+        MeshPeerStatusCondition, PeerIdentity, PeerStatus,
     },
     types::PeerState,
 };
@@ -60,33 +60,28 @@ impl Peers {
                     endpoints: vec![],
                 },
             },
-            status: Some(MeshPeerStatus {
-                status: PeerStatus::Unavailable,
-                instance: None,
-                update_time: 0,
-                conditions: vec![],
-            }),
+            status: None,
         }
     }
 
     fn update(peer: &mut MeshPeer, peer_state: &PeerState) {
         peer.spec.identity.public_key = peer_state.peer_id.to_owned();
-        let mut status = Self::to_peer_status(peer_state);
-        Self::update_conditions(&mut status, peer_state);
-        peer.status = Some(status);
+        let status = peer.status.get_or_insert_default();
+        Self::update_status(status, peer_state);
     }
 
-    fn to_peer_status(peer_state: &PeerState) -> MeshPeerStatus {
+    fn update_status(status: &mut MeshPeerStatus, peer_state: &PeerState) {
         let instance = peer_state.instance.as_ref().map(|i| MeshPeerInstance {
             zone: i.zone.to_owned(),
-            start_time: i.zone_start_time,
+            start_time: i.zone_start_time.to_time(),
+            start_timestamp: i.zone_start_time,
         });
-        MeshPeerStatus {
-            conditions: vec![],
-            instance,
-            update_time: peer_state.update_timestamp,
-            status: peer_state.state,
-        }
+
+        status.instance = instance;
+        status.update_time = peer_state.update_timestamp.to_time();
+        status.status = peer_state.state;
+
+        Self::update_conditions(status, peer_state);
     }
 
     fn update_conditions(status: &mut MeshPeerStatus, incoming: &PeerState) {

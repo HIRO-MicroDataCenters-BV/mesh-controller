@@ -24,9 +24,9 @@ impl From<&MeshPeer> for PeerState {
             state_since: 0,
             instance: status.instance.as_ref().map(|i| InstanceId {
                 zone: i.zone.to_owned(),
-                zone_start_time: i.start_time,
+                zone_start_time: i.start_timestamp,
             }),
-            update_timestamp: status.update_time,
+            update_timestamp: status.update_time.0.timestamp_millis() as u64,
         }
     }
 }
