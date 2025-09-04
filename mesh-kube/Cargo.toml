@@ -30,3 +30,4 @@ ciborium.workspace = true
 loole.workspace = true
 dashmap.workspace = true
 mesh-kube-fake-api.workspace = true
+chrono.workspace = true

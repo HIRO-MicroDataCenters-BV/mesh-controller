@@ -4,6 +4,7 @@ use anyapplication::anyapplication::{
 };
 use anyapplication::anyapplication_ext::Epoch;
 use anyhow::{Context, Result, anyhow};
+use k8s_openapi::api::core::v1::ObjectReference;
 use kube::ResourceExt;
 use kube::api::{DynamicObject, GroupVersionKind};
 use serde_json::{Value, json};
@@ -32,6 +33,7 @@ pub trait DynamicObjectExt {
     fn get_resource_version(&self) -> Version;
     fn set_resource_version(&mut self, version: Version);
     fn dump_status(&self, loc: &str);
+    fn get_object_reference(&self) -> Result<ObjectReference>;
 }
 
 impl DynamicObjectExt for DynamicObject {
@@ -197,7 +199,20 @@ impl DynamicObjectExt for DynamicObject {
         let Some(zones) = status.zones else { return };
         dump_zones(context, &zones);
     }
+
+    fn get_object_reference(&self) -> Result<ObjectReference> {
+        let gvk = self.get_gvk()?;
+        Ok(ObjectReference {
+            api_version: Some(gvk.api_version()),
+            kind: Some(gvk.kind),
+            name: self.metadata.name.to_owned(),
+            namespace: self.namespace(),
+            uid: self.uid(),
+            ..Default::default()
+        })
+    }
 }
+
 pub fn dump_ownership(context: &str, ownership: &AnyApplicationStatusOwnership) {
     let mut out = format!("- ownership update - ({})\n", context);
     out += format!(" epoch: {}\n", ownership.epoch).as_str();
@@ -210,6 +225,7 @@ pub fn dump_ownership(context: &str, ownership: &AnyApplicationStatusOwnership) 
     .as_str();
     println!("{}", out);
 }
+
 pub fn dump_zones(context: &str, zones: &[AnyApplicationStatusZones]) {
     let mut out = format!("- status update - ({})\n", context);
 

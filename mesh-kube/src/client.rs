@@ -261,6 +261,20 @@ impl KubeClient {
         let latest = latest_version_str.parse::<Version>().unwrap_or_default();
         Ok(latest)
     }
+
+    pub async fn emit_event(
+        &self,
+        event: k8s_openapi::api::core::v1::Event,
+        namespace: &Option<String>,
+    ) -> Result<()> {
+        use k8s_openapi::api::core::v1::Event;
+
+        let ns = namespace.as_ref().map(|s| s.as_str()).unwrap_or("default");
+        let events: kube::Api<Event> = kube::Api::namespaced(self.client.clone(), ns);
+
+        events.create(&Default::default(), &event).await?;
+        Ok(())
+    }
 }
 
 pub fn object_not_found(results: &Result<DynamicObject, Error>) -> bool {
