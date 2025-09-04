@@ -35,6 +35,7 @@ pub trait ApiHandler {
             http::Method::GET => self.get(request),
             http::Method::DELETE => self.delete(request),
             http::Method::PATCH => self.patch(request),
+            http::Method::POST => self.post(request),
             _ => unimplemented!("{}", method),
         }
     }
@@ -45,6 +46,9 @@ pub trait ApiHandler {
         unimplemented!()
     }
     fn patch(&self, _request: Self::Req) -> ApiHandlerResponse {
+        unimplemented!()
+    }
+    fn post(&self, _request: Self::Req) -> ApiHandlerResponse {
         unimplemented!()
     }
 
