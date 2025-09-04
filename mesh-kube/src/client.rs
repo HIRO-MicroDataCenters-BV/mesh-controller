@@ -9,6 +9,7 @@ use futures::Stream;
 use kube::Error;
 use kube::api::{ApiResource, ListParams};
 use kube::config::{InferConfigError, KubeconfigError};
+use kube::core::dynamic::ParseDynamicObjectError;
 use kube::{
     Api,
     api::{DeleteParams, DynamicObject, GroupVersionKind, Patch, PatchParams},
@@ -31,6 +32,9 @@ pub enum ClientError {
 
     #[error("Invariant Error: {0}")]
     Invariant(#[from] anyhow::Error),
+
+    #[error("Resource Format Error: {0}")]
+    ResourceFormatError(#[from] ParseDynamicObjectError),
 
     #[error("Version conflict")]
     VersionConflict,
@@ -145,10 +149,12 @@ impl KubeClient {
         Ok(status)
     }
 
-    pub async fn patch_apply(&self, resource: DynamicObject) -> Result<Version, ClientError> {
+    pub async fn patch_apply(&self, mut resource: DynamicObject) -> Result<Version, ClientError> {
         let gvk = resource.get_gvk()?;
         let name = resource.get_namespaced_name();
         let status = resource.get_status();
+
+        resource.metadata.managed_fields = None;
 
         let api = self
             .get_or_resolve_namespaced_api(&gvk, &name.namespace)
@@ -262,14 +268,15 @@ impl KubeClient {
         Ok(latest)
     }
 
-    pub async fn emit_event(
-        &self,
-        event: k8s_openapi::api::core::v1::Event,
-        namespace: &Option<String>,
-    ) -> Result<()> {
+    pub async fn emit_event(&self, event: k8s_openapi::api::core::v1::Event) -> Result<()> {
         use k8s_openapi::api::core::v1::Event;
 
-        let ns = namespace.as_ref().map(|s| s.as_str()).unwrap_or("default");
+        let ns = event
+            .metadata
+            .namespace
+            .as_ref()
+            .map(|s| s.as_str())
+            .unwrap_or("default");
         let events: kube::Api<Event> = kube::Api::namespaced(self.client.clone(), ns);
 
         events.create(&Default::default(), &event).await?;
