@@ -7,8 +7,8 @@ use crate::{
 };
 use k8s_openapi::api::core::v1::Event;
 use k8s_openapi::api::core::v1::ObjectReference;
-use std::env;
 use meshkube::event::{EventType, create_event};
+use std::env;
 
 pub fn update(peer: &mut MeshPeer, peer_state: &PeerState) {
     peer.spec.identity.public_key = peer_state.peer_id.to_owned();
