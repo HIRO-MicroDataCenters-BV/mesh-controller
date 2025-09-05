@@ -1,9 +1,7 @@
-use crate::client::kube_client::watcher::Event;
+use crate::client::watcher::Event;
+use crate::config::KubeConfiguration;
 use crate::kube::subscriptions::Version;
-use crate::{
-    config::configuration::KubeConfiguration,
-    kube::{dynamic_object_ext::DynamicObjectExt, types::NamespacedName},
-};
+use crate::kube::{dynamic_object_ext::DynamicObjectExt, types::NamespacedName};
 use anyhow::{Context, Result, anyhow};
 use dashmap::DashMap;
 use either::Either;
@@ -11,6 +9,7 @@ use futures::Stream;
 use kube::Error;
 use kube::api::{ApiResource, ListParams};
 use kube::config::{InferConfigError, KubeconfigError};
+use kube::core::dynamic::ParseDynamicObjectError;
 use kube::{
     Api,
     api::{DeleteParams, DynamicObject, GroupVersionKind, Patch, PatchParams},
@@ -33,6 +32,9 @@ pub enum ClientError {
 
     #[error("Invariant Error: {0}")]
     Invariant(#[from] anyhow::Error),
+
+    #[error("Resource Format Error: {0}")]
+    ResourceFormatError(#[from] ParseDynamicObjectError),
 
     #[error("Version conflict")]
     VersionConflict,
@@ -66,7 +68,6 @@ impl KubeClient {
         })
     }
 
-    #[cfg(test)]
     pub fn build_fake(svc: fake_kube_api::service::FakeEtcdServiceWrapper) -> KubeClient {
         let client = kube::Client::new(svc, "default");
         KubeClient {
@@ -115,6 +116,25 @@ impl KubeClient {
         }
     }
 
+    pub async fn list(
+        &self,
+        gvk: &GroupVersionKind,
+        namespace: &Option<String>,
+    ) -> Result<Vec<DynamicObject>> {
+        let namespace: &str = namespace
+            .as_ref()
+            .map(|ns| ns.as_str())
+            .unwrap_or("default");
+        let list_params = ListParams::default();
+        let results = self
+            .get_or_resolve_namespaced_api(gvk, namespace)
+            .await?
+            .list(&list_params)
+            .await
+            .map(|list| list.items)?;
+        Ok(results)
+    }
+
     pub async fn delete(
         &self,
         gvk: &GroupVersionKind,
@@ -129,10 +149,12 @@ impl KubeClient {
         Ok(status)
     }
 
-    pub async fn patch_apply(&self, resource: DynamicObject) -> Result<Version, ClientError> {
+    pub async fn patch_apply(&self, mut resource: DynamicObject) -> Result<Version, ClientError> {
         let gvk = resource.get_gvk()?;
         let name = resource.get_namespaced_name();
         let status = resource.get_status();
+
+        resource.metadata.managed_fields = None;
 
         let api = self
             .get_or_resolve_namespaced_api(&gvk, &name.namespace)
@@ -161,7 +183,6 @@ impl KubeClient {
             result_version = api
                 .patch_status(&name.name, &PatchParams::default(), &Patch::Merge(&status))
                 .await
-                .inspect(|obj| obj.dump_status("patched"))
                 .map(|obj| obj.get_resource_version())
                 .map_err(|err| {
                     if is_conflict(&err) {
@@ -245,6 +266,16 @@ impl KubeClient {
         let latest_version_str = pod_list.metadata.resource_version.unwrap_or("0".into());
         let latest = latest_version_str.parse::<Version>().unwrap_or_default();
         Ok(latest)
+    }
+
+    pub async fn emit_event(&self, event: k8s_openapi::api::core::v1::Event) -> Result<()> {
+        use k8s_openapi::api::core::v1::Event;
+
+        let ns = event.metadata.namespace.as_deref().unwrap_or("default");
+        let events: kube::Api<Event> = kube::Api::namespaced(self.client.clone(), ns);
+
+        events.create(&Default::default(), &event).await?;
+        Ok(())
     }
 }
 

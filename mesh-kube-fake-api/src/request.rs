@@ -99,9 +99,38 @@ impl<'a> PathParser<'a> {
     }
 
     pub fn parse(mut self) -> Result<(ApiServiceType, HashMap<&'static str, &'a str>)> {
+        if Self::expected(&mut self.segments, "apis").is_ok() {
+            return self.parse_apis();
+        }
+
+        self.parse_api()
+    }
+
+    pub fn parse_apis(mut self) -> Result<(ApiServiceType, HashMap<&'static str, &'a str>)> {
         let mut params = HashMap::new();
-        Self::expected(&mut self.segments, "apis")?;
         params.insert("group", Self::segment(&mut self.segments)?);
+        params.insert("version", Self::segment(&mut self.segments)?);
+        if self.segments.is_empty() {
+            return Ok((ApiServiceType::ApiResources, params));
+        }
+        let has_namespace = Self::opt_expected(&mut self.segments, "namespaces").is_some();
+        if has_namespace {
+            params.insert("namespace", Self::segment(&mut self.segments)?);
+        }
+        params.insert("pluralkind", Self::segment(&mut self.segments)?);
+        if let Some(name) = Self::opt_segment(&mut self.segments) {
+            params.insert("name", name);
+        }
+        if let Some(subresource) = Self::opt_segment(&mut self.segments) {
+            params.insert("subresource", subresource);
+        }
+
+        Ok((ApiServiceType::Resource, params))
+    }
+
+    pub fn parse_api(mut self) -> Result<(ApiServiceType, HashMap<&'static str, &'a str>)> {
+        let mut params = HashMap::new();
+        params.insert("group", "");
         params.insert("version", Self::segment(&mut self.segments)?);
         if self.segments.is_empty() {
             return Ok((ApiServiceType::ApiResources, params));

@@ -1,6 +1,7 @@
 use anyhow::{Result, anyhow};
 use kube::ResourceExt;
 use kube::api::{DynamicObject, GroupVersionKind};
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default, PartialOrd, Ord, Serialize, Deserialize)]
@@ -18,6 +19,7 @@ impl NamespacedName {
 pub trait DynamicObjectExt {
     fn get_gvk(&self) -> Result<GroupVersionKind>;
     fn get_namespaced_name(&self) -> NamespacedName;
+    fn generate_name(&mut self);
 }
 
 impl DynamicObjectExt for DynamicObject {
@@ -47,5 +49,21 @@ impl DynamicObjectExt for DynamicObject {
             version,
             kind: kind.clone(),
         })
+    }
+
+    fn generate_name(&mut self) {
+        let token = self
+            .metadata
+            .generate_name
+            .as_deref()
+            .unwrap_or("generated");
+        let rng = rand::rng();
+        let random_token: String = rng
+            .sample_iter(rand::distr::Alphanumeric)
+            .take(16)
+            .map(char::from)
+            .collect();
+        let name = format!("{}-{}", token, random_token);
+        self.metadata.name = Some(name);
     }
 }

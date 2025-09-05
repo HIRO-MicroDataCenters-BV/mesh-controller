@@ -6,6 +6,7 @@ use directories::ProjectDirs;
 use figment::Figment;
 use figment::providers::{Env, Format, Serialized, Yaml};
 use kube::api::GroupVersionKind;
+use meshkube::config::KubeConfiguration;
 use p2panda_core::PublicKey;
 use serde::{Deserialize, Serialize};
 
@@ -155,20 +156,6 @@ pub enum MergeStrategyType {
     AnyApplication,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Hash, Default)]
-pub enum KubeConfiguration {
-    #[serde(rename = "incluster")]
-    #[default]
-    InCluster,
-    #[serde(rename = "external")]
-    External(KubeConfigurationExternal),
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Hash)]
-pub struct KubeConfigurationExternal {
-    pub kube_context: Option<String>,
-}
-
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Hash)]
 pub struct PeriodicSnapshotConfig {
     pub snapshot_interval_seconds: u64,
@@ -279,11 +266,12 @@ mod tests {
 
     use figment::Figment;
     use figment::providers::{Format, Serialized, Yaml};
+    use meshkube::config::KubeConfigurationExternal;
 
     use crate::config::configuration::{
-        Config, DiscoveryOptions, KnownNode, KubeConfiguration, KubeConfigurationExternal,
-        MergeStrategyType, MeshConfig, NodeConfig, PeerTimeoutConfig, PeriodicSnapshotConfig,
-        ProtocolConfig, ResourceConfig, TombstoneConfig,
+        Config, DiscoveryOptions, KnownNode, KubeConfiguration, MergeStrategyType, MeshConfig,
+        NodeConfig, PeerTimeoutConfig, PeriodicSnapshotConfig, ProtocolConfig, ResourceConfig,
+        TombstoneConfig,
     };
 
     #[test]

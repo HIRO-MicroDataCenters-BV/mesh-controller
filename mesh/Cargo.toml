@@ -54,8 +54,10 @@ kube.workspace = true
 k8s-openapi.workspace=true
 schemars.workspace=true
 either.workspace = true
-fake-kube-api.workspace = true
+mesh-kube-fake-api.workspace = true
 anyapplication.workspace = true
+mesh-kube.workspace = true
+mesh-resource.workspace = true
 
 [dev-dependencies]
 figment = { workspace = true, features = ["test"] }

@@ -2,12 +2,14 @@ use std::collections::BTreeMap;
 
 use super::types::{MergeResult, MergeStrategy, UpdateResult};
 use crate::{
-    kube::{dynamic_object_ext::DynamicObjectExt, subscriptions::Version, types::NamespacedName},
     merge::types::{Tombstone, VersionedObject},
     network::discovery::types::Membership,
 };
 use anyhow::Result;
 use kube::api::{DynamicObject, GroupVersionKind, TypeMeta};
+use meshkube::kube::{
+    dynamic_object_ext::DynamicObjectExt, subscriptions::Version, types::NamespacedName,
+};
 use tracing::{Span, warn};
 
 pub struct DefaultMerge {
@@ -352,7 +354,6 @@ pub mod tests {
     use tracing::{Level, span};
 
     use super::*;
-    use crate::kube::{dynamic_object_ext::DynamicObjectExt, subscriptions::Version};
 
     #[test]
     pub fn mesh_update_non_existing_create() {

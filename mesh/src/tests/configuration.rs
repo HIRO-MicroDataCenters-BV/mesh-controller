@@ -1,4 +1,5 @@
 use kube::api::GroupVersionKind;
+use meshkube::config::{KubeConfiguration, KubeConfigurationExternal};
 use once_cell::sync::Lazy;
 use p2panda_core::PrivateKey;
 use std::{
@@ -7,8 +8,8 @@ use std::{
 };
 
 use crate::config::configuration::{
-    Config, KnownNode, KubeConfiguration, KubeConfigurationExternal, MergeStrategyType, MeshConfig,
-    PeerTimeoutConfig, PeriodicSnapshotConfig, ResourceConfig, TombstoneConfig,
+    Config, KnownNode, MergeStrategyType, MeshConfig, PeerTimeoutConfig, PeriodicSnapshotConfig,
+    ResourceConfig, TombstoneConfig,
 };
 
 static TEST_INSTANCE_HTTP_PORT: Lazy<AtomicU16> = Lazy::new(|| AtomicU16::new(18080));

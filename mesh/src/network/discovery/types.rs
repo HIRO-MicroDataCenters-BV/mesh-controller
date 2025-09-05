@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 
-use crate::mesh::topic::InstanceId;
+use p2panda_core::PublicKey;
+
+use crate::{mesh::topic::InstanceId, network::discovery::nodes::MembershipState};
 
 pub type Timestamp = u64;
 
@@ -61,6 +63,20 @@ impl std::fmt::Display for Membership {
         write!(f, "}}")?;
         Ok(())
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct MembershipUpdate {
+    pub membership: Membership,
+    pub peers: Vec<PeerStateUpdate>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PeerStateUpdate {
+    pub peer: PublicKey,
+    pub state: MembershipState,
+    pub instance: Option<InstanceId>,
+    pub timestamp: u64,
 }
 
 #[cfg(test)]

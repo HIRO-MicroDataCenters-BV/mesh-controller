@@ -7,7 +7,7 @@ use std::{collections::HashMap, sync::Arc};
 use tracing::{Span, info};
 
 use crate::mesh::topic::{Logs, MeshLogId, MeshTopic};
-use crate::network::discovery::types::{Membership, Timestamp};
+use crate::network::discovery::types::{Membership, MembershipUpdate, PeerStateUpdate, Timestamp};
 use std::time::Duration;
 
 #[derive(Debug, Clone)]
@@ -29,16 +29,20 @@ impl Nodes {
         }
     }
 
-    pub fn on_event(&self, span: &Span, event: PeerEvent) -> Option<Membership> {
+    pub fn on_event(&self, span: &Span, event: PeerEvent) -> Option<MembershipUpdate> {
         let now = event.timestamp();
-        let updated = match &event {
+        let updated_peers = match &event {
             PeerEvent::PeerDiscovered { peer, .. } => {
                 let mut entry = self
                     .inner
                     .peers
                     .entry(*peer)
                     .or_insert_with(|| PeerState::new(peer.to_owned(), self.timeout));
-                entry.value_mut().on_event(span, event)
+                if entry.value_mut().on_event(span, event) {
+                    vec![peer.to_owned()]
+                } else {
+                    Vec::new()
+                }
             }
             PeerEvent::PeerUp { peer, .. } => {
                 let mut entry = self
@@ -46,7 +50,11 @@ impl Nodes {
                     .peers
                     .entry(*peer)
                     .or_insert_with(|| PeerState::new(peer.to_owned(), self.timeout));
-                entry.value_mut().on_event(span, event)
+                if entry.value_mut().on_event(span, event) {
+                    vec![peer.to_owned()]
+                } else {
+                    Vec::new()
+                }
             }
             PeerEvent::PeerDown { peer, .. } => {
                 let mut entry = self
@@ -54,21 +62,41 @@ impl Nodes {
                     .peers
                     .entry(*peer)
                     .or_insert_with(|| PeerState::new(peer.to_owned(), self.timeout));
-                entry.value_mut().on_event(span, event)
+                if entry.value_mut().on_event(span, event) {
+                    vec![peer.to_owned()]
+                } else {
+                    Vec::new()
+                }
             }
             PeerEvent::Tick { .. } => self
                 .inner
                 .peers
                 .iter_mut()
-                .map(|mut entry| entry.value_mut().on_event(span, event))
-                .reduce(|left, right| left | right)
-                .unwrap_or(false),
+                .flat_map(|mut entry| {
+                    if entry.value_mut().on_event(span, event) {
+                        vec![entry.key().to_owned()]
+                    } else {
+                        Vec::new()
+                    }
+                })
+                .collect(),
         };
-        if updated {
-            Some(self.get_membership(now))
+        if !updated_peers.is_empty() {
+            let update = self.get_membership_update(now, &updated_peers);
+            Some(update)
         } else {
             None
         }
+    }
+
+    pub fn get_membership_update(
+        &self,
+        now: Timestamp,
+        updated_peers: &[PublicKey],
+    ) -> MembershipUpdate {
+        let membership = self.get_membership(now);
+        let peers = self.get_peer_states(now, updated_peers);
+        MembershipUpdate { membership, peers }
     }
 
     pub fn get_membership(&self, now: Timestamp) -> Membership {
@@ -83,8 +111,47 @@ impl Nodes {
                 _ => None,
             })
             .for_each(|instance| membership.add(instance));
+        // Adding self
         membership.add(self.inner.log_id.0.to_owned());
         membership
+    }
+
+    /// Returns a vector of peers that are currently in a 'Ready' state.
+    pub fn get_peer_states(
+        &self,
+        now: Timestamp,
+        updated_peers: &[PublicKey],
+    ) -> Vec<PeerStateUpdate> {
+        let mut peer_states: Vec<PeerStateUpdate> = self
+            .inner
+            .peers
+            .iter()
+            .filter(|p| updated_peers.contains(&p.peer))
+            .map(
+                |p: dashmap::mapref::multiple::RefMulti<'_, PublicKey, PeerState>| {
+                    let state = p.value();
+                    PeerStateUpdate {
+                        peer: state.peer.to_owned(),
+                        state: state.state,
+                        instance: state.active_log.as_ref().map(|log| log.0.clone()),
+                        timestamp: now,
+                    }
+                },
+            )
+            .collect();
+
+        if updated_peers.contains(&self.inner.owner) {
+            // Adding self
+            peer_states.push(PeerStateUpdate {
+                peer: self.inner.owner,
+                state: MembershipState::Ready {
+                    since: self.inner.log_id.0.start_time,
+                },
+                instance: Some(self.inner.log_id.0.to_owned()),
+                timestamp: now,
+            });
+        }
+        peer_states
     }
 
     pub fn get_active_log(&self, peer: &PublicKey) -> Option<MeshLogId> {
@@ -179,9 +246,9 @@ struct NodesInner {
 
 #[derive(Clone, Debug)]
 pub struct PeerState {
-    peer: PublicKey,
-    state: MembershipState,
-    active_log: Option<MeshLogId>,
+    pub peer: PublicKey,
+    pub state: MembershipState,
+    pub active_log: Option<MeshLogId>,
     timeout: Duration,
 }
 
@@ -279,11 +346,21 @@ impl PeerEvent {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Copy)]
 pub enum MembershipState {
     Ready { since: Timestamp },
     NotReady { since: Timestamp },
     Unavailable { since: Timestamp },
+}
+
+impl MembershipState {
+    pub fn get_since(&self) -> u64 {
+        match self {
+            MembershipState::Ready { since } => *since,
+            MembershipState::NotReady { since } => *since,
+            MembershipState::Unavailable { since } => *since,
+        }
+    }
 }
 
 impl std::fmt::Display for MembershipState {

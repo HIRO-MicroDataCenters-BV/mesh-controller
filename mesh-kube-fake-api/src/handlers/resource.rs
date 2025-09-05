@@ -1,6 +1,3 @@
-use std::collections::HashMap;
-use std::{collections::BTreeMap, sync::Arc};
-
 use anyhow::Context;
 use anyhow::anyhow;
 use bytes::Bytes;
@@ -10,6 +7,8 @@ use kube::client::Status;
 use kube::core::ErrorResponse;
 use kube::core::response::StatusDetails;
 use kube::core::response::StatusSummary;
+use std::collections::HashMap;
+use std::{collections::BTreeMap, sync::Arc};
 use tracing::info;
 
 use crate::dynamic_object_ext::DynamicObjectExt;
@@ -171,6 +170,36 @@ impl ApiHandler for ResourceHandler {
                     .patch(&group, &version, &kind_plural, &name, object)
                     .await
             };
+
+            maybe_response.and_then(|response| ApiResponse::try_from(StatusCode::OK, response))
+        })
+    }
+
+    fn post(&self, request: ResourceArgs) -> ApiHandlerResponse {
+        let storage = self.storage.clone();
+
+        Box::pin(async move {
+            let ResourceArgs {
+                group,
+                version,
+                kind_plural,
+                input,
+                resource_name,
+                ..
+            } = request;
+
+            let mut object: DynamicObject =
+                serde_json::from_slice(&input).context("Failed to deserialize input body")?;
+
+            if resource_name.is_none() && object.metadata.name.is_none() {
+                object.generate_name();
+            }
+
+            let name = resource_name.unwrap_or(object.get_namespaced_name());
+
+            let maybe_response = storage
+                .patch(&group, &version, &kind_plural, &name, object)
+                .await;
 
             maybe_response.and_then(|response| ApiResponse::try_from(StatusCode::OK, response))
         })

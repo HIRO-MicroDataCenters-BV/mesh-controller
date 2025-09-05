@@ -1,4 +1,5 @@
-use crate::{JoinErrToStr, client::kube_client::KubeClient};
+use crate::JoinErrToStr;
+use crate::client::KubeClient;
 
 use super::{event::KubeEvent, subscription::Subscription};
 use anyhow::Result;
@@ -141,7 +142,7 @@ pub fn object_not_found(results: &Result<DynamicObject, Error>) -> bool {
 pub mod tests {
 
     use super::*;
-    use crate::{kube::dynamic_object_ext::DynamicObjectExt, tracing::setup_tracing};
+    use crate::kube::dynamic_object_ext::DynamicObjectExt;
     use anyapplication::anyapplication::*;
     use anyhow::anyhow;
     use fake_kube_api::service::FakeEtcdServiceWrapper;
@@ -152,8 +153,6 @@ pub mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_receive_snapshot() {
-        setup_tracing(Some("=TRACE".to_string()));
-
         let service = FakeEtcdServiceWrapper::new();
 
         let gvk = GroupVersionKind::gvk("dcp.hiro.io", "v1", "AnyApplication");
@@ -189,8 +188,6 @@ pub mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn test_create() {
-        setup_tracing(Some("=TRACE".to_string()));
-
         let service = FakeEtcdServiceWrapper::new();
 
         let gvk = GroupVersionKind::gvk("dcp.hiro.io", "v1", "AnyApplication");
@@ -219,8 +216,6 @@ pub mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn test_update() {
-        setup_tracing(Some("=TRACE".to_string()));
-
         let service = FakeEtcdServiceWrapper::new();
         let resource = anyapplication();
         let resource_name = resource.get_namespaced_name();
@@ -267,8 +262,6 @@ pub mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn test_delete() {
-        setup_tracing(Some("=TRACE".to_string()));
-
         let service = FakeEtcdServiceWrapper::new();
         let resource = anyapplication();
         let resource_name = resource.get_namespaced_name();
@@ -303,8 +296,6 @@ pub mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_lifecycle() {
-        setup_tracing(Some("=TRACE".to_string()));
-
         let service = FakeEtcdServiceWrapper::new();
 
         let test_labels: BTreeMap<String, String> =

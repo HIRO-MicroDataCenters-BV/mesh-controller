@@ -5,8 +5,8 @@ use std::{collections::BTreeMap, sync::atomic::AtomicU64};
 use crate::dynamic_object_ext::{DynamicObjectExt, NamespacedName};
 use anyhow::{Result, anyhow, bail};
 use dashmap::DashMap;
-use futures::Stream;
 use futures::StreamExt;
+use futures::{Stream, future};
 use kube::api::{ApiResource, DynamicObject, GroupVersionKind, WatchEvent};
 use kube::error::ErrorResponse;
 use tokio::sync::RwLock;
@@ -145,11 +145,12 @@ impl Storage {
 
         let existing_events = futures::stream::iter(items);
 
-        let event_rx = self.event_tx.subscribe();
-        let events = BroadcastStream::new(event_rx).map(|result| match result {
-            Ok(event) => event,
-            Err(e) => watch_event_error(e),
-        });
+        let events = BroadcastStream::new(self.event_tx.subscribe())
+            .map(|result| match result {
+                Ok(event) => event,
+                Err(e) => watch_event_error(e),
+            })
+            .filter(move |e| future::ready(match_gvk(e, &gvk)));
         Ok(existing_events.chain(events).boxed())
     }
 

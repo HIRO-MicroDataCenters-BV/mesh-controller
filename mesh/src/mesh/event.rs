@@ -1,12 +1,12 @@
 use std::{collections::BTreeMap, fmt::Display};
 
 use kube::api::DynamicObject;
+use meshkube::kube::{
+    dynamic_object_ext::DynamicObjectExt, subscriptions::Version, types::NamespacedName,
+};
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    kube::{dynamic_object_ext::DynamicObjectExt, subscriptions::Version, types::NamespacedName},
-    merge::types::UpdateResult,
-};
+use crate::merge::types::UpdateResult;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum MeshEvent {
