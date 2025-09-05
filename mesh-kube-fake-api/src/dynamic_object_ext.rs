@@ -52,9 +52,17 @@ impl DynamicObjectExt for DynamicObject {
     }
 
     fn generate_name(&mut self) {
-        let token = self.metadata.generate_name.as_deref().unwrap_or("generated");
+        let token = self
+            .metadata
+            .generate_name
+            .as_deref()
+            .unwrap_or("generated");
         let rng = rand::rng();
-        let random_token: String = rng.sample_iter(rand::distr::Alphanumeric).take(16).map(char::from).collect();
+        let random_token: String = rng
+            .sample_iter(rand::distr::Alphanumeric)
+            .take(16)
+            .map(char::from)
+            .collect();
         let name = format!("{}-{}", token, random_token);
         self.metadata.name = Some(name);
     }

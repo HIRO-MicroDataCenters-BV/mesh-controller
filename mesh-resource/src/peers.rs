@@ -7,7 +7,7 @@ use crate::{
 };
 use k8s_openapi::api::core::v1::Event;
 use k8s_openapi::api::core::v1::ObjectReference;
-
+use std::env;
 use meshkube::event::{EventType, create_event};
 
 pub fn update(peer: &mut MeshPeer, peer_state: &PeerState) {
@@ -62,12 +62,15 @@ pub fn create_mesh_event(object_ref: ObjectReference, update: &PeerState) -> Eve
         PeerStatus::NotReady => ("Peer is not ready".into(), EventType::Warning),
         PeerStatus::Unavailable => ("Peer is unavailable".into(), EventType::Warning),
     };
+    let reporting_instance = env::var("POD_NAME").unwrap_or_else(|_| "mesh_controller".to_string());
     create_event(
         object_ref,
         event_type,
         Some("PeerStateChange".into()),
         Some(message),
-        Some("mesh-controller".into()),
+        "dcp.hiro.io/mesh-controller".into(),
+        reporting_instance,
+        "Processing".into(),
         update.update_timestamp,
     )
 }

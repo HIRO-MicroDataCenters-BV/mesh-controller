@@ -107,8 +107,7 @@ impl MeshPeerResourceActor {
         let name = NamespacedName::new(self.namespace.to_owned(), incoming.peer_id.to_owned());
         let maybe_peer = self.client.get(&self.gvk, &name).await?;
         let mut mesh_peer: MeshPeer = if let Some(peer) = maybe_peer {
-            peer.try_parse()
-                .map_err(ClientError::ResourceFormatError)?
+            peer.try_parse().map_err(ClientError::ResourceFormatError)?
         } else {
             Self::create_peer(&incoming.peer_id, &name.namespace)
         };

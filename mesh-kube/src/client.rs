@@ -271,10 +271,7 @@ impl KubeClient {
     pub async fn emit_event(&self, event: k8s_openapi::api::core::v1::Event) -> Result<()> {
         use k8s_openapi::api::core::v1::Event;
 
-        let ns = event
-            .metadata
-            .namespace.as_deref()
-            .unwrap_or("default");
+        let ns = event.metadata.namespace.as_deref().unwrap_or("default");
         let events: kube::Api<Event> = kube::Api::namespaced(self.client.clone(), ns);
 
         events.create(&Default::default(), &event).await?;

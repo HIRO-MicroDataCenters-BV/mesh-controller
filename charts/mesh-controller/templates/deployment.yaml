@@ -63,6 +63,10 @@ spec:
                 secretKeyRef:
                   key:  secretKey
                   name: {{ .Release.Name }}-key
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name                  
       volumes:
         - name: configuration
           configMap:

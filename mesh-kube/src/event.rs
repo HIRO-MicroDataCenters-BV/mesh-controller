@@ -1,20 +1,19 @@
 use chrono::{TimeZone, Utc};
 use k8s_openapi::api::core::v1::Event;
-use k8s_openapi::api::core::v1::{EventSource, ObjectReference};
+use k8s_openapi::api::core::v1::ObjectReference;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::MicroTime;
 
+#[allow(clippy::too_many_arguments)]
 pub fn create_event(
     object_ref: ObjectReference,
     event_type: EventType,
     reason: Option<String>,
     message: Option<String>,
-    source_component: Option<String>,
+    reporting_component: String,
+    reporting_instance: String,
+    action: String,
     timestamp: u64,
 ) -> Event {
-    let source = source_component.map(|component| EventSource {
-        component: Some(component),
-        ..Default::default()
-    });
     let event_name = object_ref.name.to_owned().unwrap_or("unspecified".into());
 
     Event {
@@ -27,8 +26,11 @@ pub fn create_event(
         reason,
         message,
         type_: Some(event_type.to_string()),
-        source,
+        source: None,
         event_time: Some(timestamp.to_time()),
+        reporting_component: Some(reporting_component),
+        reporting_instance: Some(reporting_instance),
+        action: Some(action),
         ..Default::default()
     }
 }

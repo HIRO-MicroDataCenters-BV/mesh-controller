@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-use std::{collections::BTreeMap, sync::Arc};
 use anyhow::Context;
 use anyhow::anyhow;
 use bytes::Bytes;
@@ -9,6 +7,8 @@ use kube::client::Status;
 use kube::core::ErrorResponse;
 use kube::core::response::StatusDetails;
 use kube::core::response::StatusSummary;
+use std::collections::HashMap;
+use std::{collections::BTreeMap, sync::Arc};
 use tracing::info;
 
 use crate::dynamic_object_ext::DynamicObjectExt;
