@@ -2,17 +2,10 @@ use anyhow::{Context, Result};
 use chrono::TimeZone;
 use chrono::Utc;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::Time;
+pub use kube::CustomResource;
 use kube::api::DynamicObject;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-
-#[allow(unused_imports)]
-mod prelude {
-    pub use kube::CustomResource;
-    pub use schemars::JsonSchema;
-    pub use serde::{Deserialize, Serialize};
-}
-use self::prelude::*;
 
 #[derive(CustomResource, Serialize, Deserialize, Clone, Debug, JsonSchema, PartialEq)]
 #[kube(

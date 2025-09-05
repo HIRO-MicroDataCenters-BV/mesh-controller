@@ -13,6 +13,7 @@ use tokio::task::JoinError;
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 
 pub struct MeshStatus {
+    // Holds the abort handle for the actor task. Dropping this field will abort the background actor task.
     #[allow(dead_code)]
     actor_drop_handle: Shared<MapErr<AbortOnDropHandle<()>, JoinErrToStr>>,
     actor_tx: mpsc::Sender<ToNodeActor>,

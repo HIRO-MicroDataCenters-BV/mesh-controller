@@ -145,8 +145,7 @@ impl Storage {
 
         let existing_events = futures::stream::iter(items);
 
-        let event_rx = self.event_tx.subscribe();
-        let events = BroadcastStream::new(event_rx)
+        let events = BroadcastStream::new(self.event_tx.subscribe())
             .map(|result| match result {
                 Ok(event) => event,
                 Err(e) => watch_event_error(e),
