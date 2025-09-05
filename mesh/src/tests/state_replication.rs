@@ -88,6 +88,9 @@ pub fn create_two_node_mesh() -> Result<TwoNodeMesh> {
     let gvk_mesh = GroupVersionKind::gvk("dcp.hiro.io", "v1", "MeshPeer");
     let ar_mesh = ApiResource::from_gvk(&gvk_mesh);
 
+    let gvk_event = GroupVersionKind::gvk("", "v1", "Event");
+    let ar_event = ApiResource::from_gvk(&gvk_event);
+
     let kube_config1 = generate_kube_config("context1");
     let kube_config2 = generate_kube_config("context2");
 
@@ -99,8 +102,10 @@ pub fn create_two_node_mesh() -> Result<TwoNodeMesh> {
     test_runtime.block_on(async {
         etcd_service2.service.register(&ar).await;
         etcd_service2.service.register(&ar_mesh).await;
+        etcd_service2.service.register(&ar_event).await;
         etcd_service1.service.register(&ar).await;
         etcd_service1.service.register(&ar_mesh).await;
+        etcd_service1.service.register(&ar_event).await;
     });
 
     let mut config1 = generate_config("zone1", &kube_config1, &gvk);

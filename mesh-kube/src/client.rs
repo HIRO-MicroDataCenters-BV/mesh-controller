@@ -273,9 +273,7 @@ impl KubeClient {
 
         let ns = event
             .metadata
-            .namespace
-            .as_ref()
-            .map(|s| s.as_str())
+            .namespace.as_deref()
             .unwrap_or("default");
         let events: kube::Api<Event> = kube::Api::namespaced(self.client.clone(), ns);
 

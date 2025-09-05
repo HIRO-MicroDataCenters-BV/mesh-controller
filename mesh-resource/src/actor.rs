@@ -93,7 +93,7 @@ impl MeshPeerResourceActor {
         let mut attempts = 10;
         let mut result = Err(ClientError::VersionConflict);
         while attempts > 0 {
-            result = self.update_resource(&incoming).await;
+            result = self.update_resource(incoming).await;
             match &result {
                 Err(ClientError::VersionConflict) => (),
                 Ok(_) | Err(_) => return result,
@@ -108,12 +108,12 @@ impl MeshPeerResourceActor {
         let maybe_peer = self.client.get(&self.gvk, &name).await?;
         let mut mesh_peer: MeshPeer = if let Some(peer) = maybe_peer {
             peer.try_parse()
-                .map_err(|e| ClientError::ResourceFormatError(e))?
+                .map_err(ClientError::ResourceFormatError)?
         } else {
             Self::create_peer(&incoming.peer_id, &name.namespace)
         };
 
-        update(&mut mesh_peer, &incoming);
+        update(&mut mesh_peer, incoming);
         let object_ref = mesh_peer.object_ref(&());
 
         let object = mesh_peer.to_owned().to_object()?;
@@ -123,7 +123,7 @@ impl MeshPeerResourceActor {
     }
 
     async fn emit_event(&self, object_ref: ObjectReference, update: &PeerState) -> Result<()> {
-        let event = create_mesh_event(object_ref, &update);
+        let event = create_mesh_event(object_ref, update);
         self.client.emit_event(event).await
     }
 
