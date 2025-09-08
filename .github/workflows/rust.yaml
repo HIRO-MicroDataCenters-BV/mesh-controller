@@ -83,9 +83,10 @@ jobs:
       # build speedups
       - uses: Swatinem/rust-cache@v2    
 
+      - uses: psastras/sbom-rs/actions/install-cargo-sbom@cargo-sbom-latest   
+
       - name: Run cargo-sbom
-        uses: psastras/sbom-rs/actions/install-cargo-sbom@cargo-sbom-latest   
-        run: cargo sbom --output-format=cyclone_dx_json_1_6 > sbom.cdx.json
+        run: cargo-sbom --output-format=cyclone_dx_json_1_6 > sbom.cdx.json
 
       # - name: OSV scanner
       #   uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@v2.2.1
