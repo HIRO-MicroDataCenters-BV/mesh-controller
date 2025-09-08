@@ -127,7 +127,7 @@ impl Partition {
             MergeResult::Create { object } | MergeResult::Update { object, .. } => {
                 self.resources.insert(
                     object.get_namespaced_name(),
-                    VersionedObject::Object(object.clone()),
+                    VersionedObject::Object(object.clone().into()),
                 );
             }
             MergeResult::Delete(tombstone) => {
@@ -260,7 +260,7 @@ impl Partition {
             else {
                 continue;
             };
-            snapshot.insert(name, object.to_owned());
+            snapshot.insert(name, object.as_ref().to_owned());
         }
         self.zone_version = Version::max(self.zone_version, version);
         MeshEvent::Snapshot {
@@ -370,7 +370,7 @@ impl Partition {
                 );
                 self.resources.insert(
                     object.get_namespaced_name(),
-                    VersionedObject::Object(object.clone()),
+                    VersionedObject::Object(object.clone().into()),
                 );
             }
             UpdateResult::Update { object, .. } => {
@@ -381,7 +381,7 @@ impl Partition {
                 );
                 self.resources.insert(
                     object.get_namespaced_name(),
-                    VersionedObject::Object(object.clone()),
+                    VersionedObject::Object(object.clone().into()),
                 );
             }
             UpdateResult::Delete {
@@ -473,8 +473,10 @@ impl Partition {
             .filter(|(_, v)| !self.merge_strategy.is_owner_zone_object(v, current_zone))
             .for_each(|(name, object)| {
                 if !self.resources.contains_key(name) {
-                    self.resources
-                        .insert(name.to_owned(), VersionedObject::Object(object.to_owned()));
+                    self.resources.insert(
+                        name.to_owned(),
+                        VersionedObject::Object(object.to_owned().into()),
+                    );
                 }
             });
 
@@ -535,7 +537,7 @@ impl Partition {
         self.resources
             .get(name)
             .map(|v| match v {
-                VersionedObject::Object(obj) => Some(obj.to_owned()),
+                VersionedObject::Object(obj) => Some(obj.as_ref().to_owned()),
                 VersionedObject::NonExisting | VersionedObject::Tombstone(_) => None,
             })
             .unwrap_or_default()
@@ -691,10 +693,10 @@ pub mod tests {
             actual_change_result,
             vec![MergeResult::Update {
                 object: app_a1_expected,
-                event: Some(MeshEvent::Update {
+                event: Box::new(Some(MeshEvent::Update {
                     version: 0,
                     object: event
-                })
+                }))
             }]
         )
     }
@@ -818,7 +820,7 @@ pub mod tests {
             },
             MergeResult::Update {
                 object: app_b1.to_owned(),
-                event: None,
+                event: Box::new(None),
             },
         ];
         assert_eq!(
@@ -1641,7 +1643,7 @@ pub mod tests {
             object.set_resource_version(self.resource_version);
             MergeResult::Update {
                 object: object.to_owned(),
-                event: None,
+                event: Box::new(None),
             }
         }
 

@@ -220,9 +220,10 @@ impl OperationLog {
                             let mut i = ops.len() - 1;
                             while i > 0 {
                                 if let Some(ext) = &ops[i].header.extensions
-                                    && ext.prune_flag.is_set() {
-                                        break;
-                                    }
+                                    && ext.prune_flag.is_set()
+                                {
+                                    break;
+                                }
                                 i -= 1;
                             }
                             if i != 0 {

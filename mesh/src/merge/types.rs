@@ -14,7 +14,7 @@ pub enum MergeResult {
     },
     Update {
         object: DynamicObject,
-        event: Option<MeshEvent>,
+        event: Box<Option<MeshEvent>>,
     },
     Delete(Tombstone),
     Tombstone(Tombstone),
@@ -69,13 +69,13 @@ pub struct Tombstone {
 #[derive(Clone, Debug, PartialEq)]
 pub enum VersionedObject {
     NonExisting,
-    Object(DynamicObject),
+    Object(Box<DynamicObject>),
     Tombstone(Tombstone),
 }
 
 impl From<DynamicObject> for VersionedObject {
     fn from(val: DynamicObject) -> Self {
-        VersionedObject::Object(val)
+        VersionedObject::Object(val.into())
     }
 }
 

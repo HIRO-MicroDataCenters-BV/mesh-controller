@@ -296,8 +296,8 @@ impl PeerState {
                 Some(MembershipState::NotReady { since: now })
             }
         };
-        if new_state.is_some() {
-            self.state = new_state.unwrap();
+        if let Some(new_state) = new_state {
+            self.state = new_state;
             let active_log_id = self
                 .active_log
                 .as_ref()

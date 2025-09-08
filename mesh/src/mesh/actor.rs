@@ -267,9 +267,10 @@ impl MeshActor {
     ) {
         if let Some(MembershipUpdate { membership, peers }) = maybe_updated_membership {
             if !self.membership.is_equal(&membership)
-                && let Err(err) = self.on_membership_change(span, membership).await {
-                    error!(parent: span, "membership change error {err:?}");
-                }
+                && let Err(err) = self.on_membership_change(span, membership).await
+            {
+                error!(parent: span, "membership change error {err:?}");
+            }
             if !peers.is_empty() {
                 let peer_states = peers.into_iter().map(|p| p.into()).collect();
                 if let Err(err) = self.mesh_status.update(peer_states).await {
@@ -461,7 +462,7 @@ impl MeshActor {
 
     async fn on_merge_result(&mut self, span: &Span, merge_result: MergeResult) -> Result<()> {
         let event = if let MergeResult::Update { event, .. } = &merge_result {
-            event.clone()
+            event.as_ref().clone()
         } else {
             None
         };
