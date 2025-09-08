@@ -356,9 +356,8 @@ impl MergeStrategy for AnyApplicationMerge {
                     .first()
                     .cloned()
                     .or(membership.default_owner())
-                {
-                    if instance.zone == node_zone {
-                        if let Some(status) = &mut current.status {
+                    && instance.zone == node_zone
+                        && let Some(status) = &mut current.status {
                             status.ownership.owner = instance.zone.to_owned();
                             status.ownership.epoch += 1;
                             debug!(parent: span, %name, "taking over ownership: new epoch = {}", status.ownership.epoch);
@@ -374,8 +373,6 @@ impl MergeStrategy for AnyApplicationMerge {
                                 }),
                             }]);
                         }
-                    }
-                }
                 Ok(vec![])
             }
             VersionedObject::NonExisting | VersionedObject::Tombstone(_) => Ok(vec![]),
@@ -462,12 +459,11 @@ impl AnyApplicationMerge {
         {
             let mut updated = false;
             let maybe_merged_zones = self.merge_zone_statuses(&current.status, &incoming.status);
-            if let Some(zones) = maybe_merged_zones {
-                if let Some(status) = current.status.as_mut() {
+            if let Some(zones) = maybe_merged_zones
+                && let Some(status) = current.status.as_mut() {
                     status.zones = Some(zones);
                     updated = true;
                 };
-            }
             if updated {
                 debug!(parent: span, %name, "owner merge local zone statuses");
                 let object = current.to_object()?;
@@ -660,19 +656,17 @@ impl AnyApplicationMerge {
         let merged_placements =
             self.merge_placements_into_current(&current.status, &incoming.status);
 
-        if let Some(zones) = maybe_merged_zones {
-            if let Some(status) = current.status.as_mut() {
+        if let Some(zones) = maybe_merged_zones
+            && let Some(status) = current.status.as_mut() {
                 status.zones = Some(zones);
                 updated = true;
             };
-        }
 
-        if let Some(placements) = merged_placements {
-            if let Some(status) = current.status.as_mut() {
+        if let Some(placements) = merged_placements
+            && let Some(status) = current.status.as_mut() {
                 status.ownership.placements = Some(placements);
                 updated = true;
             };
-        }
 
         if updated { Some(current) } else { None }
     }

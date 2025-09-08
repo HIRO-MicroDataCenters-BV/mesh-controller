@@ -266,11 +266,10 @@ impl MeshActor {
         maybe_updated_membership: Option<MembershipUpdate>,
     ) {
         if let Some(MembershipUpdate { membership, peers }) = maybe_updated_membership {
-            if !self.membership.is_equal(&membership) {
-                if let Err(err) = self.on_membership_change(span, membership).await {
+            if !self.membership.is_equal(&membership)
+                && let Err(err) = self.on_membership_change(span, membership).await {
                     error!(parent: span, "membership change error {err:?}");
                 }
-            }
             if !peers.is_empty() {
                 let peer_states = peers.into_iter().map(|p| p.into()).collect();
                 if let Err(err) = self.mesh_status.update(peer_states).await {
