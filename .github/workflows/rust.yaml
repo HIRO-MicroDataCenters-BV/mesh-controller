@@ -89,5 +89,6 @@ jobs:
       - name: Run cargo-sbom
         run: cargo-sbom --output-format=cyclone_dx_json_1_6 > sbom.cdx.json
 
-      - name: OSV scanner
-        uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@v2.2.1
+  osv-scanner:    
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@v2.2.1
+    needs: [sbom]
