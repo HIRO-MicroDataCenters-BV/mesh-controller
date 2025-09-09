@@ -81,7 +81,7 @@ jobs:
           channel: ${{ env.RUST_TOOLCHAIN }}
 
       - name: Install SBOM
-        uses: psastras/sbom-rs/actions/install-cargo-sbom@cargo-sbom-latest   
+        uses: psastras/sbom-rs/actions/install-cargo-sbom@cargo-sbom-v0.10.0
 
       # build speedups
       - uses: Swatinem/rust-cache@v2    
