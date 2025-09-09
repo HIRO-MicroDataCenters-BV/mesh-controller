@@ -78,13 +78,13 @@ jobs:
         uses: moonrepo/setup-rust@v1
         with:
           cache: false
-          components: cargo-sbom
           channel: ${{ env.RUST_TOOLCHAIN }}
+
+      - name: Install SBOM
+        uses: psastras/sbom-rs/actions/install-cargo-sbom@cargo-sbom-latest   
 
       # build speedups
       - uses: Swatinem/rust-cache@v2    
-
-      # - uses: psastras/sbom-rs/actions/install-cargo-sbom@cargo-sbom-latest   
 
       - name: Run cargo-sbom
         run: cargo-sbom --output-format=cyclone_dx_json_1_6 > sbom.cdx.json
