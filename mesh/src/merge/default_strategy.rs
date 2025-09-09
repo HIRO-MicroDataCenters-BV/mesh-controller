@@ -28,7 +28,7 @@ impl MergeStrategy for DefaultMerge {
     ) -> Result<MergeResult> {
         match current {
             VersionedObject::Object(current) => {
-                self.mesh_update_update(current, incoming, incoming_zone)
+                self.mesh_update_update(current.as_ref().to_owned(), incoming, incoming_zone)
             }
             VersionedObject::NonExisting => self.mesh_update_create(incoming, incoming_zone),
             VersionedObject::Tombstone(tombstone) => {
@@ -295,7 +295,7 @@ impl DefaultMerge {
             });
             Ok(MergeResult::Update {
                 object,
-                event: None,
+                event: Box::new(None),
             })
         } else {
             Ok(MergeResult::Skip)
@@ -479,7 +479,7 @@ pub mod tests {
         assert_eq!(
             MergeResult::Update {
                 object: incoming.to_owned(),
-                event: None,
+                event: Box::new(None),
             },
             DefaultMerge::new(gvk)
                 .mesh_update(&span, current.into(), incoming, "test", "test", &membership)

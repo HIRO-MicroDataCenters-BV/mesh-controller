@@ -219,10 +219,10 @@ impl OperationLog {
                         if !ops.is_empty() {
                             let mut i = ops.len() - 1;
                             while i > 0 {
-                                if let Some(ext) = &ops[i].header.extensions {
-                                    if ext.prune_flag.is_set() {
-                                        break;
-                                    }
+                                if let Some(ext) = &ops[i].header.extensions
+                                    && ext.prune_flag.is_set()
+                                {
+                                    break;
                                 }
                                 i -= 1;
                             }

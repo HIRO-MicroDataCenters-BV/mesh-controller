@@ -1,0 +1,7 @@
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0384"
+reason = "Low risk"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0436"
+reason = "Low risk"
