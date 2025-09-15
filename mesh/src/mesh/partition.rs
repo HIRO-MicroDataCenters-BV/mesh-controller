@@ -4,7 +4,10 @@ use std::{
 };
 
 use super::event::MeshEvent;
-use crate::merge::types::{MergeResult, MergeStrategy, UpdateResult};
+use crate::{
+    merge::types::{MergeResult, MergeStrategy, UpdateResult},
+    metrics::{increment_applied_event_total, increment_applied_snapshot_total},
+};
 use crate::{
     merge::types::{Tombstone, VersionedObject},
     network::discovery::types::Membership,
@@ -77,6 +80,12 @@ impl Partition {
 
                 self.mesh_update_partition(&result);
                 self.mesh_update_zone_version(incoming_zone, version);
+                increment_applied_event_total(
+                    current_zone,
+                    incoming_zone,
+                    &name.name,
+                    &name.namespace,
+                );
                 Ok(vec![result])
             }
             MeshEvent::Delete {
@@ -102,6 +111,12 @@ impl Partition {
                 )?;
                 self.mesh_update_partition(&result);
                 self.mesh_update_zone_version(incoming_zone, version);
+                increment_applied_event_total(
+                    current_zone,
+                    incoming_zone,
+                    &name.name,
+                    &name.namespace,
+                );
                 Ok(vec![result])
             }
             MeshEvent::Snapshot { snapshot, version } => {
@@ -117,6 +132,7 @@ impl Partition {
                     membership,
                 )?;
                 self.mesh_update_zone_version(incoming_zone, version);
+                increment_applied_snapshot_total(current_zone, incoming_zone);
                 Ok(apply_result)
             }
         }

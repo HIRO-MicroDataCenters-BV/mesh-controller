@@ -12,6 +12,11 @@ use crate::mesh::operation_ext::OperationExt;
 use crate::mesh::operation_log::OperationLog;
 use crate::mesh::operation_log::Ready;
 use crate::mesh::topic::MeshTopic;
+use crate::metrics::increment_membership_change_total;
+use crate::metrics::increment_network_message_broadcasted_total;
+use crate::metrics::increment_network_message_received_total;
+use crate::metrics::increment_new_log_discovered_total;
+use crate::metrics::set_operation_applied_seqnr;
 use crate::network::discovery::nodes::Nodes;
 use crate::network::discovery::nodes::PeerEvent;
 use crate::network::discovery::types::Membership;
@@ -283,6 +288,7 @@ impl MeshActor {
     async fn on_membership_change(&mut self, span: &Span, membership: Membership) -> Result<()> {
         self.membership = membership;
         debug!(parent: span, "membership update: {}", self.membership.to_string());
+        increment_membership_change_total(&self.instance_id.zone);
         let merge_results = self.partition.mesh_onchange_membership(
             span,
             &self.membership,
@@ -345,6 +351,7 @@ impl MeshActor {
         };
 
         let incoming_log_id = extensions.log_id.clone();
+        increment_network_message_received_total(&self.instance_id.zone, &incoming_log_id.0.zone);
 
         let UpdateLogIdResult {
             is_obsolete_operation,
@@ -362,6 +369,7 @@ impl MeshActor {
         }
         if is_new_log {
             debug!(parent: span, instance_id = ?incoming_log_id.0.to_string(), "new log detected");
+            increment_new_log_discovered_total(&self.instance_id.zone, &incoming_log_id.0.zone);
             let membership = self
                 .nodes
                 .get_membership_update(self.clock.now_millis(), &[peer]);
@@ -443,6 +451,7 @@ impl MeshActor {
                     debug!(parent: &span, "merge result: {:?}", event_types);
                     self.on_merge_results(&span, merge_results).await;
                     self.operation_log.advance_log_pointer(&log_id, pointer + 1);
+                    set_operation_applied_seqnr(&self.own_log_id.0.zone, &log_id.0.zone, pointer);
                 } else {
                     error!(parent: span, "event has no body");
                 }
@@ -708,6 +717,7 @@ impl MeshActor {
 
     fn network_send(&mut self, operation: Operation<Extensions>) {
         if let Some(network_tx) = &mut self.network_tx {
+            increment_network_message_broadcasted_total(&self.instance_id.zone);
             network_tx.send(operation).ok();
         }
     }

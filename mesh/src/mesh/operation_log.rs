@@ -1,6 +1,9 @@
 use std::collections::{BTreeMap, HashMap};
 
-use crate::mesh::{operation_ext::OperationExt, operations::Extensions, topic::MeshLogId};
+use crate::{
+    mesh::{operation_ext::OperationExt, operations::Extensions, topic::MeshLogId},
+    metrics::set_operation_received_seqnr,
+};
 use anyhow::Result;
 use p2panda_core::{Operation, PublicKey};
 use p2panda_store::{LogStore, MemoryStore};
@@ -46,11 +49,15 @@ impl OperationLog {
         };
 
         let log_id = extensions.log_id.clone();
-
         let result = self.insert_internal(span, operation).await?;
         match result {
             IngestResult::Complete(op) => {
                 debug!(parent: span, id = ?op_id, "insert operation");
+                set_operation_received_seqnr(
+                    &self.own_log_id.0.zone,
+                    &log_id.0.zone,
+                    op.header.seq_num,
+                );
                 if log_id != self.own_log_id {
                     self.replay_pending_inserts(
                         span,
@@ -130,11 +137,14 @@ impl OperationLog {
             return Ok(());
         }
         for operation in batch {
+            let seq_nr = operation.header.seq_num;
             match self.insert_internal(span, operation).await? {
                 IngestResult::Complete(operation) => {
+                    set_operation_received_seqnr(&self.own_log_id.0.zone, &key.1.0.zone, seq_nr);
                     let Some(pending) = self.incoming_pending.get_mut(key) else {
                         break;
                     };
+
                     pending.remove(&operation.header.seq_num);
                 }
                 IngestResult::Retry(_, _, _, _) => {
