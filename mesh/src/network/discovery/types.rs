@@ -30,6 +30,10 @@ impl Membership {
         self.instances.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.instances.is_empty()
+    }
+
     pub fn add(&mut self, instance: InstanceId) {
         self.instances.insert(instance.zone.to_owned(), instance);
     }
