@@ -12,7 +12,7 @@ pub const LABEL_NAMESPACE: &str = "namespace";
 
 /// Metrics
 pub const NEW_LOG_DISCOVERED_TOTAL: &str = "mc_new_log_discovered_total";
-pub const LAST_MESSAGE_TIMESTAMP: &str = "mc_last_message_timestamp"; //TODO
+pub const LAST_MESSAGE_TIMESTAMP: &str = "mc_last_message_timestamp";
 pub const OPERATION_RECEIVED_SEQNR: &str = "mc_operation_received_seqnr";
 pub const OPERATION_APPLIED_SEQNR: &str = "mc_operation_applied_seqnr";
 pub const NETWORK_MESSAGE_RECEIVED_TOTAL: &str = "mc_network_message_received_total";
@@ -87,7 +87,7 @@ pub fn increment_network_message_broadcasted_total(zone: &str) {
 pub fn increment_applied_event_total(zone: &str, src_zone: &str, name: &str, namespace: &str) {
     metrics::counter!(
         APPLIED_EVENT_TOTAL,
-        LABEL_MSG_TYPE => LABEL_MSG_TYPE_SNAPSHOT,
+        LABEL_MSG_TYPE => LABEL_MSG_TYPE_EVENT,
         LABEL_ZONE => zone.to_owned(),
         LABEL_SRC_ZONE => src_zone.to_owned(),
         LABEL_NAME => name.to_owned(),
@@ -99,7 +99,7 @@ pub fn increment_applied_event_total(zone: &str, src_zone: &str, name: &str, nam
 pub fn increment_applied_snapshot_total(zone: &str, src_zone: &str) {
     metrics::counter!(
         APPLIED_SNAPSHOT_TOTAL,
-        LABEL_MSG_TYPE => LABEL_MSG_TYPE_EVENT,
+        LABEL_MSG_TYPE => LABEL_MSG_TYPE_SNAPSHOT,
         LABEL_ZONE => zone.to_owned(),
         LABEL_SRC_ZONE => src_zone.to_owned(),
     )
