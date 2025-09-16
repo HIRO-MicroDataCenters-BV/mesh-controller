@@ -16,7 +16,7 @@ spec:
       name: network
     # the port for the HTTP health endpoint
     - port: {{ .Values.services.health.port }}
-      targetPort: http
+      targetPort: {{ .Values.services.health.port }}
       protocol: TCP
       name: http
   selector:
