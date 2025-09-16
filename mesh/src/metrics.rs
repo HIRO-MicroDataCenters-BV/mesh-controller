@@ -23,6 +23,14 @@ pub const RESOURCES_TOTAL: &str = "mc_resources_total";
 pub const ACTIVE_PEER_TOTAL: &str = "mc_active_peers_total";
 pub const MEMBERSHIP_CHANGE_TOTAL: &str = "mc_membership_change_total";
 
+/// Errors
+pub const NETWORK_PROCESSING_ERRORS_TOTAL: &str = "mc_network_processing_error_total";
+pub const KUBE_PROCESSING_ERRORS_TOTAL: &str = "mc_kube_processing_error_total";
+pub const KUBE_FORCESYNC_ERRORS_TOTAL: &str = "mc_kube_forcesync_error_total";
+pub const TICK_PROCESSING_ERRORS_TOTAL: &str = "mc_tick_processing_error_total";
+
+pub const KUBEAPPLY_CONFLICTS_TOTAL: &str = "mc_kubeapply_conflicts_total";
+
 pub fn set_operation_received_seqnr(zone: &str, src_zone: &str, seq_nr: u64) {
     metrics::gauge!(
         OPERATION_RECEIVED_SEQNR,
@@ -117,6 +125,39 @@ pub fn set_active_peers_total(zone: &str, count: usize) {
 pub fn increment_membership_change_total(zone: &str) {
     metrics::counter!(
         MEMBERSHIP_CHANGE_TOTAL,
+        LABEL_ZONE => zone.to_owned(),
+    )
+    .increment(1);
+}
+
+/// Errors
+pub fn increment_network_processing_error_total(zone: &str) {
+    metrics::counter!(
+        NETWORK_PROCESSING_ERRORS_TOTAL,
+        LABEL_ZONE => zone.to_owned(),
+    )
+    .increment(1);
+}
+
+pub fn increment_kube_processing_error_total(zone: &str) {
+    metrics::counter!(
+        KUBE_PROCESSING_ERRORS_TOTAL,
+        LABEL_ZONE => zone.to_owned(),
+    )
+    .increment(1);
+}
+
+pub fn increment_tick_processing_error_total(zone: &str) {
+    metrics::counter!(
+        TICK_PROCESSING_ERRORS_TOTAL,
+        LABEL_ZONE => zone.to_owned(),
+    )
+    .increment(1);
+}
+
+pub fn increment_kubeapply_conflicts_total(zone: &str) {
+    metrics::counter!(
+        KUBEAPPLY_CONFLICTS_TOTAL,
         LABEL_ZONE => zone.to_owned(),
     )
     .increment(1);

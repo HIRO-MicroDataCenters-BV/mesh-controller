@@ -12,10 +12,14 @@ use crate::mesh::operation_ext::OperationExt;
 use crate::mesh::operation_log::OperationLog;
 use crate::mesh::operation_log::Ready;
 use crate::mesh::topic::MeshTopic;
+use crate::metrics::increment_kube_processing_error_total;
+use crate::metrics::increment_kubeapply_conflicts_total;
 use crate::metrics::increment_membership_change_total;
 use crate::metrics::increment_network_message_broadcasted_total;
 use crate::metrics::increment_network_message_received_total;
+use crate::metrics::increment_network_processing_error_total;
 use crate::metrics::increment_new_log_discovered_total;
+use crate::metrics::increment_tick_processing_error_total;
 use crate::metrics::set_active_peers_total;
 use crate::metrics::set_operation_applied_seqnr;
 use crate::network::discovery::nodes::Nodes;
@@ -166,18 +170,21 @@ impl MeshActor {
                 Some(event) = self.kube_events_rx.next() => {
                     let span = span!(Level::DEBUG, "kube_event", id = event.get_id());
                     if let Err(err) = self.on_outgoing_to_network(&span, event).await {
+                        increment_kube_processing_error_total(&self.own_log_id.0.zone);
                         error!(parent: &span, "error while processing kube event, {}", err);
                     }
                 }
                 Some(Ok(operation)) = self.network_rx.next() => {
                     let span = span!(Level::DEBUG, "incoming", op = %operation.get_id()?);
                     if let Err(err) = self.on_incoming_from_network(&span, operation).await {
+                        increment_network_processing_error_total(&self.own_log_id.0.zone);
                         error!(parent: &span, "error while processing network event, {}", err);
                     }
                 }
                 _ = interval.tick() => {
                     let span = span!(Level::DEBUG, "tick", ts = self.clock.now_millis().to_string());
                     if let Err(err) = self.on_tick(&span).await {
+                        increment_tick_processing_error_total(&self.own_log_id.0.zone);
                         error!(parent: &span, "error on tick, {}", err);
                     }
                 },
@@ -485,7 +492,10 @@ impl MeshActor {
                 gvk,
                 name,
                 operation_type,
-            }) => self.forced_sync(span, gvk, name, operation_type).await,
+            }) => {
+                increment_kubeapply_conflicts_total(&self.own_log_id.0.zone);
+                self.forced_sync(span, gvk, name, operation_type).await
+            }
             Ok(ok) => Ok(ok),
             Err(err) => Err(err),
         };
@@ -553,6 +563,7 @@ impl MeshActor {
                     let PersistenceResult::Conflict { .. } = persistence_result else {
                         return Ok(persistence_result);
                     };
+                    increment_kubeapply_conflicts_total(&self.own_log_id.0.zone);
                 } else {
                     debug!(parent: span, "forced_sync: resource does not exist. skipping...");
                     return Ok(PersistenceResult::Skipped);
