@@ -42,9 +42,9 @@ impl LinkedOperations {
         }
     }
 
-    pub fn next(&mut self, event: MeshEvent) -> Operation<Extensions> {
+    pub fn next(&mut self, event: MeshEvent, timestamp: u64) -> Operation<Extensions> {
         let is_snapshot = matches!(event, MeshEvent::Snapshot { .. });
-        let operation = self.make_operation(&event, is_snapshot);
+        let operation = self.make_operation(&event, is_snapshot, timestamp);
         if is_snapshot {
             self.last_snapshot_seq_num = self.seq_num;
         }
@@ -53,7 +53,12 @@ impl LinkedOperations {
         operation
     }
 
-    fn make_operation(&self, event: &MeshEvent, prune_flag: bool) -> Operation<Extensions> {
+    fn make_operation(
+        &self,
+        event: &MeshEvent,
+        prune_flag: bool,
+        timestamp: u64,
+    ) -> Operation<Extensions> {
         let body = Body::new(&event.to_bytes());
         let mut header = Header {
             version: 1,
@@ -61,7 +66,7 @@ impl LinkedOperations {
             signature: None,
             payload_size: body.size(),
             payload_hash: Some(body.hash()),
-            timestamp: 0,
+            timestamp,
             seq_num: self.seq_num,
             backlink: self.backlink,
             previous: vec![],
@@ -106,7 +111,7 @@ pub mod tests {
             snapshot: BTreeMap::new(),
             version: 1,
         };
-        let operation1 = linked_operations.next(event1.clone());
+        let operation1 = linked_operations.next(event1.clone(), 1);
         assert_eq!(operation1.header.backlink, None);
         assert_eq!(operation1.header.seq_num, 0);
         assert!(operation1.header.extensions.unwrap().prune_flag.is_set());
@@ -119,7 +124,7 @@ pub mod tests {
             object: make_object("test", 1, "data"),
             version: 1,
         };
-        let operation2 = linked_operations.next(event2.clone());
+        let operation2 = linked_operations.next(event2.clone(), 2);
         assert_eq!(operation2.header.backlink, Some(operation1.hash));
         assert_eq!(operation2.header.seq_num, 1);
         assert!(!operation2.header.extensions.unwrap().prune_flag.is_set());
@@ -132,7 +137,7 @@ pub mod tests {
             snapshot: BTreeMap::new(),
             version: 2,
         };
-        let operation3 = linked_operations.next(event3.clone());
+        let operation3 = linked_operations.next(event3.clone(), 3);
         assert_eq!(operation3.header.backlink, Some(operation2.hash));
         assert_eq!(operation3.header.seq_num, 2);
         assert!(operation3.header.extensions.unwrap().prune_flag.is_set());

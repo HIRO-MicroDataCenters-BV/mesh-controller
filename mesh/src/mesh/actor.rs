@@ -314,7 +314,7 @@ impl MeshActor {
         let event: Option<MeshEvent> = update_result.into();
 
         if let Some(event) = event {
-            let operation = self.operations.next(event);
+            let operation = self.operations.next(event, self.clock.now_millis());
             // No need to check for new log because the produced operation is for own log which never changes in current instance,
             // thus should never trigger any membership updates
             self.operation_log.insert(span, operation).await?;
@@ -494,7 +494,7 @@ impl MeshActor {
             (&final_ok_or_result, event)
         {
             event.set_zone_version(*version);
-            let operation = self.operations.next(event);
+            let operation = self.operations.next(event, self.clock.now_millis());
             debug!(parent: span, "inserting new event from persisted operation");
             // this insert into own log therefore no need to check for new logs and update membership
             self.operation_log.insert(span, operation).await?;
@@ -711,7 +711,7 @@ impl MeshActor {
         let event = self
             .partition
             .mesh_gen_snapshot(&self.instance_id.zone, version);
-        let operation = self.operations.next(event);
+        let operation = self.operations.next(event, self.clock.now_millis());
         self.on_incoming_from_network(span, operation).await?;
         self.last_snapshot_time = self.clock.now();
         Ok(())
