@@ -11,17 +11,17 @@ pub const LABEL_NAME: &str = "name";
 pub const LABEL_NAMESPACE: &str = "namespace";
 
 /// Metrics
-pub const NEW_LOG_DISCOVERED_TOTAL: &str = "new_log_discovered_total";
-pub const LAST_MESSAGE_TIMESTAMP: &str = "last_message_timestamp"; //TODO
-pub const OPERATION_RECEIVED_SEQNR: &str = "operation_received_seqnr";
-pub const OPERATION_APPLIED_SEQNR: &str = "operation_applied_seqnr";
-pub const NETWORK_MESSAGE_RECEIVED_TOTAL: &str = "network_message_received_total";
-pub const NETWORK_MESSAGE_BROADCASTED_TOTAL: &str = "network_message_broadcasted_total";
-pub const APPLIED_EVENT_TOTAL: &str = "applied_event_total";
-pub const APPLIED_SNAPSHOT_TOTAL: &str = "applied_shapshot_total";
-pub const RESOURCES_TOTAL: &str = "resources_total";
-pub const ACTIVE_PEER_TOTAL: &str = "active_peers_total";
-pub const MEMBERSHIP_CHANGE_TOTAL: &str = "membership_change_total";
+pub const NEW_LOG_DISCOVERED_TOTAL: &str = "mc_new_log_discovered_total";
+pub const LAST_MESSAGE_TIMESTAMP: &str = "mc_last_message_timestamp"; //TODO
+pub const OPERATION_RECEIVED_SEQNR: &str = "mc_operation_received_seqnr";
+pub const OPERATION_APPLIED_SEQNR: &str = "mc_operation_applied_seqnr";
+pub const NETWORK_MESSAGE_RECEIVED_TOTAL: &str = "mc_network_message_received_total";
+pub const NETWORK_MESSAGE_BROADCASTED_TOTAL: &str = "mc_network_message_broadcasted_total";
+pub const APPLIED_EVENT_TOTAL: &str = "mc_applied_event_total";
+pub const APPLIED_SNAPSHOT_TOTAL: &str = "mc_applied_shapshot_total";
+pub const RESOURCES_TOTAL: &str = "mc_resources_total";
+pub const ACTIVE_PEER_TOTAL: &str = "mc_active_peers_total";
+pub const MEMBERSHIP_CHANGE_TOTAL: &str = "mc_membership_change_total";
 
 pub fn set_operation_received_seqnr(zone: &str, src_zone: &str, seq_nr: u64) {
     metrics::gauge!(
