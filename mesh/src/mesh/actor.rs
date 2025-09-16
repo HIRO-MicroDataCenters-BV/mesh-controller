@@ -16,6 +16,7 @@ use crate::metrics::increment_membership_change_total;
 use crate::metrics::increment_network_message_broadcasted_total;
 use crate::metrics::increment_network_message_received_total;
 use crate::metrics::increment_new_log_discovered_total;
+use crate::metrics::set_active_peers_total;
 use crate::metrics::set_operation_applied_seqnr;
 use crate::network::discovery::nodes::Nodes;
 use crate::network::discovery::nodes::PeerEvent;
@@ -288,7 +289,6 @@ impl MeshActor {
     async fn on_membership_change(&mut self, span: &Span, membership: Membership) -> Result<()> {
         self.membership = membership;
         debug!(parent: span, "membership update: {}", self.membership.to_string());
-        increment_membership_change_total(&self.instance_id.zone);
         let merge_results = self.partition.mesh_onchange_membership(
             span,
             &self.membership,
@@ -296,6 +296,8 @@ impl MeshActor {
         )?;
         self.on_merge_results(span, merge_results).await;
         self.on_ready(span).await?;
+        increment_membership_change_total(&self.instance_id.zone);
+        set_active_peers_total(&self.instance_id.zone, self.membership.len());
         Ok(())
     }
 

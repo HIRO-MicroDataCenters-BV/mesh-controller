@@ -26,6 +26,10 @@ impl Membership {
         }
     }
 
+    pub fn len(&self) -> usize {
+        self.instances.len()
+    }
+
     pub fn add(&mut self, instance: InstanceId) {
         self.instances.insert(instance.zone.to_owned(), instance);
     }

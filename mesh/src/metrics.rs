@@ -19,8 +19,8 @@ pub const NETWORK_MESSAGE_RECEIVED_TOTAL: &str = "network_message_received_total
 pub const NETWORK_MESSAGE_BROADCASTED_TOTAL: &str = "network_message_broadcasted_total";
 pub const APPLIED_EVENT_TOTAL: &str = "applied_event_total";
 pub const APPLIED_SNAPSHOT_TOTAL: &str = "applied_shapshot_total";
-pub const RESOURCES_TOTAL: &str = "resources_total"; // TODO
-pub const ACTIVE_PEER_TOTAL: &str = "active_peers_total"; // TODO
+pub const RESOURCES_TOTAL: &str = "resources_total";
+pub const ACTIVE_PEER_TOTAL: &str = "active_peers_total";
 pub const MEMBERSHIP_CHANGE_TOTAL: &str = "membership_change_total";
 
 pub fn set_operation_received_seqnr(zone: &str, src_zone: &str, seq_nr: u64) {
@@ -106,20 +106,20 @@ pub fn increment_applied_snapshot_total(zone: &str, src_zone: &str) {
     .increment(1);
 }
 
-pub fn set_resources_total(zone: &str, count: u32) {
+pub fn set_resources_total(zone: &str, count: usize) {
     metrics::gauge!(
         RESOURCES_TOTAL,
         LABEL_ZONE => zone.to_owned(),
     )
-    .set(count);
+    .set(count as u32);
 }
 
-pub fn set_active_peers_total(zone: &str, count: u32) {
+pub fn set_active_peers_total(zone: &str, count: usize) {
     metrics::gauge!(
         ACTIVE_PEER_TOTAL,
         LABEL_ZONE => zone.to_owned(),
     )
-    .set(count);
+    .set(count as u32);
 }
 
 pub fn increment_membership_change_total(zone: &str) {

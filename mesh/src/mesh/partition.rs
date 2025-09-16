@@ -6,7 +6,9 @@ use std::{
 use super::event::MeshEvent;
 use crate::{
     merge::types::{MergeResult, MergeStrategy, UpdateResult},
-    metrics::{increment_applied_event_total, increment_applied_snapshot_total},
+    metrics::{
+        increment_applied_event_total, increment_applied_snapshot_total, set_resources_total,
+    },
 };
 use crate::{
     merge::types::{Tombstone, VersionedObject},
@@ -86,6 +88,7 @@ impl Partition {
                     &name.name,
                     &name.namespace,
                 );
+                set_resources_total(current_zone, self.get_live_resource_count());
                 Ok(vec![result])
             }
             MeshEvent::Delete {
@@ -117,6 +120,7 @@ impl Partition {
                     &name.name,
                     &name.namespace,
                 );
+                set_resources_total(current_zone, self.get_live_resource_count());
                 Ok(vec![result])
             }
             MeshEvent::Snapshot { snapshot, version } => {
@@ -133,6 +137,7 @@ impl Partition {
                 )?;
                 self.mesh_update_zone_version(incoming_zone, version);
                 increment_applied_snapshot_total(current_zone, incoming_zone);
+                set_resources_total(current_zone, self.get_live_resource_count());
                 Ok(apply_result)
             }
         }
@@ -333,6 +338,7 @@ impl Partition {
                 )?;
                 self.kube_update_partition(span, &result)?;
                 self.zone_version = Version::max(self.zone_version, version);
+                set_resources_total(current_zone, self.get_live_resource_count());
                 Ok(result)
             }
             KubeEvent::Delete {
@@ -354,6 +360,7 @@ impl Partition {
                 )?;
                 self.kube_update_partition(span, &result)?;
                 self.zone_version = Version::max(self.zone_version, version);
+                set_resources_total(current_zone, self.get_live_resource_count());
                 Ok(result)
             }
             KubeEvent::Snapshot {
@@ -370,6 +377,7 @@ impl Partition {
                     let snapshot_result =
                         self.kube_apply_snapshot(span, version, snapshot, current_zone, false)?;
                     self.zone_version = Version::max(self.zone_version, version);
+                    set_resources_total(current_zone, self.get_live_resource_count());
                     Ok(snapshot_result)
                 }
             }
@@ -581,6 +589,16 @@ impl Partition {
             VersionedObject::NonExisting => false,
             VersionedObject::Object(_) => true,
         });
+    }
+
+    fn get_live_resource_count(&self) -> usize {
+        self.resources
+            .values()
+            .map(|v| match v {
+                VersionedObject::NonExisting | VersionedObject::Tombstone(_) => 0,
+                _ => 1,
+            })
+            .sum()
     }
 }
 
