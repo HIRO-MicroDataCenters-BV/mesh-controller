@@ -50,21 +50,13 @@ pub fn increment_new_log_discovered_total(zone: &str, discovered_zone: &str) {
     .increment(1);
 }
 
-pub fn set_last_message_timestamp(
-    zone: &str,
-    src_zone: &str,
-    name: &str,
-    namespace: &str,
-    timestamp: f64,
-) {
+pub fn set_last_message_timestamp(zone: &str, src_zone: &str, timestamp: u64) {
     metrics::gauge!(
         LAST_MESSAGE_TIMESTAMP,
         LABEL_ZONE => zone.to_owned(),
         LABEL_SRC_ZONE => src_zone.to_owned(),
-        LABEL_NAME => name.to_owned(),
-        LABEL_NAMESPACE => namespace.to_owned(),
     )
-    .set(timestamp);
+    .set(timestamp as f64);
 }
 
 pub fn increment_network_message_received_total(zone: &str, src_zone: &str) {

@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use crate::{
     mesh::{operation_ext::OperationExt, operations::Extensions, topic::MeshLogId},
-    metrics::set_operation_received_seqnr,
+    metrics::{set_last_message_timestamp, set_operation_received_seqnr},
 };
 use anyhow::Result;
 use p2panda_core::{Operation, PublicKey};
@@ -47,8 +47,10 @@ impl OperationLog {
         let Some(extensions) = header.extensions.as_ref() else {
             return Err(IngestError::MissingHeaderExtension("extension".into()).into());
         };
-
         let log_id = extensions.log_id.clone();
+
+        set_last_message_timestamp(&self.own_log_id.0.zone, &log_id.0.zone, header.timestamp);
+
         let result = self.insert_internal(span, operation).await?;
         match result {
             IngestResult::Complete(op) => {
