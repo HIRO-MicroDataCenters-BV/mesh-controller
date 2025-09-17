@@ -1,10 +1,8 @@
 use crate::mesh::operations::Extensions;
 use crate::mesh::topic::MeshTopic;
-use crate::metrics::MESSAGE_RECEIVE_TOTAL;
 use crate::network::message::NetworkMessage;
 use crate::network::message::NetworkPayload;
 use anyhow::{Context, Result, anyhow};
-use axum_prometheus::metrics;
 use futures_util::stream::SelectAll;
 use p2panda_core::Body;
 use p2panda_core::Header;
@@ -48,7 +46,6 @@ pub struct MeshNodeActor {
 }
 
 impl MeshNodeActor {
-    #[allow(clippy::too_many_arguments)]
     pub async fn new(panda: Panda, inbox: mpsc::Receiver<ToNodeActor>) -> Self {
         MeshNodeActor {
             inbox,
@@ -157,8 +154,6 @@ impl MeshNodeActor {
     async fn on_operation(&mut self, operation: Operation<Extensions>) -> Result<()> {
         debug!(operation = %operation.hash, "received operation, broadcast it in gossip overlay");
 
-        MeshNodeActor::increment_received_local_messages();
-
         let topic = MeshTopic::default();
         let mesh_topic_id: [u8; 32] = topic.id();
 
@@ -235,9 +230,5 @@ impl MeshNodeActor {
     async fn shutdown(&self) -> Result<()> {
         self.panda.shutdown().await?;
         Ok(())
-    }
-
-    fn increment_received_local_messages() {
-        metrics::counter!(MESSAGE_RECEIVE_TOTAL,).increment(1);
     }
 }

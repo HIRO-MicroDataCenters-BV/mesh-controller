@@ -12,6 +12,16 @@ use crate::mesh::operation_ext::OperationExt;
 use crate::mesh::operation_log::OperationLog;
 use crate::mesh::operation_log::Ready;
 use crate::mesh::topic::MeshTopic;
+use crate::metrics::increment_kube_processing_error_total;
+use crate::metrics::increment_kubeapply_conflicts_total;
+use crate::metrics::increment_membership_change_total;
+use crate::metrics::increment_network_message_broadcasted_total;
+use crate::metrics::increment_network_message_received_total;
+use crate::metrics::increment_network_processing_error_total;
+use crate::metrics::increment_new_log_discovered_total;
+use crate::metrics::increment_tick_processing_error_total;
+use crate::metrics::set_active_peers_total;
+use crate::metrics::set_operation_applied_seqnr;
 use crate::network::discovery::nodes::Nodes;
 use crate::network::discovery::nodes::PeerEvent;
 use crate::network::discovery::types::Membership;
@@ -160,18 +170,21 @@ impl MeshActor {
                 Some(event) = self.kube_events_rx.next() => {
                     let span = span!(Level::DEBUG, "kube_event", id = event.get_id());
                     if let Err(err) = self.on_outgoing_to_network(&span, event).await {
+                        increment_kube_processing_error_total(&self.own_log_id.0.zone);
                         error!(parent: &span, "error while processing kube event, {}", err);
                     }
                 }
                 Some(Ok(operation)) = self.network_rx.next() => {
                     let span = span!(Level::DEBUG, "incoming", op = %operation.get_id()?);
                     if let Err(err) = self.on_incoming_from_network(&span, operation).await {
+                        increment_network_processing_error_total(&self.own_log_id.0.zone);
                         error!(parent: &span, "error while processing network event, {}", err);
                     }
                 }
                 _ = interval.tick() => {
                     let span = span!(Level::DEBUG, "tick", ts = self.clock.now_millis().to_string());
                     if let Err(err) = self.on_tick(&span).await {
+                        increment_tick_processing_error_total(&self.own_log_id.0.zone);
                         error!(parent: &span, "error on tick, {}", err);
                     }
                 },
@@ -290,6 +303,8 @@ impl MeshActor {
         )?;
         self.on_merge_results(span, merge_results).await;
         self.on_ready(span).await?;
+        increment_membership_change_total(&self.instance_id.zone);
+        set_active_peers_total(&self.instance_id.zone, self.membership.len());
         Ok(())
     }
 
@@ -306,7 +321,7 @@ impl MeshActor {
         let event: Option<MeshEvent> = update_result.into();
 
         if let Some(event) = event {
-            let operation = self.operations.next(event);
+            let operation = self.operations.next(event, self.clock.now_millis());
             // No need to check for new log because the produced operation is for own log which never changes in current instance,
             // thus should never trigger any membership updates
             self.operation_log.insert(span, operation).await?;
@@ -345,6 +360,7 @@ impl MeshActor {
         };
 
         let incoming_log_id = extensions.log_id.clone();
+        increment_network_message_received_total(&self.instance_id.zone, &incoming_log_id.0.zone);
 
         let UpdateLogIdResult {
             is_obsolete_operation,
@@ -362,6 +378,7 @@ impl MeshActor {
         }
         if is_new_log {
             debug!(parent: span, instance_id = ?incoming_log_id.0.to_string(), "new log detected");
+            increment_new_log_discovered_total(&self.instance_id.zone, &incoming_log_id.0.zone);
             let membership = self
                 .nodes
                 .get_membership_update(self.clock.now_millis(), &[peer]);
@@ -443,6 +460,7 @@ impl MeshActor {
                     debug!(parent: &span, "merge result: {:?}", event_types);
                     self.on_merge_results(&span, merge_results).await;
                     self.operation_log.advance_log_pointer(&log_id, pointer + 1);
+                    set_operation_applied_seqnr(&self.own_log_id.0.zone, &log_id.0.zone, pointer);
                 } else {
                     error!(parent: span, "event has no body");
                 }
@@ -474,7 +492,10 @@ impl MeshActor {
                 gvk,
                 name,
                 operation_type,
-            }) => self.forced_sync(span, gvk, name, operation_type).await,
+            }) => {
+                increment_kubeapply_conflicts_total(&self.own_log_id.0.zone);
+                self.forced_sync(span, gvk, name, operation_type).await
+            }
             Ok(ok) => Ok(ok),
             Err(err) => Err(err),
         };
@@ -483,7 +504,7 @@ impl MeshActor {
             (&final_ok_or_result, event)
         {
             event.set_zone_version(*version);
-            let operation = self.operations.next(event);
+            let operation = self.operations.next(event, self.clock.now_millis());
             debug!(parent: span, "inserting new event from persisted operation");
             // this insert into own log therefore no need to check for new logs and update membership
             self.operation_log.insert(span, operation).await?;
@@ -542,6 +563,7 @@ impl MeshActor {
                     let PersistenceResult::Conflict { .. } = persistence_result else {
                         return Ok(persistence_result);
                     };
+                    increment_kubeapply_conflicts_total(&self.own_log_id.0.zone);
                 } else {
                     debug!(parent: span, "forced_sync: resource does not exist. skipping...");
                     return Ok(PersistenceResult::Skipped);
@@ -700,7 +722,7 @@ impl MeshActor {
         let event = self
             .partition
             .mesh_gen_snapshot(&self.instance_id.zone, version);
-        let operation = self.operations.next(event);
+        let operation = self.operations.next(event, self.clock.now_millis());
         self.on_incoming_from_network(span, operation).await?;
         self.last_snapshot_time = self.clock.now();
         Ok(())
@@ -708,6 +730,7 @@ impl MeshActor {
 
     fn network_send(&mut self, operation: Operation<Extensions>) {
         if let Some(network_tx) = &mut self.network_tx {
+            increment_network_message_broadcasted_total(&self.instance_id.zone);
             network_tx.send(operation).ok();
         }
     }

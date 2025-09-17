@@ -187,9 +187,8 @@ impl ContextBuilder {
         runtime: &Runtime,
         cancellation_token: CancellationToken,
     ) -> Result<JoinHandle<Result<()>>> {
-        let config = self.config.clone();
         let http_bind_port = self.config.node.http_bind_port;
-        let api = Arc::new(MeshApiImpl::new(config).context("MeshAPIImpl initialization")?);
+        let api = Arc::new(MeshApiImpl::new().context("MeshAPIImpl initialization")?);
         let http_server = MeshHTTPServer::new(http_bind_port, api);
         Ok(runtime.spawn(async move {
             let result = http_server

@@ -1,7 +1,4 @@
-use crate::{
-    api::{MeshApi, status::HealthStatus},
-    config::configuration::Config,
-};
+use crate::api::{MeshApi, status::HealthStatus};
 use anyhow::Result;
 use async_trait::async_trait;
 use axum_prometheus::{
@@ -11,17 +8,13 @@ use axum_prometheus::{
 use tracing::warn;
 
 pub struct MeshApiImpl {
-    _config: Config,
     recorder_handle: PrometheusHandle,
 }
 
 impl MeshApiImpl {
-    pub fn new(config: Config) -> Result<MeshApiImpl> {
+    pub fn new() -> Result<MeshApiImpl> {
         let recorder_handle = setup_metrics_recorder()?;
-        Ok(MeshApiImpl {
-            _config: config,
-            recorder_handle,
-        })
+        Ok(MeshApiImpl { recorder_handle })
     }
 }
 

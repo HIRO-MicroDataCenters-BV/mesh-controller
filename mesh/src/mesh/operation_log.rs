@@ -1,6 +1,9 @@
 use std::collections::{BTreeMap, HashMap};
 
-use crate::mesh::{operation_ext::OperationExt, operations::Extensions, topic::MeshLogId};
+use crate::{
+    mesh::{operation_ext::OperationExt, operations::Extensions, topic::MeshLogId},
+    metrics::{set_last_message_timestamp, set_operation_received_seqnr},
+};
 use anyhow::Result;
 use p2panda_core::{Operation, PublicKey};
 use p2panda_store::{LogStore, MemoryStore};
@@ -44,13 +47,19 @@ impl OperationLog {
         let Some(extensions) = header.extensions.as_ref() else {
             return Err(IngestError::MissingHeaderExtension("extension".into()).into());
         };
-
         let log_id = extensions.log_id.clone();
+
+        set_last_message_timestamp(&self.own_log_id.0.zone, &log_id.0.zone, header.timestamp);
 
         let result = self.insert_internal(span, operation).await?;
         match result {
             IngestResult::Complete(op) => {
                 debug!(parent: span, id = ?op_id, "insert operation");
+                set_operation_received_seqnr(
+                    &self.own_log_id.0.zone,
+                    &log_id.0.zone,
+                    op.header.seq_num,
+                );
                 if log_id != self.own_log_id {
                     self.replay_pending_inserts(
                         span,
@@ -130,11 +139,14 @@ impl OperationLog {
             return Ok(());
         }
         for operation in batch {
+            let seq_nr = operation.header.seq_num;
             match self.insert_internal(span, operation).await? {
                 IngestResult::Complete(operation) => {
+                    set_operation_received_seqnr(&self.own_log_id.0.zone, &key.1.0.zone, seq_nr);
                     let Some(pending) = self.incoming_pending.get_mut(key) else {
                         break;
                     };
+
                     pending.remove(&operation.header.seq_num);
                 }
                 IngestResult::Retry(_, _, _, _) => {
@@ -402,9 +414,9 @@ pub mod tests {
         let event2 = update();
         let event3 = snapshot();
 
-        let op1 = own_linked_operations.next(event1);
-        let op2 = own_linked_operations.next(event2);
-        let op3 = own_linked_operations.next(event3);
+        let op1 = own_linked_operations.next(event1, 1);
+        let op2 = own_linked_operations.next(event2, 2);
+        let op3 = own_linked_operations.next(event3, 3);
 
         log.insert(&span, op1.clone()).await?;
         log.insert(&span, op2.clone()).await?;
@@ -445,9 +457,9 @@ pub mod tests {
         let event_remote2 = update();
         let event_remote3 = snapshot();
 
-        let remote_op1 = remote_linked_operations.next(event_remote1);
-        let remote_op2 = remote_linked_operations.next(event_remote2);
-        let remote_op3 = remote_linked_operations.next(event_remote3);
+        let remote_op1 = remote_linked_operations.next(event_remote1, 1);
+        let remote_op2 = remote_linked_operations.next(event_remote2, 2);
+        let remote_op3 = remote_linked_operations.next(event_remote3, 3);
 
         remote_active_logs.insert(remote_key.public_key(), remote_mesh_log_id.clone());
 
@@ -501,10 +513,10 @@ pub mod tests {
         let event_remote3 = update();
         let event_remote4 = update();
 
-        let remote_op1 = remote_linked_operations.next(event_remote1);
-        let remote_op2 = remote_linked_operations.next(event_remote2);
-        let remote_op3 = remote_linked_operations.next(event_remote3);
-        let remote_op4 = remote_linked_operations.next(event_remote4);
+        let remote_op1 = remote_linked_operations.next(event_remote1, 1);
+        let remote_op2 = remote_linked_operations.next(event_remote2, 2);
+        let remote_op3 = remote_linked_operations.next(event_remote3, 3);
+        let remote_op4 = remote_linked_operations.next(event_remote4, 4);
 
         remote_active_logs.insert(remote_key.public_key(), remote_mesh_log_id.clone());
 
@@ -567,18 +579,18 @@ pub mod tests {
         let event_remote41 = snapshot();
         let event_remote42 = update();
 
-        let remote_op11 = remote_linked_operations.next(event_remote11);
-        let remote_op12 = remote_linked_operations.next(event_remote12);
-        remote_linked_operations.next(event_remote13);
+        let remote_op11 = remote_linked_operations.next(event_remote11, 11);
+        let remote_op12 = remote_linked_operations.next(event_remote12, 12);
+        remote_linked_operations.next(event_remote13, 13);
 
-        remote_linked_operations.next(event_remote21);
-        remote_linked_operations.next(event_remote22);
+        remote_linked_operations.next(event_remote21, 21);
+        remote_linked_operations.next(event_remote22, 22);
 
-        remote_linked_operations.next(event_remote31);
-        remote_linked_operations.next(event_remote32);
+        remote_linked_operations.next(event_remote31, 31);
+        remote_linked_operations.next(event_remote32, 32);
 
-        let remote_op41 = remote_linked_operations.next(event_remote41);
-        let remote_op42 = remote_linked_operations.next(event_remote42);
+        let remote_op41 = remote_linked_operations.next(event_remote41, 41);
+        let remote_op42 = remote_linked_operations.next(event_remote42, 42);
 
         remote_active_logs.insert(remote_key.public_key(), remote_mesh_log_id.clone());
         log.update_active_log(remote_mesh_log_id.clone(), None);
@@ -636,14 +648,14 @@ pub mod tests {
         let event_remote7 = snapshot();
         let event_remote8 = update();
 
-        let remote_op1 = remote_linked_operations.next(event_remote1);
-        let _remote_op2 = remote_linked_operations.next(event_remote2);
-        let _remote_op3 = remote_linked_operations.next(event_remote3);
-        let remote_op4 = remote_linked_operations.next(event_remote4);
-        let remote_op5 = remote_linked_operations.next(event_remote5);
-        let remote_op6 = remote_linked_operations.next(event_remote6);
-        let remote_op7 = remote_linked_operations.next(event_remote7);
-        let remote_op8 = remote_linked_operations.next(event_remote8);
+        let remote_op1 = remote_linked_operations.next(event_remote1, 1);
+        let _remote_op2 = remote_linked_operations.next(event_remote2, 2);
+        let _remote_op3 = remote_linked_operations.next(event_remote3, 3);
+        let remote_op4 = remote_linked_operations.next(event_remote4, 4);
+        let remote_op5 = remote_linked_operations.next(event_remote5, 5);
+        let remote_op6 = remote_linked_operations.next(event_remote6, 6);
+        let remote_op7 = remote_linked_operations.next(event_remote7, 7);
+        let remote_op8 = remote_linked_operations.next(event_remote8, 8);
 
         remote_active_logs.insert(remote_key.public_key(), remote_mesh_log_id.clone());
         log.update_active_log(remote_mesh_log_id.clone(), None);
@@ -697,8 +709,8 @@ pub mod tests {
         let event_remote11 = snapshot();
         let event_remote12 = update();
 
-        let remote_op11 = remote_linked_operations.next(event_remote11);
-        let remote_op12 = remote_linked_operations.next(event_remote12);
+        let remote_op11 = remote_linked_operations.next(event_remote11, 11);
+        let remote_op12 = remote_linked_operations.next(event_remote12, 12);
 
         remote_active_logs.insert(remote_key.public_key(), remote_mesh_log_id.clone());
         log.update_active_log(remote_mesh_log_id.clone(), None);
@@ -730,10 +742,10 @@ pub mod tests {
         let event_remote23 = update();
         let event_remote24 = snapshot();
 
-        let remote_op21 = new_remote_linked_operations.next(event_remote21);
-        let remote_op22 = new_remote_linked_operations.next(event_remote22);
-        let remote_op23 = new_remote_linked_operations.next(event_remote23);
-        let remote_op24 = new_remote_linked_operations.next(event_remote24);
+        let remote_op21 = new_remote_linked_operations.next(event_remote21, 21);
+        let remote_op22 = new_remote_linked_operations.next(event_remote22, 22);
+        let remote_op23 = new_remote_linked_operations.next(event_remote23, 23);
+        let remote_op24 = new_remote_linked_operations.next(event_remote24, 24);
 
         remote_active_logs.insert(remote_key.public_key(), new_remote_mesh_log_id.clone());
         log.update_active_log(new_remote_mesh_log_id.clone(), Some(remote_mesh_log_id));
