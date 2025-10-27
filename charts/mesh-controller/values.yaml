@@ -64,7 +64,7 @@ configuration:
   #
   # When port is taken the node will automatically pick a random, free port.
   #
-  bind_port: 7000
+  bind_port: 9102
 
   # HTTP port for health checks and metrics.
   #
