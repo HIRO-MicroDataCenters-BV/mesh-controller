@@ -6,6 +6,9 @@ metadata:
     {{- include "app.labels" . | nindent 4 }}
 spec:
   type: {{ .Values.services.type }}
+  {{- if .Values.services.loadBalancerIP }}
+  loadBalancerIP: {{ .Values.services.loadBalancerIP }}
+  {{- end }}
   ports:
     # the port for the p2p networking endpoint
     - port: {{ .Values.services.network.port }}

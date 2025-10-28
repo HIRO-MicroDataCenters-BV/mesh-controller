@@ -29,6 +29,8 @@ tolerations: []
 
 services:
   type: ClusterIP
+  # Static IP Address for LoadBalancer type
+  # loadBalancerIP: 127.0.0.1
   # the port for the p2p networking endpoint
   network:
     port: 9102
