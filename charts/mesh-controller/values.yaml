@@ -27,6 +27,14 @@ tolerations: []
 
 # nodeSelector:  
 
+resources:
+  requests:
+    cpu: 200m
+    memory: 200Mi
+  limits:
+    cpu: 200m
+    memory: 200Mi
+
 services:
   type: ClusterIP
   # Static IP Address for LoadBalancer type
@@ -38,8 +46,6 @@ services:
   # the port for the HTTP health endpoint
   health:
     port: 8080
-
-resources: {}
 
 livenessProbe:
   failureThreshold: 3
