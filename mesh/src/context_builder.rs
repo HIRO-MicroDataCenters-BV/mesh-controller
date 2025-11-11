@@ -131,10 +131,16 @@ impl ContextBuilder {
         let peer_states = mesh_status.get_all().await?;
         let previously_known_peers: Vec<PublicKey> = peer_states
             .iter()
-            .flat_map(|ps| PublicKey::from_str(&ps.peer_id)
-                .inspect_err(|e|warn!("Unable to parse peer public key {}: {}. Skipping...", ps.peer_id, e))
-                .ok()
-            )
+            .flat_map(|ps| {
+                PublicKey::from_str(&ps.peer_id)
+                    .inspect_err(|e| {
+                        warn!(
+                            "Unable to parse peer public key {}: {}. Skipping...",
+                            ps.peer_id, e
+                        )
+                    })
+                    .ok()
+            })
             .collect();
 
         let (node_config, p2p_network_config) = MeshNode::configure_p2p_network(&config).await?;

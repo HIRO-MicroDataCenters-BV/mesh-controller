@@ -154,12 +154,15 @@ impl MeshActor {
             "initialization",
             ts = clock.now_millis().to_string()
         );
-        let membership = 
-            nodes.on_event(&init_span, PeerEvent::PeerUp { peer: key.public_key(), now: clock.now_millis() });
+        let membership = nodes.on_event(
+            &init_span,
+            PeerEvent::PeerUp {
+                peer: key.public_key(),
+                now: clock.now_millis(),
+            },
+        );
 
-        actor
-            .update_membership(&init_span, membership)
-            .await;
+        actor.update_membership(&init_span, membership).await;
         actor
     }
 
