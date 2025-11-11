@@ -1,3 +1,4 @@
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -14,6 +15,7 @@ use crate::network::discovery::nodes::Nodes;
 use crate::network::discovery::static_lookup::StaticLookup;
 use crate::node::mesh::{MeshNode, NodeOptions};
 use crate::utils::clock::RealClock;
+use crate::utils::types::Clock;
 use anyhow::{Context as AnyhowContext, Result, anyhow};
 use meshkube::client::KubeClient;
 use meshkube::kube::subscriptions::Subscriptions;
@@ -25,7 +27,7 @@ use p2panda_sync::log_sync::LogSyncProtocol;
 use tokio::runtime::{Builder, Runtime};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
-use tracing::error;
+use tracing::{error, warn};
 
 use crate::config::configuration::PRIVATE_KEY_ENV;
 use crate::config::configuration::{Config, load_config};
@@ -121,18 +123,32 @@ impl ContextBuilder {
         client: KubeClient,
         cancelation: CancellationToken,
     ) -> Result<MeshNode> {
+        let clock = Arc::new(RealClock::new());
+        let now = clock.now_millis();
+
         let mesh_status = MeshStatus::new(client.clone(), cancelation.child_token()).await?;
+
+        let peer_states = mesh_status.get_all().await?;
+        let previously_known_peers: Vec<PublicKey> = peer_states
+            .iter()
+            .flat_map(|ps| PublicKey::from_str(&ps.peer_id)
+                .inspect_err(|e|warn!("Unable to parse peer public key {}: {}. Skipping...", ps.peer_id, e))
+                .ok()
+            )
+            .collect();
+
         let (node_config, p2p_network_config) = MeshNode::configure_p2p_network(&config).await?;
 
         let resync_config = ContextBuilder::to_resync_config(&config);
         let instance_id = InstanceId::new(config.mesh.zone.to_owned());
         let log_store = MemoryStore::<MeshLogId, Extensions>::new();
-        let clock = Arc::new(RealClock::new());
+
         let nodes = Nodes::new(
             private_key.public_key(),
             MeshLogId(instance_id.clone()),
             Duration::from_secs(config.mesh.peer_timeout.peer_unavailable_after_seconds),
         );
+        nodes.load_initial_state(previously_known_peers, now);
 
         let sync_protocol = LogSyncProtocol::new(nodes.clone(), log_store.clone());
         let sync_config = SyncConfiguration::new(sync_protocol).resync(resync_config);

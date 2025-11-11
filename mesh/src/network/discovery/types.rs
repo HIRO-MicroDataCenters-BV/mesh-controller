@@ -3,7 +3,6 @@ use std::collections::BTreeMap;
 use p2panda_core::PublicKey;
 
 use crate::{mesh::topic::InstanceId, network::discovery::nodes::MembershipState};
-
 pub type Timestamp = u64;
 
 #[derive(Debug, Clone)]
