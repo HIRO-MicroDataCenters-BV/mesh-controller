@@ -38,6 +38,7 @@ fn update_conditions(status: &mut MeshPeerStatus, incoming: &PeerState) {
             status.add_or_update(ready);
             status.set_condition_if(&["NotReady"], "False", incoming.update_timestamp, "True");
             status.remove_condition("Unavailable");
+            status.remove_condition("Unknown");
         }
         PeerStatus::NotReady => {
             let not_ready =
@@ -45,6 +46,7 @@ fn update_conditions(status: &mut MeshPeerStatus, incoming: &PeerState) {
             status.add_or_update(not_ready);
             status.set_condition_if(&["Ready"], "True", incoming.update_timestamp, "False");
             status.remove_condition("Unavailable");
+            status.remove_condition("Unknown");
         }
         PeerStatus::Unavailable => {
             let unavailable =
@@ -52,6 +54,15 @@ fn update_conditions(status: &mut MeshPeerStatus, incoming: &PeerState) {
             status.add_or_update(unavailable);
             status.set_condition_if(&["Ready"], "True", incoming.update_timestamp, "False");
             status.remove_condition("NotReady");
+            status.remove_condition("Unknown");
+        }
+        PeerStatus::Unknown => {
+            let unknown =
+                MeshPeerStatusCondition::new(incoming.state.to_string(), incoming.state_since);
+            status.add_or_update(unknown);
+            status.remove_condition("NotReady");
+            status.remove_condition("Ready");
+            status.remove_condition("Unavailable");
         }
     }
 }
@@ -61,6 +72,7 @@ pub fn create_mesh_event(object_ref: ObjectReference, update: &PeerState) -> Eve
         PeerStatus::Ready => ("Peer is ready".into(), EventType::Normal),
         PeerStatus::NotReady => ("Peer is not ready".into(), EventType::Warning),
         PeerStatus::Unavailable => ("Peer is unavailable".into(), EventType::Warning),
+        PeerStatus::Unknown => ("Peer state is unknown".into(), EventType::Warning),
     };
     let reporting_instance = env::var("POD_NAME").unwrap_or_else(|_| "mesh_controller".to_string());
     create_event(

@@ -84,6 +84,7 @@ spec:
                 enum:
                 - Ready
                 - NotReady
+                - Unknown
                 - Unavailable
                 type: string
               updateTime:

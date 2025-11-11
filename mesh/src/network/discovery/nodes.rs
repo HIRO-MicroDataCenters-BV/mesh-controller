@@ -1,14 +1,16 @@
+use crate::mesh::topic::{Logs, MeshLogId, MeshTopic};
+use crate::network::discovery::types::{Membership, MembershipUpdate, PeerStateUpdate, Timestamp};
+use anyhow::Result;
 use async_trait::async_trait;
 use dashmap::DashMap;
+use meshresource::meshpeer::PeerStatus;
 use p2panda_core::PublicKey;
 use p2panda_sync::log_sync::TopicLogMap;
 use std::cmp::Ordering;
+use std::str::FromStr;
+use std::time::Duration;
 use std::{collections::HashMap, sync::Arc};
 use tracing::{Span, info};
-
-use crate::mesh::topic::{Logs, MeshLogId, MeshTopic};
-use crate::network::discovery::types::{Membership, MembershipUpdate, PeerStateUpdate, Timestamp};
-use std::time::Duration;
 
 #[derive(Debug, Clone)]
 pub struct Nodes {
@@ -29,47 +31,28 @@ impl Nodes {
         }
     }
 
+    pub fn load_initial_state(&self, peers: Vec<PublicKey>, now: Timestamp) {
+        for peer in peers {
+            let state = PeerState::from_previous_state(peer.to_owned(), self.timeout, now);
+            self.inner.peers.insert(peer, state);
+        }
+    }
+
     pub fn on_event(&self, span: &Span, event: PeerEvent) -> Option<MembershipUpdate> {
         let now = event.timestamp();
-        let updated_peers = match &event {
-            PeerEvent::PeerDiscovered { peer, .. } => {
-                let mut entry = self
-                    .inner
-                    .peers
-                    .entry(*peer)
-                    .or_insert_with(|| PeerState::new(peer.to_owned(), self.timeout));
-                if entry.value_mut().on_event(span, event) {
-                    vec![peer.to_owned()]
-                } else {
-                    Vec::new()
-                }
-            }
-            PeerEvent::PeerUp { peer, .. } => {
-                let mut entry = self
-                    .inner
-                    .peers
-                    .entry(*peer)
-                    .or_insert_with(|| PeerState::new(peer.to_owned(), self.timeout));
-                if entry.value_mut().on_event(span, event) {
-                    vec![peer.to_owned()]
-                } else {
-                    Vec::new()
-                }
-            }
-            PeerEvent::PeerDown { peer, .. } => {
-                let mut entry = self
-                    .inner
-                    .peers
-                    .entry(*peer)
-                    .or_insert_with(|| PeerState::new(peer.to_owned(), self.timeout));
-                if entry.value_mut().on_event(span, event) {
-                    vec![peer.to_owned()]
-                } else {
-                    Vec::new()
-                }
-            }
-            PeerEvent::Tick { .. } => self
+        let updated_peers = if let Some(peer) = event.get_peer() {
+            let mut entry = self
                 .inner
+                .peers
+                .entry(peer)
+                .or_insert_with(|| PeerState::new(peer.to_owned(), self.timeout));
+            if entry.value_mut().on_event(span, event) {
+                vec![peer.to_owned()]
+            } else {
+                Vec::new()
+            }
+        } else {
+            self.inner
                 .peers
                 .iter_mut()
                 .flat_map(|mut entry| {
@@ -79,7 +62,7 @@ impl Nodes {
                         Vec::new()
                     }
                 })
-                .collect(),
+                .collect()
         };
         if !updated_peers.is_empty() {
             let update = self.get_membership_update(now, &updated_peers);
@@ -255,7 +238,16 @@ pub struct PeerState {
 impl PeerState {
     pub fn new(peer: PublicKey, timeout: Duration) -> PeerState {
         PeerState {
-            state: MembershipState::Unavailable { since: 0 },
+            state: MembershipState::Unknown { since: 0 },
+            active_log: None,
+            peer,
+            timeout,
+        }
+    }
+
+    pub fn from_previous_state(peer: PublicKey, timeout: Duration, since: Timestamp) -> PeerState {
+        PeerState {
+            state: MembershipState::Unknown { since },
             active_log: None,
             peer,
             timeout,
@@ -263,39 +255,61 @@ impl PeerState {
     }
 
     pub fn on_event(&mut self, span: &Span, event: PeerEvent) -> bool {
+        let is_on_tick = matches!(event, PeerEvent::Tick { .. });
+
         let new_state = match (event, &self.state) {
             (
                 PeerEvent::Tick { .. },
                 MembershipState::Ready { .. } | MembershipState::Unavailable { .. },
             ) => None,
-            (PeerEvent::Tick { now }, MembershipState::NotReady { since }) => {
+            (
+                PeerEvent::Tick { now },
+                MembershipState::NotReady { since } | MembershipState::Unknown { since },
+            ) => {
                 if *since < now.saturating_sub(self.timeout.as_millis() as u64) {
                     Some(MembershipState::Unavailable { since: now })
                 } else {
                     None
                 }
             }
-
             (
                 PeerEvent::PeerDiscovered { now, .. },
-                MembershipState::Unavailable { .. } | MembershipState::NotReady { .. },
+                MembershipState::Unavailable { .. }
+                | MembershipState::NotReady { .. }
+                | MembershipState::Unknown { .. },
             ) => Some(MembershipState::Ready { since: now }),
             (PeerEvent::PeerDiscovered { .. }, MembershipState::Ready { .. }) => None,
 
             (
                 PeerEvent::PeerUp { now, .. },
-                MembershipState::Unavailable { .. } | MembershipState::NotReady { .. },
+                MembershipState::Unavailable { .. }
+                | MembershipState::NotReady { .. }
+                | MembershipState::Unknown { .. },
             ) => Some(MembershipState::Ready { since: now }),
             (PeerEvent::PeerUp { .. }, MembershipState::Ready { .. }) => None,
 
             (
                 PeerEvent::PeerDown { .. },
-                MembershipState::Unavailable { .. } | MembershipState::NotReady { .. },
+                MembershipState::Unavailable { .. }
+                | MembershipState::NotReady { .. }
+                | MembershipState::Unknown { .. },
             ) => None,
             (PeerEvent::PeerDown { now, .. }, MembershipState::Ready { .. }) => {
                 Some(MembershipState::NotReady { since: now })
             }
+            (
+                PeerEvent::PeerUnknown { now, .. },
+                MembershipState::Ready { .. }
+                | MembershipState::Unavailable { .. }
+                | MembershipState::NotReady { .. },
+            ) => Some(MembershipState::Unknown { since: now }),
+            (PeerEvent::PeerUnknown { .. }, MembershipState::Unknown { since, .. }) => {
+                Some(MembershipState::Unknown { since: *since })
+            }
         };
+        if is_on_tick && new_state.is_some() {
+            info!("new on tick state {:?}", new_state);
+        }
         if let Some(new_state) = new_state {
             self.state = new_state;
             let active_log_id = self
@@ -329,6 +343,7 @@ impl PeerState {
 
 #[derive(Clone, Copy, Debug)]
 pub enum PeerEvent {
+    PeerUnknown { peer: PublicKey, now: Timestamp },
     PeerDiscovered { peer: PublicKey, now: Timestamp },
     PeerUp { peer: PublicKey, now: Timestamp },
     PeerDown { peer: PublicKey, now: Timestamp },
@@ -339,10 +354,44 @@ impl PeerEvent {
     pub fn timestamp(&self) -> Timestamp {
         match self {
             PeerEvent::Tick { now } => *now,
+            PeerEvent::PeerUnknown { now, .. } => *now,
             PeerEvent::PeerDiscovered { now, .. } => *now,
             PeerEvent::PeerUp { now, .. } => *now,
             PeerEvent::PeerDown { now, .. } => *now,
         }
+    }
+
+    pub fn get_peer(&self) -> Option<PublicKey> {
+        match self {
+            PeerEvent::Tick { .. } => None,
+            PeerEvent::PeerUnknown { peer, .. } => Some(*peer),
+            PeerEvent::PeerDiscovered { peer, .. } => Some(*peer),
+            PeerEvent::PeerUp { peer, .. } => Some(*peer),
+            PeerEvent::PeerDown { peer, .. } => Some(*peer),
+        }
+    }
+
+    pub fn discover_from(state: meshresource::types::PeerState) -> Result<PeerEvent> {
+        let peer = PublicKey::from_str(&state.peer_id)?;
+        let event = match state.state {
+            PeerStatus::Ready => PeerEvent::PeerUp {
+                peer,
+                now: state.state_since,
+            },
+            PeerStatus::NotReady => PeerEvent::PeerDiscovered {
+                peer,
+                now: state.state_since,
+            },
+            PeerStatus::Unavailable => PeerEvent::PeerDown {
+                peer,
+                now: state.state_since,
+            },
+            PeerStatus::Unknown => PeerEvent::PeerUnknown {
+                peer,
+                now: state.state_since,
+            },
+        };
+        Ok(event)
     }
 }
 
@@ -351,6 +400,7 @@ pub enum MembershipState {
     Ready { since: Timestamp },
     NotReady { since: Timestamp },
     Unavailable { since: Timestamp },
+    Unknown { since: Timestamp },
 }
 
 impl MembershipState {
@@ -359,6 +409,18 @@ impl MembershipState {
             MembershipState::Ready { since } => *since,
             MembershipState::NotReady { since } => *since,
             MembershipState::Unavailable { since } => *since,
+            MembershipState::Unknown { since } => *since,
+        }
+    }
+
+    pub fn from(state: meshresource::meshpeer::PeerStatus, since: Timestamp) -> Self {
+        match state {
+            meshresource::meshpeer::PeerStatus::Ready => MembershipState::Ready { since },
+            meshresource::meshpeer::PeerStatus::NotReady => MembershipState::NotReady { since },
+            meshresource::meshpeer::PeerStatus::Unavailable => {
+                MembershipState::Unavailable { since }
+            }
+            meshresource::meshpeer::PeerStatus::Unknown => MembershipState::Unknown { since },
         }
     }
 }
@@ -369,6 +431,7 @@ impl std::fmt::Display for MembershipState {
             MembershipState::Ready { since } => write!(f, "Ready(since = {since})"),
             MembershipState::NotReady { since } => write!(f, "NotReady(since = {since})"),
             MembershipState::Unavailable { since } => write!(f, "Unavailable(since = {since})"),
+            MembershipState::Unknown { since } => write!(f, "Unknown(since = {since})"),
         }
     }
 }

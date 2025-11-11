@@ -8,6 +8,7 @@ impl From<MembershipState> for PeerStatus {
             MembershipState::Ready { .. } => PeerStatus::Ready,
             MembershipState::NotReady { .. } => PeerStatus::NotReady,
             MembershipState::Unavailable { .. } => PeerStatus::Unavailable,
+            MembershipState::Unknown { .. } => PeerStatus::Unknown,
         }
     }
 }

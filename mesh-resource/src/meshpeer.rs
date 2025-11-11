@@ -97,6 +97,7 @@ pub struct MeshPeerInstance {
 pub enum PeerStatus {
     Ready,
     NotReady,
+    Unknown,
     #[default]
     Unavailable,
 }
@@ -107,6 +108,7 @@ impl std::fmt::Display for PeerStatus {
             PeerStatus::Ready => write!(f, "Ready"),
             PeerStatus::NotReady => write!(f, "NotReady"),
             PeerStatus::Unavailable => write!(f, "Unavailable"),
+            PeerStatus::Unknown => write!(f, "Unknown"),
         }
     }
 }
