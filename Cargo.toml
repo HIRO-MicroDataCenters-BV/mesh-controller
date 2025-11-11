@@ -79,5 +79,5 @@ regex = { version = "1.12.2" }
 strum_macros = { version = "0.27.2" }
 maplit = { version = "1.0.2" }
 # pinned version due to vulnerability
-openssl = "=0.10.74"
+openssl = "=0.10.75"
 slab = "=0.4.11"
