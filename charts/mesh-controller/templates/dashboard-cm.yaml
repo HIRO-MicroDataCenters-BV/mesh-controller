@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "app.fullname" . }}-dashboards-config
+  {{- if .Values.dashboards.namespaceOverride }}
+  namespace: {{ .Values.dashboards.namespaceOverride }}
+  {{- end }}
+  labels:
+    grafana_dashboard: "1"
+    {{- include "app.labels" . | nindent 4 }}
+data:
+  {{- $files := .Files }}
+  {{- range $key, $value := .Files }}
+  {{- if hasPrefix "dashboards/" $key }} {{/* only when in dashboards/ */}}
+  {{ $key | trimPrefix "dashboards/" }}: {{ $files.Get $key | quote }} {{/* adapt $key as desired */}}
+  {{- end }}
+  {{- end }}
