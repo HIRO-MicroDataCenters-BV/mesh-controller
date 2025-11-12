@@ -37,6 +37,10 @@ resources:
     cpu: 200m
     memory: 200Mi
 
+dashboards:
+  ## dashboard deployment to a separate namespaces
+  namespaceOverride:
+
 services:
   type: ClusterIP
   # Static IP Address for LoadBalancer type
