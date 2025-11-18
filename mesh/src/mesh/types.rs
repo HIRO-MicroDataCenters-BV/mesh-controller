@@ -1,6 +1,10 @@
 use meshresource::{meshpeer::PeerStatus, types::PeerState};
+use serde::{Deserialize, Serialize};
 
-use crate::network::discovery::{nodes::MembershipState, types::PeerStateUpdate};
+use crate::network::discovery::{
+    nodes::{MembershipState, PeerEvent},
+    types::{MembershipUpdate, PeerStateUpdate},
+};
 
 impl From<MembershipState> for PeerStatus {
     fn from(val: MembershipState) -> Self {
@@ -25,5 +29,29 @@ impl From<PeerStateUpdate> for PeerState {
             }),
             update_timestamp: val.timestamp,
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum MembershipEvent {
+    Update {
+        update: MembershipUpdate,
+        peer_event: PeerEvent,
+    },
+}
+
+impl MembershipEvent {
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        ciborium::into_writer(&self, &mut bytes).expect("encoding network message");
+        bytes
+    }
+}
+
+impl TryFrom<Vec<u8>> for MembershipEvent {
+    type Error = ciborium::de::Error<std::io::Error>;
+
+    fn try_from(bytes: Vec<u8>) -> Result<Self, Self::Error> {
+        ciborium::from_reader(&bytes[..])
     }
 }

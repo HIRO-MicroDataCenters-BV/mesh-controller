@@ -6,6 +6,7 @@ use dashmap::DashMap;
 use meshresource::meshpeer::PeerStatus;
 use p2panda_core::PublicKey;
 use p2panda_sync::log_sync::TopicLogMap;
+use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::str::FromStr;
 use std::time::Duration;
@@ -255,8 +256,6 @@ impl PeerState {
     }
 
     pub fn on_event(&mut self, span: &Span, event: PeerEvent) -> bool {
-        let is_on_tick = matches!(event, PeerEvent::Tick { .. });
-
         let new_state = match (event, &self.state) {
             (
                 PeerEvent::Tick { .. },
@@ -307,9 +306,6 @@ impl PeerState {
                 Some(MembershipState::Unknown { since: *since })
             }
         };
-        if is_on_tick && new_state.is_some() {
-            info!("new on tick state {:?}", new_state);
-        }
         if let Some(new_state) = new_state {
             self.state = new_state;
             let active_log_id = self
@@ -341,7 +337,7 @@ impl PeerState {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum PeerEvent {
     PeerUnknown { peer: PublicKey, now: Timestamp },
     PeerDiscovered { peer: PublicKey, now: Timestamp },
@@ -395,7 +391,7 @@ impl PeerEvent {
     }
 }
 
-#[derive(Clone, Debug, Copy)]
+#[derive(Clone, Debug, Copy, PartialEq, Serialize, Deserialize)]
 pub enum MembershipState {
     Ready { since: Timestamp },
     NotReady { since: Timestamp },

@@ -1,11 +1,12 @@
 use std::collections::BTreeMap;
 
 use p2panda_core::PublicKey;
+use serde::{Deserialize, Serialize};
 
 use crate::{mesh::topic::InstanceId, network::discovery::nodes::MembershipState};
 pub type Timestamp = u64;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Membership {
     timestamp: Timestamp,
     instances: BTreeMap<String, InstanceId>,
@@ -72,13 +73,13 @@ impl std::fmt::Display for Membership {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MembershipUpdate {
     pub membership: Membership,
     pub peers: Vec<PeerStateUpdate>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PeerStateUpdate {
     pub peer: PublicKey,
     pub state: MembershipState,
