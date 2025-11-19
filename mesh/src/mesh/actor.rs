@@ -561,7 +561,7 @@ impl MeshActor {
             let event = MembershipEvent::try_from(body.to_bytes())?;
             match event {
                 MembershipEvent::Update { peer_event, .. } => {
-                    // TODO maybe peer event obsolete
+                    // TODO obsolete peer events
                     let maybe_updated_membership = self.nodes.on_event(&span, peer_event);
                     self.update_membership(&span, maybe_updated_membership)
                         .await;
