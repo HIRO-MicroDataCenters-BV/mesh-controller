@@ -107,8 +107,8 @@ configuration:
     bootstrap: true
 
     snapshot:
-      snapshot_interval_seconds: 300
-      snapshot_max_log: 256
+      snapshot_interval_seconds: 120
+      snapshot_max_log: 60
 
     tombstone:
         tombstone_retention_interval_seconds: 300
