@@ -123,7 +123,16 @@ pub mod tests {
     use meshkube::kube::{dynamic_object_ext::DynamicObjectExt, subscriptions::Version};
     use p2panda_core::PrivateKey;
 
-    use crate::mesh::{event::MeshEvent, operations::LinkedOperations, topic::InstanceId};
+    use crate::{
+        mesh::{
+            event::MeshEvent, operations::LinkedOperations, topic::InstanceId,
+            types::MembershipEvent,
+        },
+        network::discovery::{
+            nodes::{MembershipState, PeerEvent},
+            types::{Membership, MembershipUpdate, PeerStateUpdate},
+        },
+    };
 
     #[test]
     fn test_ordinary_operation_flow() {
@@ -169,6 +178,41 @@ pub mod tests {
         assert!(operation3.header.extensions.unwrap().prune_flag.is_set());
         assert_eq!(operation3.header.public_key, key.public_key());
         assert_eq!(operation3.body.unwrap().to_bytes(), event3.to_bytes());
+        assert_eq!(linked_operations.count_since_snapshot(), 1);
+    }
+
+    #[test]
+    pub fn test_membership_update() {
+        let key = PrivateKey::new();
+        let instance_id = InstanceId::new("test-instance".into());
+        let mut linked_operations = LinkedOperations::new(key.clone(), instance_id);
+        assert_eq!(linked_operations.count_since_snapshot(), 0);
+
+        // membership update
+        let event1 = MembershipEvent::Update {
+            update: MembershipUpdate {
+                membership: Membership::new(1),
+                peers: vec![PeerStateUpdate {
+                    peer: key.public_key(),
+                    state: MembershipState::Ready { since: 1 },
+                    instance: Some(InstanceId {
+                        zone: "zone".into(),
+                        start_time: 0,
+                    }),
+                    timestamp: 1,
+                }],
+            },
+            peer_event: PeerEvent::PeerDiscovered {
+                peer: key.public_key(),
+                now: 1,
+            },
+        };
+        let operation1 = linked_operations.next_membership_update(event1.clone(), 1);
+        assert_eq!(operation1.header.backlink, None);
+        assert_eq!(operation1.header.seq_num, 0);
+        assert!(!operation1.header.extensions.unwrap().prune_flag.is_set());
+        assert_eq!(operation1.header.public_key, key.public_key());
+        assert_eq!(operation1.body.unwrap().to_bytes(), event1.to_bytes());
         assert_eq!(linked_operations.count_since_snapshot(), 1);
     }
 
