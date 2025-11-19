@@ -89,9 +89,9 @@ impl Nodes {
             .peers
             .iter()
             .flat_map(|entry| match entry.state {
-                MembershipState::Ready { .. } | MembershipState::NotReady { .. } => {
-                    entry.active_log.as_ref().map(|v| v.0.clone())
-                }
+                MembershipState::Ready { .. }
+                | MembershipState::NotReady { .. }
+                | MembershipState::Unknown { .. } => entry.active_log.as_ref().map(|v| v.0.clone()),
                 _ => None,
             })
             .for_each(|instance| membership.add(instance));
@@ -429,5 +429,56 @@ impl std::fmt::Display for MembershipState {
             MembershipState::Unavailable { since } => write!(f, "Unavailable(since = {since})"),
             MembershipState::Unknown { since } => write!(f, "Unknown(since = {since})"),
         }
+    }
+}
+
+#[cfg(test)]
+pub mod tests {
+    use p2panda_core::PrivateKey;
+    use tracing::{Level, span};
+
+    use super::*;
+
+    #[test]
+    pub fn test_peer_state_update_ordinary() {
+        let span = span!(Level::DEBUG, "test", id = "1");
+        let peer = PrivateKey::new().public_key();
+        let mut state = PeerState::new(peer, Duration::from_millis(10));
+
+        assert!(state.on_event(&span, PeerEvent::PeerDiscovered { peer, now: 2 }));
+        assert_eq!(MembershipState::Ready { since: 2 }, state.state);
+
+        assert!(!state.on_event(&span, PeerEvent::Tick { now: 3 }));
+        assert_eq!(MembershipState::Ready { since: 2 }, state.state);
+
+        assert!(!state.on_event(&span, PeerEvent::PeerUp { peer, now: 4 }));
+        assert_eq!(MembershipState::Ready { since: 2 }, state.state);
+
+        assert!(!state.on_event(&span, PeerEvent::Tick { now: 5 }));
+        assert_eq!(MembershipState::Ready { since: 2 }, state.state);
+
+        assert!(state.on_event(&span, PeerEvent::PeerDown { peer, now: 6 }));
+        assert_eq!(MembershipState::NotReady { since: 6 }, state.state);
+
+        assert!(!state.on_event(&span, PeerEvent::Tick { now: 7 }));
+        assert_eq!(MembershipState::NotReady { since: 6 }, state.state);
+
+        assert!(state.on_event(&span, PeerEvent::Tick { now: 17 }));
+        assert_eq!(MembershipState::Unavailable { since: 17 }, state.state);
+
+        assert!(state.on_event(&span, PeerEvent::PeerUp { peer, now: 18 }));
+        assert_eq!(MembershipState::Ready { since: 18 }, state.state);
+
+    }
+
+    #[test]
+    pub fn test_peer_state_update_out_of_order() {
+        let span = span!(Level::DEBUG, "test", id = "1");
+        let peer = PrivateKey::new().public_key();
+        let mut state = PeerState::new(peer, Duration::from_millis(10));
+
+        assert!(state.on_event(&span, PeerEvent::PeerDiscovered { peer, now: 2 }));
+        assert_eq!(MembershipState::Ready { since: 2 }, state.state);
+
     }
 }

@@ -354,7 +354,6 @@ impl MeshActor {
             &self.instance_id.zone,
         )?;
         self.on_merge_results(span, merge_results).await;
-        // self.on_ready(span).await?;
         increment_membership_change_total(&self.instance_id.zone);
         set_active_peers_total(&self.instance_id.zone, self.membership.len());
         Ok(())
@@ -501,9 +500,14 @@ impl MeshActor {
     async fn on_ready_incoming(&mut self, ready: &mut Ready) -> Result<(), anyhow::Error> {
         for (log_id, ops) in ready.take_incoming().into_iter() {
             for operation in ops.into_iter() {
-                let span = span!(Level::DEBUG, "apply-operation", id = %operation.get_id()?);
+                let op_id = operation.get_id()?;
+                let span = span!(Level::DEBUG, "apply-operation", id = %op_id);
                 let pointer = operation.header.seq_num;
-                let ext = operation.header.extensions.as_ref().unwrap(); //TODO fix
+                let ext = operation
+                    .header
+                    .extensions
+                    .as_ref()
+                    .ok_or(anyhow!("operation {} has no extensions.", op_id))?;
                 match ext.event_type {
                     EventType::MeshEvent => {
                         self.on_ready_incoming_mesh_event(&log_id, operation, span, pointer)
