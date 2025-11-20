@@ -8,9 +8,11 @@ use anyhow::Result;
 use p2panda_core::{Operation, PublicKey};
 use p2panda_store::{LogStore, MemoryStore};
 use p2panda_stream::operation::{IngestError, IngestResult, ingest_operation};
-use tracing::{Span, debug, error, trace};
+use tracing::{Span, debug, error, trace, warn};
 
 const MAX_PENDING_BATCH_SIZE: usize = 1000;
+// Maximum number of pending operations per log to prevent unbounded memory growth
+const MAX_PENDING_OPERATIONS_PER_LOG: usize = 10000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct LogKey(PublicKey, MeshLogId);
@@ -71,17 +73,32 @@ impl OperationLog {
             IngestResult::Retry(header, body, _, ops_missing) => {
                 debug!(parent: span, id = ?op_id, "insert operation retrying, missing ops = {ops_missing}");
                 if log_id != self.own_log_id {
-                    self.incoming_pending
+                    let pending = self.incoming_pending
                         .entry(LogKey(header.public_key, log_id.clone()))
-                        .or_default()
-                        .insert(
-                            header.seq_num,
-                            Operation {
-                                hash: header.hash(),
-                                header,
-                                body,
-                            },
+                        .or_default();
+                    
+                    // Check if we've exceeded the maximum pending operations limit
+                    if pending.len() >= MAX_PENDING_OPERATIONS_PER_LOG {
+                        warn!(
+                            parent: span, 
+                            "Pending operations limit ({}) reached for log {:?}. Dropping oldest operations.",
+                            MAX_PENDING_OPERATIONS_PER_LOG,
+                            log_id
                         );
+                        // Remove the oldest entry to make room
+                        if let Some(&first_key) = pending.keys().next() {
+                            pending.remove(&first_key);
+                        }
+                    }
+                    
+                    pending.insert(
+                        header.seq_num,
+                        Operation {
+                            hash: header.hash(),
+                            header,
+                            body,
+                        },
+                    );
                 }
             }
         }
