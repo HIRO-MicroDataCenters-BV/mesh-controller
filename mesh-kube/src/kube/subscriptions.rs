@@ -9,6 +9,7 @@ use futures::future::Shared;
 use kube::Error;
 use kube::api::{DynamicObject, GroupVersionKind};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::AbortOnDropHandle;
@@ -69,7 +70,7 @@ impl Subscriptions {
 
 pub struct SubscriptionsInner {
     subscriptions: DashMap<SubscriberId, SubscriptionEntry>,
-    ids: SubscriberId,
+    ids: AtomicU64,
     client: KubeClient,
     root: CancellationToken,
 }
@@ -78,7 +79,7 @@ impl SubscriptionsInner {
     pub fn new(client: KubeClient, root: CancellationToken) -> Self {
         Self {
             subscriptions: DashMap::new(),
-            ids: 0,
+            ids: AtomicU64::new(0),
             root,
             client,
         }
@@ -91,7 +92,7 @@ impl SubscriptionsInner {
     ) -> Result<(loole::Receiver<KubeEvent>, SubscriberId)> {
         let (entry, subscriber_rx) = self.new_subscription(gvk, namespace);
 
-        let id = self.ids + 1;
+        let id = self.ids.fetch_add(1, Ordering::Relaxed) + 1;
         self.subscriptions.insert(id, entry);
 
         Ok((subscriber_rx, id))

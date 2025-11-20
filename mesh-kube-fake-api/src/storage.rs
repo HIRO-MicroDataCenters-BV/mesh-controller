@@ -17,6 +17,9 @@ use tracing::error;
 pub type ResourceVersion = u64;
 pub type BoxedEventStream = Pin<Box<dyn Stream<Item = WatchEvent<DynamicObject>> + Send + 'static>>;
 
+// Maximum number of events to keep in the changelog to prevent unbounded growth
+const MAX_CHANGELOG_SIZE: usize = 10000;
+
 pub struct ResourceEntry {
     pub version: ResourceVersion,
     pub resource: DynamicObject,
@@ -290,6 +293,7 @@ impl Storage {
 
                 let event = WatchEvent::Added(updated.clone());
                 changelog.insert(entry.version, event.clone());
+                Self::cleanup_changelog(&mut changelog);
                 self.event_tx
                     .send(event)
                     .inspect_err(|e| error!("Failed to send event: {}", e))
@@ -304,6 +308,7 @@ impl Storage {
                 let event = WatchEvent::Modified(updated.clone());
 
                 changelog.insert(entry.version, event.clone());
+                Self::cleanup_changelog(&mut changelog);
 
                 self.event_tx
                     .send(event)
@@ -324,6 +329,7 @@ impl Storage {
             );
             let event = WatchEvent::Added(updated.clone());
             changelog.insert(new_version, event.clone());
+            Self::cleanup_changelog(&mut changelog);
             self.event_tx
                 .send(event)
                 .inspect_err(|e| error!("Failed to send event: {}", e))
@@ -351,6 +357,7 @@ impl Storage {
 
             let event = WatchEvent::Deleted(entry.resource.clone());
             changelog.insert(new_version, event.clone());
+            Self::cleanup_changelog(&mut changelog);
             self.event_tx
                 .send(event)
                 .inspect_err(|e| error!("Failed to send event: {}", e))
@@ -371,6 +378,25 @@ impl Storage {
             object.metadata.uid = Some(uid.to_string());
         }
         new_version
+    }
+
+    /// Cleanup old changelog entries if the size exceeds MAX_CHANGELOG_SIZE.
+    /// Keeps the most recent entries.
+    fn cleanup_changelog(changelog: &mut BTreeMap<ResourceVersion, WatchEvent<DynamicObject>>) {
+        if changelog.len() > MAX_CHANGELOG_SIZE {
+            // Calculate how many entries to remove
+            let to_remove = changelog.len() - MAX_CHANGELOG_SIZE;
+            // Get the keys of entries to remove (oldest ones)
+            let keys_to_remove: Vec<ResourceVersion> = changelog
+                .keys()
+                .take(to_remove)
+                .copied()
+                .collect();
+            // Remove the old entries
+            for key in keys_to_remove {
+                changelog.remove(&key);
+            }
+        }
     }
 }
 
