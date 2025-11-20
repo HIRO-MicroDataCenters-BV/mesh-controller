@@ -6,6 +6,7 @@ use dashmap::DashMap;
 use meshresource::meshpeer::PeerStatus;
 use p2panda_core::PublicKey;
 use p2panda_sync::log_sync::TopicLogMap;
+use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::str::FromStr;
 use std::time::Duration;
@@ -88,9 +89,9 @@ impl Nodes {
             .peers
             .iter()
             .flat_map(|entry| match entry.state {
-                MembershipState::Ready { .. } | MembershipState::NotReady { .. } => {
-                    entry.active_log.as_ref().map(|v| v.0.clone())
-                }
+                MembershipState::Ready { .. }
+                | MembershipState::NotReady { .. }
+                | MembershipState::Unknown { .. } => entry.active_log.as_ref().map(|v| v.0.clone()),
                 _ => None,
             })
             .for_each(|instance| membership.add(instance));
@@ -231,6 +232,7 @@ struct NodesInner {
 pub struct PeerState {
     pub peer: PublicKey,
     pub state: MembershipState,
+    pub update_timestamp: Timestamp,
     pub active_log: Option<MeshLogId>,
     timeout: Duration,
 }
@@ -240,6 +242,7 @@ impl PeerState {
         PeerState {
             state: MembershipState::Unknown { since: 0 },
             active_log: None,
+            update_timestamp: 0,
             peer,
             timeout,
         }
@@ -248,6 +251,7 @@ impl PeerState {
     pub fn from_previous_state(peer: PublicKey, timeout: Duration, since: Timestamp) -> PeerState {
         PeerState {
             state: MembershipState::Unknown { since },
+            update_timestamp: since,
             active_log: None,
             peer,
             timeout,
@@ -255,61 +259,15 @@ impl PeerState {
     }
 
     pub fn on_event(&mut self, span: &Span, event: PeerEvent) -> bool {
-        let is_on_tick = matches!(event, PeerEvent::Tick { .. });
-
-        let new_state = match (event, &self.state) {
-            (
-                PeerEvent::Tick { .. },
-                MembershipState::Ready { .. } | MembershipState::Unavailable { .. },
-            ) => None,
-            (
-                PeerEvent::Tick { now },
-                MembershipState::NotReady { since } | MembershipState::Unknown { since },
-            ) => {
-                if *since < now.saturating_sub(self.timeout.as_millis() as u64) {
-                    Some(MembershipState::Unavailable { since: now })
-                } else {
-                    None
-                }
-            }
-            (
-                PeerEvent::PeerDiscovered { now, .. },
-                MembershipState::Unavailable { .. }
-                | MembershipState::NotReady { .. }
-                | MembershipState::Unknown { .. },
-            ) => Some(MembershipState::Ready { since: now }),
-            (PeerEvent::PeerDiscovered { .. }, MembershipState::Ready { .. }) => None,
-
-            (
-                PeerEvent::PeerUp { now, .. },
-                MembershipState::Unavailable { .. }
-                | MembershipState::NotReady { .. }
-                | MembershipState::Unknown { .. },
-            ) => Some(MembershipState::Ready { since: now }),
-            (PeerEvent::PeerUp { .. }, MembershipState::Ready { .. }) => None,
-
-            (
-                PeerEvent::PeerDown { .. },
-                MembershipState::Unavailable { .. }
-                | MembershipState::NotReady { .. }
-                | MembershipState::Unknown { .. },
-            ) => None,
-            (PeerEvent::PeerDown { now, .. }, MembershipState::Ready { .. }) => {
-                Some(MembershipState::NotReady { since: now })
-            }
-            (
-                PeerEvent::PeerUnknown { now, .. },
-                MembershipState::Ready { .. }
-                | MembershipState::Unavailable { .. }
-                | MembershipState::NotReady { .. },
-            ) => Some(MembershipState::Unknown { since: now }),
-            (PeerEvent::PeerUnknown { .. }, MembershipState::Unknown { since, .. }) => {
-                Some(MembershipState::Unknown { since: *since })
-            }
+        let (new_state, new_update_timestamp) = match event {
+            PeerEvent::Tick { now } => self.on_tick(now),
+            PeerEvent::PeerDiscovered { now, .. } => self.on_peer_discovered(now),
+            PeerEvent::PeerUp { now, .. } => self.on_peer_up(now),
+            PeerEvent::PeerDown { now, .. } => self.on_peer_down(now),
+            PeerEvent::PeerUnknown { now, .. } => self.on_peer_unknown(now),
         };
-        if is_on_tick && new_state.is_some() {
-            info!("new on tick state {:?}", new_state);
-        }
+
+        self.update_timestamp = new_update_timestamp;
         if let Some(new_state) = new_state {
             self.state = new_state;
             let active_log_id = self
@@ -321,6 +279,96 @@ impl PeerState {
             true
         } else {
             false
+        }
+    }
+
+    fn on_tick(&mut self, now: Timestamp) -> (Option<MembershipState>, Timestamp) {
+        match &self.state {
+            MembershipState::Ready { .. } | MembershipState::Unavailable { .. } => (None, now),
+            MembershipState::NotReady { since } | MembershipState::Unknown { since } => {
+                if self.update_timestamp > now {
+                    (None, self.update_timestamp)
+                } else if *since < now.saturating_sub(self.timeout.as_millis() as u64) {
+                    (Some(MembershipState::Unavailable { since: now }), now)
+                } else {
+                    (None, now)
+                }
+            }
+        }
+    }
+
+    fn on_peer_discovered(&mut self, now: Timestamp) -> (Option<MembershipState>, Timestamp) {
+        match &self.state {
+            MembershipState::Unavailable { .. }
+            | MembershipState::NotReady { .. }
+            | MembershipState::Unknown { .. } => {
+                if self.update_timestamp <= now {
+                    (Some(MembershipState::Ready { since: now }), now)
+                } else {
+                    (None, self.update_timestamp)
+                }
+            }
+            MembershipState::Ready { .. } => {
+                let now = Timestamp::max(now, self.update_timestamp);
+                (None, now)
+            }
+        }
+    }
+
+    fn on_peer_up(&mut self, now: Timestamp) -> (Option<MembershipState>, Timestamp) {
+        match &self.state {
+            MembershipState::Unavailable { .. }
+            | MembershipState::NotReady { .. }
+            | MembershipState::Unknown { .. } => {
+                if self.update_timestamp <= now {
+                    (Some(MembershipState::Ready { since: now }), now)
+                } else {
+                    (None, self.update_timestamp)
+                }
+            }
+            MembershipState::Ready { .. } => {
+                let now = Timestamp::max(now, self.update_timestamp);
+                (None, now)
+            }
+        }
+    }
+
+    fn on_peer_down(&mut self, now: Timestamp) -> (Option<MembershipState>, Timestamp) {
+        match &self.state {
+            MembershipState::Unavailable { .. }
+            | MembershipState::NotReady { .. }
+            | MembershipState::Unknown { .. } => {
+                let now = Timestamp::max(now, self.update_timestamp);
+                (None, now)
+            }
+            MembershipState::Ready { .. } => {
+                if self.update_timestamp <= now {
+                    (Some(MembershipState::NotReady { since: now }), now)
+                } else {
+                    (None, self.update_timestamp)
+                }
+            }
+        }
+    }
+
+    fn on_peer_unknown(&mut self, now: Timestamp) -> (Option<MembershipState>, Timestamp) {
+        match &self.state {
+            MembershipState::Ready { .. }
+            | MembershipState::Unavailable { .. }
+            | MembershipState::NotReady { .. } => {
+                if self.update_timestamp <= now {
+                    (Some(MembershipState::Unknown { since: now }), now)
+                } else {
+                    (None, self.update_timestamp)
+                }
+            }
+            MembershipState::Unknown { since, .. } => {
+                if self.update_timestamp <= now {
+                    (Some(MembershipState::Unknown { since: *since }), now)
+                } else {
+                    (None, self.update_timestamp)
+                }
+            }
         }
     }
 
@@ -341,7 +389,7 @@ impl PeerState {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum PeerEvent {
     PeerUnknown { peer: PublicKey, now: Timestamp },
     PeerDiscovered { peer: PublicKey, now: Timestamp },
@@ -395,7 +443,7 @@ impl PeerEvent {
     }
 }
 
-#[derive(Clone, Debug, Copy)]
+#[derive(Clone, Debug, Copy, PartialEq, Serialize, Deserialize)]
 pub enum MembershipState {
     Ready { since: Timestamp },
     NotReady { since: Timestamp },
@@ -433,5 +481,92 @@ impl std::fmt::Display for MembershipState {
             MembershipState::Unavailable { since } => write!(f, "Unavailable(since = {since})"),
             MembershipState::Unknown { since } => write!(f, "Unknown(since = {since})"),
         }
+    }
+}
+
+#[cfg(test)]
+pub mod tests {
+    use p2panda_core::PrivateKey;
+    use tracing::{Level, span};
+
+    use super::*;
+
+    #[test]
+    pub fn test_peer_state_update_ordinary() {
+        let span = span!(Level::DEBUG, "test", id = "1");
+        let peer = PrivateKey::new().public_key();
+        let mut state = PeerState::new(peer, Duration::from_millis(10));
+
+        assert!(state.on_event(&span, PeerEvent::PeerDiscovered { peer, now: 2 }));
+        assert_eq!(MembershipState::Ready { since: 2 }, state.state);
+        assert_eq!(2, state.update_timestamp);
+
+        assert!(!state.on_event(&span, PeerEvent::Tick { now: 3 }));
+        assert_eq!(MembershipState::Ready { since: 2 }, state.state);
+        assert_eq!(3, state.update_timestamp);
+
+        assert!(!state.on_event(&span, PeerEvent::PeerUp { peer, now: 4 }));
+        assert_eq!(MembershipState::Ready { since: 2 }, state.state);
+        assert_eq!(4, state.update_timestamp);
+
+        assert!(!state.on_event(&span, PeerEvent::Tick { now: 5 }));
+        assert_eq!(MembershipState::Ready { since: 2 }, state.state);
+        assert_eq!(5, state.update_timestamp);
+
+        assert!(state.on_event(&span, PeerEvent::PeerDown { peer, now: 6 }));
+        assert_eq!(MembershipState::NotReady { since: 6 }, state.state);
+        assert_eq!(6, state.update_timestamp);
+
+        assert!(!state.on_event(&span, PeerEvent::Tick { now: 7 }));
+        assert_eq!(MembershipState::NotReady { since: 6 }, state.state);
+        assert_eq!(7, state.update_timestamp);
+
+        assert!(state.on_event(&span, PeerEvent::Tick { now: 17 }));
+        assert_eq!(MembershipState::Unavailable { since: 17 }, state.state);
+        assert_eq!(17, state.update_timestamp);
+
+        assert!(state.on_event(&span, PeerEvent::PeerUp { peer, now: 18 }));
+        assert_eq!(MembershipState::Ready { since: 18 }, state.state);
+        assert_eq!(18, state.update_timestamp);
+    }
+
+    #[test]
+    pub fn test_peer_state_update_out_of_order() {
+        let span = span!(Level::DEBUG, "test", id = "1");
+        let peer = PrivateKey::new().public_key();
+        let mut state = PeerState::new(peer, Duration::from_millis(10));
+
+        assert!(state.on_event(&span, PeerEvent::PeerDiscovered { peer, now: 2 }));
+        assert_eq!(MembershipState::Ready { since: 2 }, state.state);
+        assert_eq!(2, state.update_timestamp);
+
+        assert!(!state.on_event(&span, PeerEvent::PeerDiscovered { peer, now: 3 }));
+        assert_eq!(MembershipState::Ready { since: 2 }, state.state);
+        assert_eq!(3, state.update_timestamp);
+
+        assert!(!state.on_event(&span, PeerEvent::PeerUp { peer, now: 4 }));
+        assert_eq!(MembershipState::Ready { since: 2 }, state.state);
+        assert_eq!(4, state.update_timestamp);
+
+        assert!(!state.on_event(&span, PeerEvent::PeerDown { peer, now: 1 }));
+        assert_eq!(MembershipState::Ready { since: 2 }, state.state);
+        assert_eq!(4, state.update_timestamp);
+
+        assert!(!state.on_event(&span, PeerEvent::PeerUnknown { peer, now: 2 }));
+        assert_eq!(MembershipState::Ready { since: 2 }, state.state);
+        assert_eq!(4, state.update_timestamp);
+
+        // update timestamp = 4, therefore event is ignored
+        assert!(!state.on_event(&span, PeerEvent::PeerDown { peer, now: 3 }));
+        assert_eq!(MembershipState::Ready { since: 2 }, state.state);
+        assert_eq!(4, state.update_timestamp);
+
+        assert!(state.on_event(&span, PeerEvent::PeerDown { peer, now: 5 }));
+        assert_eq!(MembershipState::NotReady { since: 5 }, state.state);
+        assert_eq!(5, state.update_timestamp);
+
+        assert!(!state.on_event(&span, PeerEvent::PeerDown { peer, now: 6 }));
+        assert_eq!(MembershipState::NotReady { since: 5 }, state.state);
+        assert_eq!(6, state.update_timestamp);
     }
 }

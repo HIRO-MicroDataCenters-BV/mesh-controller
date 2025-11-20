@@ -1,3 +1,5 @@
+use crate::mesh::types::MembershipEvent;
+
 use super::topic::MeshLogId;
 use p2panda_core::Body;
 use p2panda_core::PruneFlag;
@@ -9,10 +11,17 @@ use serde::{Deserialize, Serialize};
 use super::event::MeshEvent;
 use super::topic::InstanceId;
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EventType {
+    MeshEvent,
+    MembershipUpdate,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Extensions {
     pub prune_flag: PruneFlag,
     pub log_id: MeshLogId,
+    pub event_type: EventType,
 }
 
 impl TryFrom<&[u8]> for Extensions {
@@ -44,7 +53,9 @@ impl LinkedOperations {
 
     pub fn next(&mut self, event: MeshEvent, timestamp: u64) -> Operation<Extensions> {
         let is_snapshot = matches!(event, MeshEvent::Snapshot { .. });
-        let operation = self.make_operation(&event, is_snapshot, timestamp);
+        let event_bytes = event.to_bytes();
+        let operation =
+            self.make_operation(&event_bytes, EventType::MeshEvent, is_snapshot, timestamp);
         if is_snapshot {
             self.last_snapshot_seq_num = self.seq_num;
         }
@@ -53,13 +64,27 @@ impl LinkedOperations {
         operation
     }
 
+    pub fn next_membership_update(
+        &mut self,
+        event: MembershipEvent,
+        timestamp: u64,
+    ) -> Operation<Extensions> {
+        let event_bytes = event.to_bytes();
+        let operation =
+            self.make_operation(&event_bytes, EventType::MembershipUpdate, false, timestamp);
+        self.seq_num += 1;
+        self.backlink = Some(operation.hash);
+        operation
+    }
+
     fn make_operation(
         &self,
-        event: &MeshEvent,
+        event_bytes: &[u8],
+        event_type: EventType,
         prune_flag: bool,
         timestamp: u64,
     ) -> Operation<Extensions> {
-        let body = Body::new(&event.to_bytes());
+        let body = Body::new(event_bytes);
         let mut header = Header {
             version: 1,
             public_key: self.key.public_key(),
@@ -73,6 +98,7 @@ impl LinkedOperations {
             extensions: Some(Extensions {
                 prune_flag: PruneFlag::new(prune_flag),
                 log_id: self.log_id.clone(),
+                event_type,
             }),
         };
         header.sign(&self.key);
@@ -97,7 +123,16 @@ pub mod tests {
     use meshkube::kube::{dynamic_object_ext::DynamicObjectExt, subscriptions::Version};
     use p2panda_core::PrivateKey;
 
-    use crate::mesh::{event::MeshEvent, operations::LinkedOperations, topic::InstanceId};
+    use crate::{
+        mesh::{
+            event::MeshEvent, operations::LinkedOperations, topic::InstanceId,
+            types::MembershipEvent,
+        },
+        network::discovery::{
+            nodes::{MembershipState, PeerEvent},
+            types::{Membership, MembershipUpdate, PeerStateUpdate},
+        },
+    };
 
     #[test]
     fn test_ordinary_operation_flow() {
@@ -143,6 +178,41 @@ pub mod tests {
         assert!(operation3.header.extensions.unwrap().prune_flag.is_set());
         assert_eq!(operation3.header.public_key, key.public_key());
         assert_eq!(operation3.body.unwrap().to_bytes(), event3.to_bytes());
+        assert_eq!(linked_operations.count_since_snapshot(), 1);
+    }
+
+    #[test]
+    pub fn test_membership_update() {
+        let key = PrivateKey::new();
+        let instance_id = InstanceId::new("test-instance".into());
+        let mut linked_operations = LinkedOperations::new(key.clone(), instance_id);
+        assert_eq!(linked_operations.count_since_snapshot(), 0);
+
+        // membership update
+        let event1 = MembershipEvent::Update {
+            update: MembershipUpdate {
+                membership: Membership::new(1),
+                peers: vec![PeerStateUpdate {
+                    peer: key.public_key(),
+                    state: MembershipState::Ready { since: 1 },
+                    instance: Some(InstanceId {
+                        zone: "zone".into(),
+                        start_time: 0,
+                    }),
+                    timestamp: 1,
+                }],
+            },
+            peer_event: PeerEvent::PeerDiscovered {
+                peer: key.public_key(),
+                now: 1,
+            },
+        };
+        let operation1 = linked_operations.next_membership_update(event1.clone(), 1);
+        assert_eq!(operation1.header.backlink, None);
+        assert_eq!(operation1.header.seq_num, 0);
+        assert!(!operation1.header.extensions.unwrap().prune_flag.is_set());
+        assert_eq!(operation1.header.public_key, key.public_key());
+        assert_eq!(operation1.body.unwrap().to_bytes(), event1.to_bytes());
         assert_eq!(linked_operations.count_since_snapshot(), 1);
     }
 

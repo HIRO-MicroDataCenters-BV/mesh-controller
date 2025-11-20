@@ -11,7 +11,9 @@ use crate::mesh::event::MeshEvent;
 use crate::mesh::operation_ext::OperationExt;
 use crate::mesh::operation_log::OperationLog;
 use crate::mesh::operation_log::Ready;
+use crate::mesh::operations::EventType;
 use crate::mesh::topic::MeshTopic;
+use crate::mesh::types::MembershipEvent;
 use crate::metrics::increment_kube_processing_error_total;
 use crate::metrics::increment_kubeapply_conflicts_total;
 use crate::metrics::increment_membership_change_total;
@@ -26,9 +28,10 @@ use crate::network::discovery::nodes::Nodes;
 use crate::network::discovery::nodes::PeerEvent;
 use crate::network::discovery::types::Membership;
 use crate::network::discovery::types::MembershipUpdate;
+use crate::network::discovery::types::Timestamp;
 use crate::utils::types::Clock;
 use anyhow::Context;
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use futures::StreamExt;
 use futures::stream::SelectAll;
 use kube::api::DynamicObject;
@@ -60,7 +63,7 @@ use super::partition::Partition;
 use super::topic::InstanceId;
 use super::{operations::Extensions, topic::MeshLogId};
 
-const DEFAULT_TICK_INTERVAL: Duration = Duration::from_secs(1);
+const DEFAULT_TICK_INTERVAL: Duration = Duration::from_millis(100);
 const DEFAULT_FORCED_SYNC_MAX_ATTEMPTS: usize = 10;
 
 pub type KubeEventStream = Pin<Box<dyn futures::Stream<Item = KubeEvent> + Send + Sync + 'static>>;
@@ -204,18 +207,35 @@ impl MeshActor {
     }
 
     async fn on_system_event(&mut self, event: SystemEvent<MeshTopic>) {
-        match event {
-            SystemEvent::GossipNeighborDown { peer, .. } => self.on_peer_down(peer).await,
-            SystemEvent::GossipNeighborUp { peer, .. } => self.on_peer_up(peer).await,
-            SystemEvent::PeerDiscovered { peer } => self.on_peer_discovered(peer).await,
+        let maybe_error = match event {
+            SystemEvent::GossipNeighborDown { peer, .. } => {
+                self.on_gossip_neighbour_down(peer, self.clock.now_millis())
+                    .await
+            }
+            SystemEvent::GossipNeighborUp { peer, .. } => {
+                self.on_gossip_neighbour_up(peer, self.clock.now_millis())
+                    .await
+            }
+            SystemEvent::PeerDiscovered { peer } => {
+                self.on_gossip_neighbour_discovered(peer, self.clock.now_millis())
+                    .await
+            }
             SystemEvent::SyncStarted { peer, .. } => {
-                tracing::trace!("sync started: {}", peer.to_hex())
+                tracing::trace!("sync started: {}", peer.to_hex());
+                Ok(())
             }
-            SystemEvent::SyncDone { peer, .. } => tracing::trace!("sync done: {}", peer.to_hex()),
+            SystemEvent::SyncDone { peer, .. } => {
+                tracing::trace!("sync done: {}", peer.to_hex());
+                Ok(())
+            }
             SystemEvent::SyncFailed { peer, .. } => {
-                tracing::trace!("sync failed: {}", peer.to_hex())
+                tracing::trace!("sync failed: {}", peer.to_hex());
+                Ok(())
             }
-            _ => {}
+            _ => Ok(()),
+        };
+        if let Err(err) = maybe_error {
+            tracing::trace!("system event processing failed: {}", err);
         }
     }
 
@@ -246,34 +266,63 @@ impl MeshActor {
         }
     }
 
-    async fn on_peer_discovered(&mut self, peer: p2panda_core::PublicKey) {
-        let now = self.clock.now_millis();
-        let span = span!(Level::DEBUG, "peer_discovered", id = now.to_string());
-        let maybe_updated_membership = self
-            .nodes
-            .on_event(&span, PeerEvent::PeerDiscovered { peer, now });
-        self.update_membership(&span, maybe_updated_membership)
-            .await;
+    async fn on_gossip_neighbour_down(
+        &mut self,
+        peer: p2panda_core::PublicKey,
+        timestamp: Timestamp,
+    ) -> Result<()> {
+        let span = span!(Level::DEBUG, "peer_down", id = timestamp.to_string());
+        tracing::debug!(parent: &span, "system event received");
+        let peer_event = PeerEvent::PeerDown {
+            peer,
+            now: timestamp,
+        };
+        let maybe_updated_membership = self.nodes.on_event(&span, peer_event);
+        if let Some(update) = maybe_updated_membership {
+            let event = MembershipEvent::Update { update, peer_event };
+            let operation = self.operations.next_membership_update(event, timestamp);
+            self.operation_log.insert(&span, operation).await?;
+        }
+        Ok(())
     }
 
-    async fn on_peer_up(&mut self, peer: p2panda_core::PublicKey) {
-        let now = self.clock.now_millis();
-        let span = span!(Level::DEBUG, "peer_up", id = now.to_string());
+    async fn on_gossip_neighbour_up(
+        &mut self,
+        peer: p2panda_core::PublicKey,
+        timestamp: Timestamp,
+    ) -> Result<()> {
+        let span = span!(Level::DEBUG, "peer_up", id = timestamp.to_string());
         tracing::debug!(parent: &span, "system event received");
-        let maybe_updated_membership = self.nodes.on_event(&span, PeerEvent::PeerUp { peer, now });
-        self.update_membership(&span, maybe_updated_membership)
-            .await;
+        let peer_event = PeerEvent::PeerUp {
+            peer,
+            now: timestamp,
+        };
+        let maybe_updated_membership = self.nodes.on_event(&span, peer_event);
+        if let Some(update) = maybe_updated_membership {
+            let event = MembershipEvent::Update { update, peer_event };
+            let operation = self.operations.next_membership_update(event, timestamp);
+            self.operation_log.insert(&span, operation).await?;
+        }
+        Ok(())
     }
 
-    async fn on_peer_down(&mut self, peer: p2panda_core::PublicKey) {
-        let now = self.clock.now_millis();
-        let span = span!(Level::DEBUG, "peer_down", id = now.to_string());
-        tracing::debug!(parent: &span, "system event received");
-        let maybe_updated_membership = self
-            .nodes
-            .on_event(&span, PeerEvent::PeerDown { peer, now });
-        self.update_membership(&span, maybe_updated_membership)
-            .await;
+    async fn on_gossip_neighbour_discovered(
+        &mut self,
+        peer: p2panda_core::PublicKey,
+        timestamp: Timestamp,
+    ) -> Result<()> {
+        let span = span!(Level::DEBUG, "peer_discovered", id = timestamp.to_string());
+        let peer_event = PeerEvent::PeerDiscovered {
+            peer,
+            now: timestamp,
+        };
+        let maybe_updated_membership = self.nodes.on_event(&span, peer_event);
+        if let Some(update) = maybe_updated_membership {
+            let event = MembershipEvent::Update { update, peer_event };
+            let operation = self.operations.next_membership_update(event, timestamp);
+            self.operation_log.insert(&span, operation).await?;
+        }
+        Ok(())
     }
 
     async fn update_membership(
@@ -305,7 +354,6 @@ impl MeshActor {
             &self.instance_id.zone,
         )?;
         self.on_merge_results(span, merge_results).await;
-        self.on_ready(span).await?;
         increment_membership_change_total(&self.instance_id.zone);
         set_active_peers_total(&self.instance_id.zone, self.membership.len());
         Ok(())
@@ -382,10 +430,15 @@ impl MeshActor {
         if is_new_log {
             debug!(parent: span, instance_id = ?incoming_log_id.0.to_string(), "new log detected");
             increment_new_log_discovered_total(&self.instance_id.zone, &incoming_log_id.0.zone);
-            let membership = self
-                .nodes
-                .get_membership_update(self.clock.now_millis(), &[peer]);
-            self.update_membership(span, Some(membership)).await;
+            let now = self.clock.now_millis();
+            let update = self.nodes.get_membership_update(now, &[peer]);
+
+            let event = MembershipEvent::Update {
+                update,
+                peer_event: PeerEvent::PeerUp { peer, now },
+            };
+            let operation = self.operations.next_membership_update(event, now);
+            self.operation_log.insert(span, operation).await?;
         }
         Ok(())
     }
@@ -447,28 +500,79 @@ impl MeshActor {
     async fn on_ready_incoming(&mut self, ready: &mut Ready) -> Result<(), anyhow::Error> {
         for (log_id, ops) in ready.take_incoming().into_iter() {
             for operation in ops.into_iter() {
-                let span = span!(Level::DEBUG, "apply-operation", id = %operation.get_id()?);
+                let op_id = operation.get_id()?;
+                let span = span!(Level::DEBUG, "apply-operation", id = %op_id);
                 let pointer = operation.header.seq_num;
-                if let Some(body) = operation.body {
-                    let mesh_event = MeshEvent::try_from(body.to_bytes())?;
-                    let merge_results = self.partition.mesh_apply(
-                        &span,
-                        mesh_event,
-                        &log_id.0.zone,
-                        &self.instance_id.zone,
-                        &self.membership,
-                    )?;
-                    let event_types: Vec<&str> =
-                        merge_results.iter().map(|e| e.event_type()).collect();
-                    debug!(parent: &span, "merge result: {:?}", event_types);
-                    self.on_merge_results(&span, merge_results).await;
-                    self.operation_log.advance_log_pointer(&log_id, pointer + 1);
-                    set_operation_applied_seqnr(&self.own_log_id.0.zone, &log_id.0.zone, pointer);
-                } else {
-                    error!(parent: span, "event has no body");
+                let ext = operation
+                    .header
+                    .extensions
+                    .as_ref()
+                    .ok_or(anyhow!("operation {} has no extensions.", op_id))?;
+                match ext.event_type {
+                    EventType::MeshEvent => {
+                        self.on_ready_incoming_mesh_event(&log_id, operation, span, pointer)
+                            .await?;
+                    }
+                    EventType::MembershipUpdate => {
+                        self.on_ready_incoming_membership_update(&log_id, operation, span, pointer)
+                            .await?;
+                    }
                 }
             }
         }
+        Ok(())
+    }
+
+    async fn on_ready_incoming_mesh_event(
+        &mut self,
+        log_id: &MeshLogId,
+        operation: Operation<Extensions>,
+        span: Span,
+        pointer: u64,
+    ) -> Result<(), anyhow::Error> {
+        if let Some(body) = operation.body {
+            let mesh_event = MeshEvent::try_from(body.to_bytes())?;
+            let merge_results = self.partition.mesh_apply(
+                &span,
+                mesh_event,
+                &log_id.0.zone,
+                &self.instance_id.zone,
+                &self.membership,
+            )?;
+            let event_types: Vec<&str> = merge_results.iter().map(|e| e.event_type()).collect();
+            debug!(parent: &span, "merge result: {:?}", event_types);
+            self.on_merge_results(&span, merge_results).await;
+            self.operation_log.advance_log_pointer(log_id, pointer + 1);
+            set_operation_applied_seqnr(&self.own_log_id.0.zone, &log_id.0.zone, pointer);
+        } else {
+            error!(parent: span, "event has no body");
+        }
+        Ok(())
+    }
+
+    async fn on_ready_incoming_membership_update(
+        &mut self,
+        log_id: &MeshLogId,
+        operation: Operation<Extensions>,
+        span: Span,
+        pointer: u64,
+    ) -> Result<(), anyhow::Error> {
+        if let Some(body) = operation.body {
+            let event = MembershipEvent::try_from(body.to_bytes())?;
+            match event {
+                MembershipEvent::Update { peer_event, .. } => {
+                    // TODO obsolete peer events
+                    let maybe_updated_membership = self.nodes.on_event(&span, peer_event);
+                    self.update_membership(&span, maybe_updated_membership)
+                        .await;
+                }
+            }
+            self.operation_log.advance_log_pointer(log_id, pointer + 1);
+            set_operation_applied_seqnr(&self.own_log_id.0.zone, &log_id.0.zone, pointer);
+        } else {
+            error!(parent: span, "event has no body");
+        }
+
         Ok(())
     }
 
@@ -672,10 +776,34 @@ impl MeshActor {
     async fn on_ready_outgoing(&mut self, ready: &mut Ready) {
         for operation in ready.take_outgoing().into_iter() {
             let pointer = operation.header.seq_num;
+            if matches!(
+                operation.header.extensions.as_ref().unwrap().event_type,
+                EventType::MembershipUpdate
+            ) {
+                let op_id = operation.get_id().unwrap_or("unknown operation id".into());
+                let span = span!(Level::DEBUG, "apply-operation", id = %op_id);
+                if let Err(err) = self.apply_local_membership_change(&span, &operation).await {
+                    error!(parent: span, "Error while applying local membership change event: {}", err);
+                }
+            }
+
             self.network_send(operation);
             self.operation_log
                 .advance_log_pointer(&self.own_log_id, pointer + 1);
         }
+    }
+
+    async fn apply_local_membership_change(
+        &mut self,
+        span: &Span,
+        operation: &Operation<Extensions>,
+    ) -> Result<()> {
+        let Some(body) = &operation.body else {
+            return Err(anyhow!("operation has no body"));
+        };
+        let MembershipEvent::Update { update, .. } = MembershipEvent::try_from(body.to_bytes())?;
+        self.update_membership(span, Some(update)).await;
+        Ok(())
     }
 
     async fn on_tick(&mut self, span: &Span) -> Result<()> {
