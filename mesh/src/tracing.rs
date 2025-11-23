@@ -6,6 +6,8 @@ use tracing_subscriber::fmt::Layer;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
+use crate::config::configuration::ConsoleConfig;
+
 /// Setup logging with the help of the `tracing` crate.
 ///
 /// The verbosity and targets can be configured with a filter string:
@@ -17,7 +19,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 ///    This is equivalent to only setting the level "{level}"
 /// 4. When the string specifies a target and a level it will be used as-is: "{filter}", for
 ///    example "tokio=TRACE"
-pub fn setup_tracing(filter: Option<String>) {
+pub fn setup_tracing(filter: Option<String>, console_cfg: ConsoleConfig) {
     let default = "mesh=INFO"
         .parse()
         .expect("hard-coded default directive should be valid");
@@ -36,11 +38,21 @@ pub fn setup_tracing(filter: Option<String>) {
     } else {
         String::default()
     };
+
     let filter = builder.parse_lossy(filter);
 
-    tracing_subscriber::registry()
-        .with(Layer::default())
-        .with(filter)
-        .try_init()
-        .ok();
+    if console_cfg.enable {
+        tracing_subscriber::registry()
+            .with(console_subscriber::spawn())
+            .with(Layer::default())
+            .with(filter)
+            .try_init()
+            .ok();
+    } else {
+        tracing_subscriber::registry()
+            .with(Layer::default())
+            .with(filter)
+            .try_init()
+            .ok();
+    };
 }
