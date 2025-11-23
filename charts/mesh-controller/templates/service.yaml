@@ -22,5 +22,10 @@ spec:
       targetPort: {{ .Values.services.health.port }}
       protocol: TCP
       name: http
+    - port: {{ .Values.services.console.port }}
+      targetPort: {{ .Values.services.console.port }}
+      protocol: TCP
+      name: console
+
   selector:
     {{- include "app.selectorLabels" . | nindent 4 }}

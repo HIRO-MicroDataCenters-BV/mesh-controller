@@ -52,6 +52,9 @@ services:
   # the port for the HTTP health endpoint
   health:
     port: 8080
+  # the port for the tokio console
+  console:
+    port: 6669
 
 livenessProbe:
   failureThreshold: 3
@@ -132,3 +135,8 @@ configuration:
 
 
   log_level: =INFO
+
+  # # Enable console
+  # log_level: mesh=DEBUG,tokio=trace,runtime=trace
+  # console:
+  #   enable: true

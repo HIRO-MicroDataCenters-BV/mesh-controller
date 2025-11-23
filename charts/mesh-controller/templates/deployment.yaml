@@ -47,6 +47,9 @@ spec:
           - name: health
             containerPort: {{ .Values.services.health.port }}
             protocol: TCP
+          - name: console
+            containerPort: {{ .Values.services.console.port }}
+            protocol: TCP
           livenessProbe:
             {{- toYaml .Values.livenessProbe | nindent 12 }}
           readinessProbe:
