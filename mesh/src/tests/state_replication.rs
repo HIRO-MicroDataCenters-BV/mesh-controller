@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use crate::config::configuration::ConsoleConfig;
 use crate::tests::utils::wait_for_condition;
 use crate::{
     tests::{
@@ -23,7 +24,7 @@ use super::fake_mesh::FakeMeshServer;
 
 #[test]
 pub fn test_state_replication() -> Result<()> {
-    setup_tracing(Some("=INFO".into()));
+    setup_tracing(Some("=INFO".into()), ConsoleConfig::default());
 
     let TwoNodeMesh {
         gvk,

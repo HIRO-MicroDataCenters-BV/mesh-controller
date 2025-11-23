@@ -58,6 +58,7 @@ mesh-kube-fake-api.workspace = true
 anyapplication.workspace = true
 mesh-kube.workspace = true
 mesh-resource.workspace = true
+console-subscriber.workspace = true
 
 [dev-dependencies]
 figment = { workspace = true, features = ["test"] }

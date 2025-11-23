@@ -43,7 +43,10 @@ pub struct ContextBuilder {
 
 impl ContextBuilder {
     pub fn new(config: Config, private_key: PrivateKey) -> Self {
-        setup_tracing(config.log_level.clone());
+        setup_tracing(
+            config.log_level.clone(),
+            config.console.clone().unwrap_or_default(),
+        );
         ContextBuilder {
             public_key: private_key.public_key(),
             config,
@@ -53,7 +56,11 @@ impl ContextBuilder {
     /// Load the configuration from the environment and initializes context builder
     pub fn from_cli() -> Result<Self> {
         let config = load_config()?;
-        setup_tracing(config.log_level.clone());
+
+        setup_tracing(
+            config.log_level.clone(),
+            config.console.clone().unwrap_or_default(),
+        );
 
         // Load the private key from either an environment variable _or_ a file specified in the
         // config. The environment variable takes priority.

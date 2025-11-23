@@ -35,6 +35,7 @@ pub struct Config {
     pub mesh: MeshConfig,
     pub kubernetes: KubeConfiguration,
     pub log_level: Option<String>,
+    pub console: Option<ConsoleConfig>,
 }
 
 #[derive(Parser, Serialize, Debug)]
@@ -260,6 +261,11 @@ impl Default for DiscoveryOptions {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Hash, Default)]
+pub struct ConsoleConfig {
+    pub enable: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -269,9 +275,9 @@ mod tests {
     use meshkube::config::KubeConfigurationExternal;
 
     use crate::config::configuration::{
-        Config, DiscoveryOptions, KnownNode, KubeConfiguration, MergeStrategyType, MeshConfig,
-        NodeConfig, PeerTimeoutConfig, PeriodicSnapshotConfig, ProtocolConfig, ResourceConfig,
-        TombstoneConfig,
+        Config, ConsoleConfig, DiscoveryOptions, KnownNode, KubeConfiguration, MergeStrategyType,
+        MeshConfig, NodeConfig, PeerTimeoutConfig, PeriodicSnapshotConfig, ProtocolConfig,
+        ResourceConfig, TombstoneConfig,
     };
 
     #[test]
@@ -330,6 +336,7 @@ mod tests {
                     },
                     kubernetes: KubeConfiguration::InCluster,
                     log_level: None,
+                    console: None
                 }
             );
 
@@ -379,6 +386,8 @@ mesh:
 kubernetes:
     external:
         kube_context: "default"
+console:
+    enable: true
 "#,
             )?;
 
@@ -436,6 +445,7 @@ kubernetes:
                         }
                     },
                     log_level: None,
+                    console: Some(ConsoleConfig { enable: true })
                 }
             );
 

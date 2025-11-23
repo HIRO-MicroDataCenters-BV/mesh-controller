@@ -16,7 +16,7 @@ serviceAccount:
   annotations: {}
   name: ""
 
-serviceMonitorEnabled: true
+serviceMonitorEnabled: false
 
 podAnnotations: {}
 podLabels: {}
@@ -52,6 +52,9 @@ services:
   # the port for the HTTP health endpoint
   health:
     port: 8080
+  # the port for the tokio console
+  console:
+    port: 6669
 
 livenessProbe:
   failureThreshold: 3
@@ -116,19 +119,24 @@ configuration:
     peer_timeout:
         peer_unavailable_after_seconds: 120
 
-    resource:
-      group: ""
-      version: v1
-      kind: Secret
-      namespace: test
-      merge_strategy: default
-
     # resource:
-    #   group: dcp.hiro.io
+    #   group: ""
     #   version: v1
-    #   kind: AnyApplication
+    #   kind: Secret
     #   namespace: test
-    #   merge_strategy: anyapplication
+    #   merge_strategy: default
+
+    resource:
+      group: dcp.hiro.io
+      version: v1
+      kind: AnyApplication
+      namespace: default
+      merge_strategy: anyapplication
 
 
   log_level: =INFO
+
+  # # Enable console
+  # log_level: mesh=DEBUG,tokio=trace,runtime=trace
+  # console:
+  #   enable: true
