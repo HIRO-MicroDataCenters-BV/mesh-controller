@@ -118,6 +118,9 @@ impl PandaActor {
         let topic_id = query.id();
 
         let (tx, rx, _) = self.network.subscribe(query).await?;
+        // Note: This HashMap accumulates topic subscriptions. In the current implementation,
+        // only a single fixed topic ("mesh-network") is used, so growth is bounded to 1 entry.
+        // If dynamic topics are added in the future, consider implementing cleanup or LRU eviction.
         if let hash_map::Entry::Vacant(entry) = self.topic_gossip_tx_map.entry(topic_id) {
             entry.insert(tx);
         }
