@@ -8,4 +8,10 @@ private-key*
 .DS_Store
 tmp
 /env/dev/nats
-/env
+/env/test-resources/
+/env/kind-kind-cluster1-values.yaml
+/env/kind-kind-cluster2-values.yaml
+/env/private-key-secret1.yaml
+/env/private-key-secret2.yaml
+/env/monitoring-stack-values.yaml
+
