@@ -1,0 +1,92 @@
+# configuration file
+#
+# Port for mesh communication. Defaults to 9102.
+#
+# When port is taken the node will automatically pick a random, free port.
+#
+bind_port: 9102
+
+# 
+# http_bind_port: 3000
+#
+# Port for HTTP server exposing the /health endpoint. Defaults to 3000.
+http_bind_port: 18080
+
+# Nodes will only communicate with each other if they know the same network id.
+#
+network_id: "default"
+
+# Path to file containing hexadecimal-encoded Ed25519 private key. The key is
+# used to identify the node towards other nodes during network discovery and
+# replication.
+#
+private_key_path: "./private-key1.hex"
+
+
+protocol: 
+  poll_interval_seconds: 3
+  resync_interval_seconds: 60
+
+# List of known node addresses we want to connect to directly. Addresses have
+# to be FQDN's (absolute domain names) or IP addresses with a port number.
+#
+# NOTE: Make sure that nodes mentioned in this list are directly reachable
+#
+nodes:
+  - public_key: "43b2bb39061bc3267e869303268a81734fb8767d3a17ee490813955bd734fd3a"
+    endpoints:
+      - "localhost:9103"
+
+  # - public_key: "43b2bb39061bc3267e869303268a81734fb8767d3a17ee490813955bd734fd3a"
+  #   endpoints:
+  #     - "localhost:9103"
+
+#   - public_key: "<public-key>"
+#     endpoints:
+#       - "zone1.cluster.local"
+
+# Set log verbosity.
+#
+# Possible log levels are: ERROR, WARN, INFO, DEBUG, TRACE.
+#
+# If you want to adjust the scope for deeper inspection use a filter value, for example
+# "=TRACE" for logging _everything_ or "mesh=INFO" etc.
+
+kubernetes:
+  external:
+    kube_context: "kind-kind-cluster1"
+
+mesh:
+  zone: "kind-kind-cluster1"
+  bootstrap: true
+  snapshot:
+    # snapshot_interval_seconds: 300
+    snapshot_interval_seconds: 10
+    snapshot_max_log: 60
+  tombstone:
+    tombstone_retention_interval_seconds: 300
+  peer_timeout:
+    peer_unavailable_after_seconds: 10
+
+  # resource:
+  #   group: ""
+  #   version: v1
+  #   kind: Secret
+  #   namespace: test
+  #   merge_strategy: default
+
+  resource:
+    group: dcp.hiro.io
+    version: v1
+    kind: AnyApplication
+    namespace: test
+    merge_strategy: anyapplication
+
+
+# log_level: =TRACE
+# log_level: mesh=DEBUG
+# log_level: mesh=DEBUG,p2panda=INFO
+# log_level: mesh=TRACE,tokio=trace,runtime=trace
+log_level: mesh=DEBUG
+console: 
+  enable: false
