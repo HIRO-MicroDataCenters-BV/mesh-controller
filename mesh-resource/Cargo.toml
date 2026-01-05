@@ -29,7 +29,7 @@ futures-util.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 mesh-kube.workspace = true
-serde_yaml.workspace = true
+serde_yaml_bw.workspace = true
 chrono.workspace = true
 
 [build-dependencies]
