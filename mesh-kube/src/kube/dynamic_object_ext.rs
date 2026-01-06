@@ -31,6 +31,7 @@ pub trait DynamicObjectExt {
     fn get_status(&self) -> Option<Value>;
     fn unset_resource_version(&mut self);
     fn get_resource_version(&self) -> Version;
+    fn has_resource_version(&self) -> bool;
     fn set_resource_version(&mut self, version: Version);
     fn dump_status(&self, loc: &str);
     fn get_object_reference(&self) -> Result<ObjectReference>;
@@ -186,6 +187,10 @@ impl DynamicObjectExt for DynamicObject {
         resource_version
             .parse()
             .expect("resource version must be numberic")
+    }
+
+    fn has_resource_version(&self) -> bool {
+        self.metadata.resource_version.as_ref().is_some()
     }
 
     fn set_resource_version(&mut self, version: Version) {
