@@ -866,7 +866,11 @@ impl AnyApplicationMerge {
             incoming.metadata.managed_fields = None;
             incoming.metadata.uid = None;
             debug!(parent: span, %name, "merge update over non existing: create new");
-            let object = incoming.to_object()?;
+            let mut object = incoming.to_object()?;
+            if !object.has_resource_version() {
+                warn!(parent: span, %name, "merge update over non existing: object has no resource version. Setting to 0...");
+                object.set_resource_version(0);
+            }
             Ok(MergeResult::Create { object })
         } else {
             debug!(parent: span, %name, "merge update over non existing: skipping update");
@@ -1067,12 +1071,12 @@ pub mod tests {
         let span = span!(Level::DEBUG, "mesh_update_create_non_existing");
         let membership = Membership::default();
         let incoming = anyapp(1, "zone1", 0);
+        let mut expected = incoming.clone();
+        expected.set_resource_version(0);
 
         let strategy = AnyApplicationMerge::new();
         assert_eq!(
-            MergeResult::Create {
-                object: incoming.clone()
-            },
+            MergeResult::Create { object: expected },
             strategy
                 .mesh_update(
                     &span,
@@ -1091,6 +1095,9 @@ pub mod tests {
         let span = span!(Level::DEBUG, "mesh_update_create_tombstone_different_zone");
         let membership = Membership::default();
         let incoming = anyapp(1, "zone1", 0);
+        let mut expected = incoming.clone();
+        expected.set_resource_version(0);
+
         let existing = VersionedObject::Tombstone(Tombstone {
             gvk: incoming.get_gvk().expect("gvk expected"),
             name: incoming.get_namespaced_name(),
@@ -1102,9 +1109,7 @@ pub mod tests {
 
         let strategy = AnyApplicationMerge::new();
         assert_eq!(
-            MergeResult::Create {
-                object: incoming.clone()
-            },
+            MergeResult::Create { object: expected },
             strategy
                 .mesh_update(&span, existing, incoming, "zone1", "zone1", &membership)
                 .unwrap()
@@ -1116,6 +1121,8 @@ pub mod tests {
         let span = span!(Level::DEBUG, "mesh_update_create_tombstone_same_zone");
         let membership = Membership::default();
         let incoming = anyapp(1, "zone1", 0);
+        let mut expected = incoming.clone();
+        expected.set_resource_version(0);
         let existing = VersionedObject::Tombstone(Tombstone {
             gvk: incoming.get_gvk().expect("gvk expected"),
             name: incoming.get_namespaced_name(),
@@ -1127,9 +1134,7 @@ pub mod tests {
 
         let strategy = AnyApplicationMerge::new();
         assert_eq!(
-            MergeResult::Create {
-                object: incoming.clone()
-            },
+            MergeResult::Create { object: expected },
             strategy
                 .mesh_update(&span, existing, incoming, "zone1", "zone2", &membership)
                 .unwrap()

@@ -848,6 +848,7 @@ pub mod tests {
         sort_merge_results(&mut actual_merge_result);
 
         app_b1.set_resource_version(1);
+        app_b3.set_resource_version(0);
         let expected_merge_result = vec![
             MergeResult::Create {
                 object: app_b3.to_owned(),
@@ -1668,7 +1669,7 @@ pub mod tests {
 
         fn merge_cre(&self) -> MergeResult {
             let mut object = self.object();
-            object.unset_resource_version();
+            object.set_resource_version(0);
             MergeResult::Create { object }
         }
 

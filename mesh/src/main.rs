@@ -3,6 +3,10 @@ use mesh::{built_info, context_builder::ContextBuilder};
 use tracing::info;
 
 fn main() -> Result<()> {
+    rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .expect("Failed to setup rustls default crypto provider [aws_lc_rs]");
+
     let context_builder = ContextBuilder::from_cli()?;
     let context = context_builder.try_build_and_start()?;
 
