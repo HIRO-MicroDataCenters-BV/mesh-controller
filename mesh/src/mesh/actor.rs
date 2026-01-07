@@ -705,6 +705,14 @@ impl MeshActor {
             let existing_version = existing.get_resource_version();
             object.types = existing.types;
             object.metadata.uid = existing.metadata.uid;
+            if object.get_resource_version() == 0 {
+                // there is a possibility of race condition when object is saved to partition 
+                // and subsequently while saving to kubernetes the new object (resource_version=0) is being merged 
+                // and saved with version 0
+                warn!(parent: span, "Preventing race condition and initializing setting resource version 0 -> the one from current object");
+                object.set_resource_version(existing_version);
+            }
+
             debug!(
                 parent: span,
                 "patch apply (update): existing version {}, object version {}",
