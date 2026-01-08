@@ -1,0 +1,43 @@
+[package]
+name = "p2panda-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+p2panda-auth = { path = "../p2panda-auth", features = ["test_utils"] }
+p2panda-core = { path = "../p2panda-core", features = ["arbitrary"] }
+p2panda-encryption = { path = "../p2panda-encryption", features = ["test_utils"] }
+rand = { version = "0.9.1", features = ["alloc"] }
+
+[[bin]]
+name = "header_e2e"
+path = "fuzz_targets/header_e2e.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "groups_2sm"
+path = "fuzz_targets/groups_2sm.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "groups_message"
+path = "fuzz_targets/groups_message.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "auth_group"
+path = "fuzz_targets/auth_group.rs"
+test = false
+doc = false
+bench = false

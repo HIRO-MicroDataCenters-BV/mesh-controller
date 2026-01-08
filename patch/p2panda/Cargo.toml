@@ -1,0 +1,16 @@
+[workspace]
+resolver = "2"
+members = [
+    "fuzz",
+    "p2panda-auth",
+    "p2panda-blobs",
+    "p2panda-core",
+    "p2panda-discovery",
+    "p2panda-encryption",
+    "p2panda-net",
+    "p2panda-store",
+    "p2panda-stream",
+    "p2panda-sync",
+]
+
+[workspace.lints.rust]
