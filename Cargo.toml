@@ -7,6 +7,7 @@ members = [
     "anyapplication",
 ]
 resolver = "3"
+exclude = ["patch/quinn"]
 
 [workspace.lints.rust]
 
@@ -45,6 +46,7 @@ p2panda-stream = { path = "patch/p2panda/p2panda-stream" }
 iroh-base = { path = "patch/iroh/iroh-base" } # "0.34.1"
 iroh-metrics = { path = "patch/iroh-metrics" } # 0.32
 iroh = { path = "patch/iroh/iroh" } # 0.34.1
+iroh-quinn = { path = "patch/quinn/quinn" }
 mesh = { path = "mesh" }
 mesh-kube-fake-api = { path = "mesh-kube-fake-api" }
 mesh-kube = { path = "mesh-kube" }
