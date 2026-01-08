@@ -42,7 +42,8 @@ pub struct AddressBook {
 
 #[derive(Debug)]
 struct AddressBookInner {
-    // WARNING: These HashMaps grow unbounded - see AddressBook documentation
+    // FIXME: These HashMaps grow unbounded - see AddressBook documentation for details
+    // No removal mechanism exists for stale or disconnected peers
     known_peer_topic_ids: HashMap<PublicKey, HashSet<[u8; 32]>>,
     known_peer_addresses: HashMap<PublicKey, HashSet<NodeAddress>>,
 }

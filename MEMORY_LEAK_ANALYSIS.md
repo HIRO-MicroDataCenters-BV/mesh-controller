@@ -1,5 +1,26 @@
 # Memory Leak Analysis for Patch Directory Crates
 
+## Table of Contents
+
+- [Executive Summary](#executive-summary)
+- [Critical Memory Leak Issues](#critical-memory-leak-issues)
+  - [1. p2panda-net: AddressBook Unbounded Growth](#1-p2panda-net-addressbook-unbounded-growth)
+  - [2. p2panda-net: GossipBuffer Counter Leak](#2-p2panda-net-gossipbuffer-counter-leak)
+  - [3. p2panda-net: TopicStreams Subscription Leak](#3-p2panda-net-topicstreams-subscription-leak)
+  - [4. p2panda-store: MemoryStore Unbounded Growth](#4-p2panda-store-memorystore-unbounded-growth)
+  - [5. quinn-proto: Incoming Connection Buffer Leak](#5-quinn-proto-incoming-connection-buffer-leak)
+- [Medium Priority Issues](#medium-priority-issues)
+  - [6. Detached Task Spawning Without Tracking](#6-detached-task-spawning-without-tracking)
+  - [7. EventStream Receiver Cleanup Timing](#7-eventstream-receiver-cleanup-timing)
+- [Low Priority Issues](#low-priority-issues)
+  - [8. p2panda-encryption: TODO Comment About Memory Usage](#8-p2panda-encryption-todo-comment-about-memory-usage)
+- [General Recommendations](#general-recommendations)
+  - [Monitoring and Observability](#monitoring-and-observability)
+  - [Testing](#testing)
+  - [Code Quality](#code-quality)
+- [Conclusion](#conclusion)
+- [Priority Action Items](#priority-action-items)
+
 ## Executive Summary
 
 This document provides a comprehensive analysis of potential memory leak issues found in the patched crates within the `patch/` directory. The analysis covers quinn, iroh-gossip, and p2panda library crates used by the mesh-controller project.
@@ -454,18 +475,18 @@ The codebase shows good awareness of memory issues (warning mechanisms, Drop imp
 
 ## Priority Action Items
 
-**High Priority:**
-1. Implement AddressBook cleanup mechanism
-2. Add TopicStreams unsubscribe method
-3. Fix GossipBuffer counter cleanup
-4. Add memory usage monitoring
+**High Priority (Estimated: 3-5 days per item):**
+1. Implement AddressBook cleanup mechanism (peer removal, TTL, or LRU)
+2. Add TopicStreams unsubscribe method and automatic cleanup
+3. Fix GossipBuffer counter cleanup (simple fix, < 1 day)
+4. Add memory usage monitoring and metrics (2-3 days)
 
-**Medium Priority:**
-5. Implement task tracking for detached spawns
-6. Add LRU/TTL policies to MemoryStore
-7. Improve EventStream cleanup reliability
+**Medium Priority (Estimated: 2-4 days per item):**
+5. Implement task tracking for detached spawns (3-4 days)
+6. Add LRU/TTL policies to MemoryStore (2-3 days)
+7. Improve EventStream cleanup reliability (1-2 days)
 
-**Low Priority:**
-8. Add comprehensive memory leak tests
-9. Improve documentation
-10. Add memory pressure handling
+**Low Priority (Estimated: 1-3 weeks total):**
+8. Add comprehensive memory leak tests (1 week)
+9. Improve documentation and examples (3-5 days)
+10. Add memory pressure handling and graceful degradation (1 week)

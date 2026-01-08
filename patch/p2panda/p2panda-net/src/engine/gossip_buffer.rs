@@ -27,7 +27,8 @@ use tracing::{debug, warn};
 #[derive(Debug, Default)]
 pub struct GossipBuffer {
     buffers: HashMap<(PublicKey, [u8; 32]), Vec<Vec<u8>>>,
-    // WARNING: This HashMap grows unbounded - counters are never removed
+    // FIXME: This HashMap grows unbounded - counters are never removed even when reaching zero
+    // The drain() method removes buffers but not counters, causing a leak
     counters: HashMap<(PublicKey, [u8; 32]), usize>,
 }
 
