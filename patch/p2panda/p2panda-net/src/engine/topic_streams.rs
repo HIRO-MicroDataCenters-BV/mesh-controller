@@ -35,6 +35,26 @@ type TopicStreamId = usize;
 /// 4. Applications can subscribe to topics multiple times, or to different topics but with the
 ///    same topic ids. This stream handler multiplexes messages to the right place, even when
 ///    there's duplicates.
+///
+/// # Memory Leak Warning
+///
+/// **IMPORTANT:** Subscriptions are never cleaned up. There is no `unsubscribe()` or
+/// `remove_stream()` method. Once a stream is added via `subscribe()`, its data remains
+/// in memory permanently, even after the associated channels close.
+///
+/// ## Known Issues:
+/// - `next_stream_id` continuously increments without reuse
+/// - Multiple HashMaps track streams without cleanup
+/// - Closed channels leave zombie entries
+/// - No detection of closed mpsc receivers
+///
+/// ## Mitigation Strategies:
+/// - Implement `unsubscribe()` or `remove_stream()` method
+/// - Detect closed channels and auto-cleanup
+/// - Add Drop handler for stream cleanup
+/// - Monitor stream count and alert on growth
+///
+/// See MEMORY_LEAK_ANALYSIS.md for detailed information.
 #[derive(Debug)]
 pub struct TopicStreams<T> {
     address_book: AddressBook,

@@ -14,6 +14,26 @@ use crate::{NetworkId, NodeAddress};
 /// Manages a list of all peer addresses which are known to us (usually populated by a "peer
 /// discovery" process) and a list of all topic id's peers in this network are interested in
 /// (usually populated by a "topic discovery" process).
+///
+/// # Memory Leak Warning
+///
+/// **IMPORTANT:** This structure has no mechanism to remove stale or disconnected peers.
+/// In long-running applications, the internal HashMaps will grow indefinitely as new peers
+/// are discovered, leading to unbounded memory growth.
+///
+/// ## Known Issues:
+/// - No `remove_peer()` method exists
+/// - No TTL (Time To Live) for peer entries
+/// - No maximum capacity limits
+/// - Memory is never reclaimed for disconnected peers
+///
+/// ## Mitigation Strategies:
+/// - Implement periodic cleanup of inactive peers
+/// - Add LRU eviction policy with maximum capacity
+/// - Track peer liveness and remove on disconnect
+/// - Consider implementing a `remove_peer()` method
+///
+/// See MEMORY_LEAK_ANALYSIS.md for detailed information.
 #[derive(Debug, Clone)]
 pub struct AddressBook {
     network_id: NetworkId,
@@ -22,6 +42,7 @@ pub struct AddressBook {
 
 #[derive(Debug)]
 struct AddressBookInner {
+    // WARNING: These HashMaps grow unbounded - see AddressBook documentation
     known_peer_topic_ids: HashMap<PublicKey, HashSet<[u8; 32]>>,
     known_peer_addresses: HashMap<PublicKey, HashSet<NodeAddress>>,
 }
@@ -39,6 +60,11 @@ impl AddressBook {
     }
 
     /// Add or update peer address to the address book.
+    ///
+    /// # Memory Leak Warning
+    ///
+    /// This method adds peers but there is no corresponding `remove_peer()` method.
+    /// Peers are never removed, leading to unbounded memory growth in long-running applications.
     pub async fn add_peer(&mut self, node_addr: NodeAddress) {
         let public_key = node_addr.public_key;
 

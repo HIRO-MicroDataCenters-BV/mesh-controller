@@ -29,6 +29,25 @@ pub struct InnerMemoryStore<L, E> {
 /// `MemoryStore` supports usage in asynchronous and multi-threaded contexts by wrapping an
 /// `InnerMemoryStore` with an `RwLock` and `Arc`. Convenience methods are provided to obtain a
 /// read- or write-lock on the underlying store.
+///
+/// # Memory Usage Warning
+///
+/// **IMPORTANT:** This store grows unbounded unless explicitly managed. While `delete_operation()`
+/// and `delete_operations()` methods exist, they must be called manually. There is no automatic
+/// cleanup, LRU eviction, or capacity limits.
+///
+/// ## Considerations:
+/// - Intended primarily for testing and development
+/// - For production, implement regular cleanup routines
+/// - Monitor memory usage and set alerts
+/// - Consider LRU cache or database-backed store for production
+///
+/// ## Manual Cleanup Required:
+/// - Call `delete_operation()` to remove individual operations
+/// - Call `delete_operations()` to bulk delete old operations
+/// - Implement periodic cleanup tasks in application code
+///
+/// See MEMORY_LEAK_ANALYSIS.md for detailed information.
 #[derive(Clone, Debug)]
 pub struct MemoryStore<L, E = ()> {
     inner: Arc<RwLock<InnerMemoryStore<L, E>>>,

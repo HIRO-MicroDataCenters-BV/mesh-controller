@@ -5,9 +5,29 @@ use std::collections::HashMap;
 use p2panda_core::PublicKey;
 use tracing::{debug, warn};
 
+/// Manages buffering of gossip messages during sync sessions.
+///
+/// # Memory Leak Warning
+///
+/// **IMPORTANT:** The `counters` HashMap grows unbounded. Counter entries are never removed
+/// even when they reach zero or when buffers are drained. Each unique (PublicKey, topic_id)
+/// pair creates a permanent entry.
+///
+/// ## Known Issues:
+/// - Counter entries persist even after reaching 0
+/// - `drain()` removes buffer but not counter
+/// - No cleanup mechanism for old entries
+///
+/// ## Mitigation Strategies:
+/// - Remove counter entries when they reach 0
+/// - Clean up counters in `drain()` method
+/// - Add periodic cleanup for zero-value counters
+///
+/// See MEMORY_LEAK_ANALYSIS.md for detailed information.
 #[derive(Debug, Default)]
 pub struct GossipBuffer {
     buffers: HashMap<(PublicKey, [u8; 32]), Vec<Vec<u8>>>,
+    // WARNING: This HashMap grows unbounded - counters are never removed
     counters: HashMap<(PublicKey, [u8; 32]), usize>,
 }
 
