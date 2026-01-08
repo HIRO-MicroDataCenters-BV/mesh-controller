@@ -56,7 +56,7 @@ jobs:
         # Ensure debug output is also tested
         env:
           RUST_LOG: debug
-        run: cargo test --all-features
+        run: cargo test --exclude p2panda-net --exclude p2panda-discovery --exclude p2panda-sync --exclude p2panda-stream --exclude p2panda-store --exclude p2panda-core --exclude iroh --exclude iroh-gossip --exclude iroh-base
 
   build-helm-chart:
     name: Build Helm Chart

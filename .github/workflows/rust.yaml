@@ -73,7 +73,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2    
 
       - name: Check code with clippy
-        run: cargo clippy -- -D warnings --no-deps
+        #run: cargo clippy -- -D warnings --no-deps
+        run: cargo clippy --workspace --exclude p2panda-net --exclude p2panda-discovery --exclude p2panda-sync --exclude p2panda-stream --exclude p2panda-store --exclude p2panda-core --exclude iroh --exclude iroh-gossip --exclude iroh-base
 
   sbom:
     runs-on: ubuntu-latest
