@@ -15,6 +15,8 @@ use rustc_hash::FxHashMap;
 use thiserror::Error;
 use tokio::sync::{futures::Notified, mpsc, oneshot, watch, Notify};
 use tracing::{debug_span, Instrument, Span};
+use iroh_metrics::inc;
+use crate::metrics::{QuinnConnectionMetrics, ConnectionDriverMetrics};
 
 use crate::{
     mutex::Mutex,
@@ -59,6 +61,7 @@ impl Connecting {
         );
 
         let driver = ConnectionDriver(conn.clone());
+        inc!(ConnectionDriverMetrics, connections_created);
         runtime.spawn(Box::pin(
             async {
                 if let Err(e) = driver.await {
@@ -129,6 +132,7 @@ impl Connecting {
 
         if is_ok {
             let conn = self.conn.take().unwrap();
+            inc!(QuinnConnectionMetrics, connections_created);
             Ok((Connection(conn), ZeroRttAccepted(self.connected)))
         } else {
             Err(self)
@@ -197,6 +201,7 @@ impl Future for Connecting {
             let inner = conn.state.lock("connecting");
             if inner.connected {
                 drop(inner);
+                inc!(QuinnConnectionMetrics, connections_created);
                 Ok(Connection(conn))
             } else {
                 Err(inner
@@ -271,6 +276,12 @@ impl Future for ConnectionDriver {
     }
 }
 
+impl Drop for ConnectionDriver {
+    fn drop(&mut self) {
+        inc!(ConnectionDriverMetrics, connections_dropped);
+    }
+}
+
 /// A QUIC connection.
 ///
 /// If all references to a connection (including every clone of the `Connection` handle, streams of
@@ -288,6 +299,12 @@ impl Future for ConnectionDriver {
 /// [`Connection::close()`]: Connection::close
 #[derive(Debug, Clone)]
 pub struct Connection(ConnectionRef);
+
+impl Drop for Connection {
+    fn drop(&mut self) {
+        inc!(QuinnConnectionMetrics, connections_dropped);
+    }
+}
 
 impl Connection {
     /// Returns a weak reference to the inner connection struct.
