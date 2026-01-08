@@ -1,0 +1,115 @@
+[package]
+name = "iroh-gossip"
+version = "0.34.1"
+edition = "2021"
+readme = "README.md"
+description = "gossip messages over broadcast trees"
+license = "MIT/Apache-2.0"
+authors = ["n0 team"]
+repository = "https://github.com/n0-computer/iroh-gossip"
+resolver = "2"
+
+# Sadly this also needs to be updated in .github/workflows/ci.yml
+rust-version = "1.81"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[lints.rust]
+missing_debug_implementations = "warn"
+
+# We use this --cfg for documenting the cargo features on which an API
+# is available.  To preview this locally use: RUSTFLAGS="--cfg
+# iroh_docsrs cargo +nightly doc --all-features".  We use our own
+# iroh_docsrs instead of the common docsrs to avoid also enabling this
+# feature in any dependencies, because some indirect dependencies
+# require a feature enabled when using `--cfg docsrs` which we can not
+# do.  To enable for a crate set `#![cfg_attr(iroh_docsrs,
+# feature(doc_cfg))]` in the crate.
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(iroh_docsrs)"] }
+
+[lints.clippy]
+unused-async = "warn"
+
+[dependencies]
+async-channel = { version = "2.3.1", optional = true }
+blake3 = { package = "iroh-blake3", version = "1.4.5"}
+bytes = { version = "1.7", features = ["serde"] }
+derive_more = { version = "1.0.0", features = ["add", "debug", "deref", "display", "from", "try_into", "into"] }
+ed25519-dalek = { version = "2.0.0", features = ["serde", "rand_core"] }
+hex = "0.4.3"
+indexmap = "2.0"
+iroh-metrics = { version = "0.32", default-features = false }
+n0-future = "0.1.2"
+postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
+rand = { version = "0.8.5", features = ["std_rng"] }
+rand_core = "0.6.4"
+serde = { version = "1.0.164", features = ["derive"] }
+serde-error = "0.1.3"
+
+# net dependencies (optional)
+anyhow = { version = "1", optional = true }
+futures-lite = { version = "2.3", optional = true }
+futures-concurrency = { version = "7.6.1", optional = true }
+futures-util = { version = "0.3.30", optional = true }
+iroh = { version = "0.34", default-features = false, optional = true }
+tokio = { version = "1", optional = true, features = ["io-util", "sync"] }
+tokio-util = { version = "0.7.12", optional = true, features = ["codec"] }
+tracing = "0.1"
+data-encoding = { version = "2.6.0", optional = true }
+thiserror = { version = "2.0", optional = true }
+
+# rpc dependencies (optional)
+nested_enum_utils = { version = "0.1.0", optional = true }
+quic-rpc = { version = "0.19", optional = true }
+quic-rpc-derive = { version = "0.19", optional = true }
+strum = { version = "0.26", optional = true }
+clap = { version = "4", features = ["derive"], optional = true }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["io-util", "sync", "rt", "macros", "net", "fs"] }
+clap = { version = "4", features = ["derive"] }
+iroh = { version = "0.34", default-features = false, features = ["metrics", "test-utils"] }
+rand_chacha = "0.3.1"
+testresult = "0.4.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-test = "0.2.5"
+url = "2.4.0"
+
+[features]
+default = ["net"]
+net = [
+    "dep:futures-lite",
+    "dep:iroh",
+    "dep:tokio",
+    "dep:tokio-util",
+    "dep:async-channel",
+    "dep:futures-util",
+    "dep:futures-concurrency",
+    "dep:anyhow",
+    "dep:thiserror",
+]
+rpc = [
+    "dep:nested_enum_utils",
+    "dep:quic-rpc",
+    "dep:quic-rpc-derive",
+    "dep:strum",
+]
+cli = [
+    "rpc",
+    "dep:clap",
+]
+
+examples = ["net", "dep:data-encoding"]
+
+[[example]]
+name = "chat"
+required-features = ["examples"]
+
+[[example]]
+name = "setup"
+required-features = ["examples"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "iroh_docsrs"]
