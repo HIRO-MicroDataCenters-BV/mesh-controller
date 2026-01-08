@@ -21,10 +21,12 @@ use std::{
     task::Poll,
 };
 
+use crate::metrics::ConnectionMetrics;
 use anyhow::{bail, Context, Result};
 use data_encoding::BASE32_DNSSEC;
 use ed25519_dalek::{pkcs8::DecodePublicKey, VerifyingKey};
 use iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
+use iroh_metrics::inc;
 use iroh_relay::RelayMap;
 use n0_future::{time::Duration, Stream};
 use pin_project::pin_project;
@@ -1537,6 +1539,7 @@ impl Future for Connecting {
                     inner,
                     tls_auth: this.ep.static_config.tls_auth,
                 };
+                inc!(ConnectionMetrics, connections_created);
                 try_send_rtt_msg(&conn, this.ep, *this.remote_node_id);
                 Poll::Ready(Ok(conn))
             }
@@ -1881,6 +1884,12 @@ impl Connection {
     #[inline]
     pub fn set_max_concurrent_bi_streams(&self, count: VarInt) {
         self.inner.set_max_concurrent_bi_streams(count)
+    }
+}
+
+impl Drop for Connection {
+    fn drop(&mut self) {
+        inc!(ConnectionMetrics, connections_dropped);
     }
 }
 

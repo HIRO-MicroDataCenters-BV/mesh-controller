@@ -1,4 +1,5 @@
 use anyhow::Result;
+use iroh_metrics::core::{Core, Metric};
 use mesh::{built_info, context_builder::ContextBuilder};
 use tracing::info;
 
@@ -6,6 +7,12 @@ fn main() -> Result<()> {
     rustls::crypto::aws_lc_rs::default_provider()
         .install_default()
         .expect("Failed to setup rustls default crypto provider [aws_lc_rs]");
+
+    Core::init(|reg, metrics| {
+        metrics.insert(iroh::metrics::ConnectionMetrics::new(reg));
+        metrics.insert(iroh::metrics::MagicsockMetrics::new(reg));
+        metrics.insert(iroh::metrics::NetReportMetrics::new(reg));
+    });
 
     let context_builder = ContextBuilder::from_cli()?;
     let context = context_builder.try_build_and_start()?;

@@ -5,6 +5,7 @@ use axum_prometheus::{
     metrics::set_global_recorder,
     metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle},
 };
+use iroh_metrics::core::Core;
 use tracing::warn;
 
 pub struct MeshApiImpl {
@@ -28,7 +29,11 @@ impl MeshApi for MeshApiImpl {
     }
 
     async fn metrics(&self) -> Result<String> {
-        Ok(self.recorder_handle.render())
+        let mut metrics_rendered = self.recorder_handle.render();
+        let core = Core::get().ok_or(iroh_metrics::Error::NoMetrics)?;
+        let content = core.encode();
+        metrics_rendered += &content;
+        Ok(metrics_rendered)
     }
 }
 
