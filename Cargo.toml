@@ -10,6 +10,14 @@ resolver = "3"
 
 [workspace.lints.rust]
 
+[patch.crates-io]
+iroh-base = { path = "patch/iroh/iroh-base" }
+iroh = { path = "patch/iroh/iroh" }
+iroh-gossip = { path = "patch/iroh-gossip" }
+iroh-quinn = { path = "patch/quinn/quinn" }
+iroh-quinn-proto = { path = "patch/quinn/quinn-proto" }
+iroh-quinn-udp = { path = "patch/quinn/quinn-udp" }
+
 [workspace.dependencies]
 async-trait = "0.1.89"
 anyhow = "1.0.100"
@@ -19,12 +27,20 @@ bytes = "1.11.0"
 hex = "0.4.3"
 clap = { version = "4.5.54", features = ["derive"] }
 ciborium = "0.2.2"
-p2panda-core = { git = "https://github.com/p2panda/p2panda.git", tag="v0.4.0" }
-p2panda-net = { git = "https://github.com/p2panda/p2panda.git", default-features = false, tag="v0.4.0" }
-p2panda-sync = { git = "https://github.com/p2panda/p2panda.git", features = ["cbor", "log-sync"], default-features = false, tag="v0.4.0" }
-p2panda-discovery = { git = "https://github.com/p2panda/p2panda.git", tag="v0.4.0" }
-p2panda-store = { git = "https://github.com/p2panda/p2panda.git", features=["memory"], tag="v0.4.0" }
-p2panda-stream = { git = "https://github.com/p2panda/p2panda.git", tag="v0.4.0" }
+p2panda-core = { path = "patch/p2panda/p2panda-core" }
+p2panda-net = { path = "patch/p2panda/p2panda-net", default-features = false }
+p2panda-sync = { path = "patch/p2panda/p2panda-sync", features = ["cbor", "log-sync"], default-features = false }
+p2panda-discovery = { path = "patch/p2panda/p2panda-discovery" }
+p2panda-store = { path = "patch/p2panda/p2panda-store", features=["memory"] }
+p2panda-stream = { path = "patch/p2panda/p2panda-stream" }
+
+# p2panda-core = { git = "https://github.com/p2panda/p2panda.git", tag="v0.4.0" }
+# p2panda-net = { git = "https://github.com/p2panda/p2panda.git", default-features = false, tag="v0.4.0" }
+# p2panda-sync = { git = "https://github.com/p2panda/p2panda.git", features = ["cbor", "log-sync"], default-features = false, tag="v0.4.0" }
+# p2panda-discovery = { git = "https://github.com/p2panda/p2panda.git", tag="v0.4.0" }
+# p2panda-store = { git = "https://github.com/p2panda/p2panda.git", features=["memory"], tag="v0.4.0" }
+# p2panda-stream = { git = "https://github.com/p2panda/p2panda.git", tag="v0.4.0" }
+
 iroh-base = "0.34.1"
 mesh = { path = "mesh" }
 mesh-kube-fake-api = { path = "mesh-kube-fake-api" }
