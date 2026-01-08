@@ -17,6 +17,7 @@ iroh-gossip = { path = "patch/iroh-gossip" }
 iroh-quinn = { path = "patch/quinn/quinn" }
 iroh-quinn-proto = { path = "patch/quinn/quinn-proto" }
 iroh-quinn-udp = { path = "patch/quinn/quinn-udp" }
+iroh-metrics = { path = "patch/iroh-metrics" }
 
 [workspace.dependencies]
 async-trait = "0.1.89"
