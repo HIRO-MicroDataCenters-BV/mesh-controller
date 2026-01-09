@@ -146,7 +146,7 @@ impl Endpoint {
             runtime.clone(),
         );
         let driver = EndpointDriver(rc.clone());
-        runtime.spawn(Box::pin(
+        runtime.spawn_logged(Box::pin(
             async {
                 if let Err(e) = driver.await {
                     tracing::error!("I/O error: {}", e);

@@ -2747,7 +2747,9 @@ version = "0.13.0"
 dependencies = [
  "bytes",
  "cfg_aliases",
+ "futures",
  "futures-io",
+ "futures-util",
  "iroh-metrics",
  "iroh-quinn-proto",
  "iroh-quinn-udp",
@@ -2757,6 +2759,7 @@ dependencies = [
  "socket2 0.5.10",
  "thiserror 2.0.17",
  "tokio",
+ "tokio-util",
  "tracing",
  "web-time",
 ]

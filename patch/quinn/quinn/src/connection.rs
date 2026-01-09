@@ -16,7 +16,7 @@ use thiserror::Error;
 use tokio::sync::{futures::Notified, mpsc, oneshot, watch, Notify};
 use tracing::{debug_span, Instrument, Span};
 use iroh_metrics::inc;
-use crate::metrics::{QuinnConnectionMetrics, ConnectionDriverMetrics};
+use crate::{metrics::{ConnectionDriverMetrics, QuinnConnectionMetrics}, runtime::TaskHandle};
 
 use crate::{
     mutex::Mutex,
@@ -62,7 +62,7 @@ impl Connecting {
 
         let driver = ConnectionDriver(conn.clone());
         inc!(ConnectionDriverMetrics, connections_created);
-        runtime.spawn(Box::pin(
+        runtime.spawn_logged(Box::pin(
             async {
                 if let Err(e) = driver.await {
                     tracing::error!("I/O error: {e}");

@@ -11,8 +11,18 @@ use tokio::{
     io::Interest,
     time::{sleep_until, Sleep},
 };
-
+use crate::runtime::TaskHandle;
 use super::{AsyncTimer, AsyncUdpSocket, Runtime, UdpPollHelper};
+use tokio::task::JoinError;
+use tokio_util::task::AbortOnDropHandle;
+use futures_util::{FutureExt, TryFutureExt};
+use futures::future::{MapErr, Shared};
+use tracing::error;
+use iroh_metrics::inc;
+use crate::metrics::RuntimeMetrics;
+
+pub(crate) type JoinErrToStr =
+    Box<dyn Fn(tokio::task::JoinError) -> String + Send + Sync + 'static>;
 
 /// A Quinn runtime for Tokio
 #[derive(Debug)]
@@ -27,6 +37,30 @@ impl Runtime for TokioRuntime {
         tokio::spawn(future);
     }
 
+    fn spawn_logged(&self, future: Pin<Box<dyn Future<Output = ()> + Send>>) {
+        tokio::spawn(async move {
+            if let Err(e) = std::panic::AssertUnwindSafe(future)
+                .catch_unwind()
+                .await
+            {
+                inc!(RuntimeMetrics, panics);
+                error!("task panicked: {:?}", e);                
+                std::panic::resume_unwind(e);
+            }
+        });
+    }
+
+    fn spawn_with_handle(&self, future: Pin<Box<dyn Future<Output = ()> + Send>>) -> Pin<Box<dyn TaskHandle>> {
+
+        let join_handle = tokio::spawn(future);
+
+        let handle = AbortOnDropHandle::new(join_handle)
+            .map_err(Box::new(|e: JoinError| e.to_string()) as JoinErrToStr)
+            .shared();
+
+        Box::pin(TokioTaskHandle{ handle })
+    }
+
     fn wrap_udp_socket(&self, sock: std::net::UdpSocket) -> io::Result<Arc<dyn AsyncUdpSocket>> {
         Ok(Arc::new(UdpSocket {
             inner: udp::UdpSocketState::new((&sock).into())?,
@@ -38,6 +72,13 @@ impl Runtime for TokioRuntime {
         tokio::time::Instant::now().into_std()
     }
 }
+
+#[derive(Debug)]
+struct TokioTaskHandle {
+    #[allow(dead_code)]
+    handle: Shared<MapErr<AbortOnDropHandle<()>, JoinErrToStr>>,
+}
+impl TaskHandle for TokioTaskHandle {}
 
 impl AsyncTimer for Sleep {
     fn reset(self: Pin<&mut Self>, t: Instant) {

@@ -48,3 +48,24 @@ impl Metric for ConnectionDriverMetrics {
         "connection_driver"
     }
 }
+
+#[allow(missing_docs)]
+#[derive(Debug, Clone, Iterable)]
+#[non_exhaustive]
+pub struct RuntimeMetrics {
+    pub panics: Counter,
+}
+
+impl Default for RuntimeMetrics {
+    fn default() -> Self {
+        Self {
+            panics: Counter::new("panics"),
+        }
+    }
+}
+
+impl Metric for RuntimeMetrics {
+    fn name() -> &'static str {
+        "runtime"
+    }
+}

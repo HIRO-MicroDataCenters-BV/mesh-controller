@@ -55,11 +55,13 @@ wasm-bindgen-test = { version = "0.3.45" }
 web-time = "1"
 windows-sys = { version = ">=0.52, <=0.59", features = ["Win32_Foundation", "Win32_System_IO", "Win32_Networking_WinSock"] }
 cfg_aliases = "0.2"
-
 # Fix minimal dependencies for indirect deps
 async-global-executor = "2.4.1"
 async-fs = "2.1"
 async-executor = "1.13.0"
+tokio-util = { version = "0.7.18" }
+futures-util = { version = "0.3.31" }
+futures = { version = "0.3.31", default-features = false }
 
 [profile.bench]
 debug = true
