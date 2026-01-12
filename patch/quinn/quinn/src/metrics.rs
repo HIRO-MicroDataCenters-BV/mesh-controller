@@ -69,3 +69,26 @@ impl Metric for RuntimeMetrics {
         "runtime"
     }
 }
+
+#[allow(missing_docs)]
+#[derive(Debug, Clone, Iterable)]
+#[non_exhaustive]
+pub struct ConnectionSetMetrics {
+    pub senders_added: Counter,
+    pub senders_removed: Counter,
+}
+
+impl Default for ConnectionSetMetrics {
+    fn default() -> Self {
+        Self {
+            senders_added: Counter::new("senders_added"),
+            senders_removed: Counter::new("senders_removed"),
+        }
+    }
+}
+
+impl Metric for ConnectionSetMetrics {
+    fn name() -> &'static str {
+        "connectionset"
+    }
+}

@@ -24,6 +24,8 @@ use proto::{
     self as proto, ClientConfig, ConnectError, ConnectionError, ConnectionHandle, DatagramEvent,
     EndpointEvent, ServerConfig,
 };
+use iroh_metrics::{inc, inc_by};
+use crate::metrics::ConnectionSetMetrics;
 use rustc_hash::FxHashMap;
 #[cfg(all(not(wasm_browser), any(feature = "aws-lc-rs", feature = "ring"),))]
 use socket2::{Domain, Protocol, Socket, Type};
@@ -395,7 +397,7 @@ impl Drop for EndpointDriver {
         self.0.shared.incoming.notify_waiters();
         // Drop all outgoing channels, signaling the termination of the endpoint to the associated
         // connections.
-        endpoint.recv_state.connections.senders.clear();
+        endpoint.recv_state.connections.clear_senders();
     }
 }
 
@@ -520,7 +522,7 @@ impl State {
             };
 
             if event.is_drained() {
-                self.recv_state.connections.senders.remove(&ch);
+                self.recv_state.connections.remove_sender(&ch);
                 if self.recv_state.connections.is_empty() {
                     shared.idle.notify_waiters();
                 }
@@ -610,11 +612,22 @@ impl ConnectionSet {
             .unwrap();
         }
         self.senders.insert(handle, send);
+        inc!(ConnectionSetMetrics, senders_added);
         Connecting::new(handle, conn, self.sender.clone(), recv, socket, runtime)
     }
 
     fn is_empty(&self) -> bool {
         self.senders.is_empty()
+    }
+
+    fn remove_sender(&mut self, ch: &ConnectionHandle) {
+        inc!(ConnectionSetMetrics, senders_removed);
+        self.senders.remove(&ch);
+    }
+
+    fn clear_senders(&mut self) {        
+        inc_by!(ConnectionSetMetrics, senders_removed, self.senders.len() as u64);
+        self.senders.clear();
     }
 }
 

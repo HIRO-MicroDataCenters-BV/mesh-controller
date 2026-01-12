@@ -15,6 +15,7 @@ fn main() -> Result<()> {
         metrics.insert(iroh_quinn::metrics::ConnectionDriverMetrics::new(reg));
         metrics.insert(iroh_quinn::metrics::QuinnConnectionMetrics::new(reg));
         metrics.insert(iroh_quinn::metrics::RuntimeMetrics::new(reg));
+        metrics.insert(iroh_quinn::metrics::ConnectionSetMetrics::new(reg));
     });
 
     let context_builder = ContextBuilder::from_cli()?;
