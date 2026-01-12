@@ -152,11 +152,11 @@ where
 
         if let Some(sync_actor) = sync_actor {
             let shutdown_token = shutdown_token.clone();
-            tokio::task::spawn(async move {
+            tokio::task::spawn(Box::pin(async move {
                 if let Err(err) = sync_actor.run(shutdown_token).await {
                     error!("sync manager failed to run: {err:?}");
                 }
-            });
+            }));
         }
 
         let gossip_handle = tokio::task::spawn(async move {

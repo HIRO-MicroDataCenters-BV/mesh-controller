@@ -116,7 +116,7 @@ where
         {
             let gossip_actor_tx = self.gossip_actor_tx.clone();
             let gossip_joined = self.gossip_joined.clone();
-            tokio::task::spawn(async move {
+            tokio::task::spawn(Box::pin(async move {
                 while let Some(event) = to_network_rx.recv().await {
                     let gossip_joined = gossip_joined.read().await;
                     if !gossip_joined.contains(&topic.id()) {
@@ -152,7 +152,7 @@ where
                         break;
                     }
                 }
-            });
+            }));
         }
 
         Ok(())

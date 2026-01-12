@@ -136,7 +136,7 @@ where
                 };
 
                 self.want_join.insert(topic_id);
-                self.pending_joins.spawn(fut);
+                self.pending_joins.spawn(Box::pin(fut));
             }
             ToGossipActor::Leave { topic_id } => {
                 // Quit the topic by dropping all handles to `GossipTopic` for the given topic id.
