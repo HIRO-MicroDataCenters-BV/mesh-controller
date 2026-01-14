@@ -15,4 +15,4 @@ spec:
   selector:
     matchLabels:
       {{- include "app.selectorLabels" . | nindent 6 }}
-{{- end }}      
+{{- end }}

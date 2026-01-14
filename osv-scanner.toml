@@ -5,3 +5,11 @@ reason = "Low risk"
 [[IgnoredVulns]]
 id = "RUSTSEC-2024-0436"
 reason = "Low risk"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0002"
+reason = "Low risk"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0002"
+reason = "Low risk"

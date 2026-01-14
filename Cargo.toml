@@ -9,6 +9,9 @@ members = [
 resolver = "3"
 exclude = ["patch/quinn"]
 
+[profile.release]
+debug = true
+
 [workspace.lints.rust]
 
 [patch.crates-io]
