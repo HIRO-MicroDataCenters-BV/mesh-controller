@@ -75,6 +75,12 @@ readinessProbe:
   periodSeconds: 10
   timeoutSeconds: 5
 
+instrument:
+  method: heaptrack
+  volume:
+    storage: 3Gi 
+    storageclass: local
+
 configuration:
   # NETWORK
   # Port for node-node communication and data replication. Defaults to 9102.
@@ -143,8 +149,3 @@ configuration:
 
   # Instrument image
   # heaptrack | bytehound | none
-  instrument:
-    method: heaptrack
-    volume:
-      storage: 3Gi 
-      storageclass: local
