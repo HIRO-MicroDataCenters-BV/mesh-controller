@@ -1,0 +1,13 @@
+{{- if not (eq .Values.instrument.method "none") }}
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ include "app.fullname" . }}-instrument-pvc
+spec:
+  capacity:
+    storage: {{ .Values.instrument.storage }}
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: {{ .Values.instrument.storage-class }}
+{{- end }}

@@ -34,10 +34,22 @@ spec:
             {{- toYaml .Values.securityContext | nindent 12 }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- if eq .Values.instrument.method "bytehound" }}
+          args:
+            - heaptrack
+            - --raw
+            - -o
+            - /instrument/trace.raw 
+            - /usr/local/bin/mesh-controller
+            - -c
+            - /etc/mesh-controller/config.yaml
+          {{- end }}
+          {{- if eq .Values.instrument.method "none" }}
           args:
             - /usr/local/bin/mesh-controller
             - -c
             - /etc/mesh-controller/config.yaml
+          {{- end }}
           ports:
           # the port for the p2p networking endpoint
           - name: network
@@ -60,6 +72,10 @@ spec:
             - name: configuration
               mountPath: /etc/mesh-controller/config.yaml
               subPath: config.yaml
+          {{- if not (eq .Values.instrument.method "none") }}
+            - name: instrument-storage
+              mountPath: /instrument
+          {{- end }}
           env:          
             - name: "PRIVATE_KEY"
               valueFrom:
@@ -74,6 +90,11 @@ spec:
         - name: configuration
           configMap:
             name: {{ include "app.fullname" . }}-config
+      {{- if not (eq .Values.instrument.method "none") }}
+        - name: instrument-storage
+          persistentVolumeClaim:
+            claimName: {{ include "app.fullname" . }}-instrument-pvc            
+      {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
