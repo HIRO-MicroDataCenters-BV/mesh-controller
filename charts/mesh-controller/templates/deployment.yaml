@@ -44,6 +44,12 @@ spec:
             - -c
             - /etc/mesh-controller/config.yaml
           {{- end }}
+          {{- if eq .Values.instrument.method "bytehound" }}
+          args:
+            - /usr/local/bin/mesh-controller
+            - -c
+            - /etc/mesh-controller/config.yaml
+          {{- end }}
           {{- if eq .Values.instrument.method "none" }}
           args:
             - /usr/local/bin/mesh-controller

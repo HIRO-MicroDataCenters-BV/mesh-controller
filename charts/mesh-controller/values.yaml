@@ -76,6 +76,8 @@ readinessProbe:
   timeoutSeconds: 5
 
 instrument:
+  # Instrument image
+  # heaptrack | bytehound | none
   method: none
   volume:
     create: true
@@ -148,5 +150,4 @@ configuration:
   # console:
   #   enable: true
 
-  # Instrument image
-  # heaptrack | bytehound | none
+  

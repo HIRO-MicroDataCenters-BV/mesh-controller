@@ -1,0 +1,28 @@
+FROM ubuntu:22.04 AS builder
+WORKDIR /usr/src/
+RUN apt-get update && \
+    apt upgrade -y && \
+    apt-get install git curl pkg-config libssl-dev yarn nodejs build-essential -y
+
+RUN curl https://sh.rustup.rs -sSf | sh -s -- -y --no-modify-path
+RUN echo '. "/root/.cargo/env"' >> ~/.bashrc
+ENV PATH="/root/.cargo/bin:$PATH"
+
+RUN git clone https://github.com/koute/bytehound.git
+WORKDIR /usr/src/bytehound
+RUN cargo build --release -p bytehound-preload
+
+WORKDIR /usr/src/mesh-controller
+COPY . .
+RUN cargo install --path ./mesh
+
+FROM ubuntu:22.04
+
+RUN apt-get update && \
+    apt upgrade -y && \
+    apt-get install libssl-dev -y
+COPY --from=builder /usr/src/mesh-controller/target/release/mesh-controller /usr/local/bin/mesh-controller
+COPY --from=builder /usr/src/bytehound/target/release/libbytehound.so /usr/local/bin/libbytehound.so
+ENV LD_PRELOAD=/usr/local/bin/libbytehound.so
+ENV MEMORY_PROFILER_OUTPUT=/instrument/memory-profiling_%e_%t_%p.dat
+CMD ["/usr/local/bin/mesh-controller", "-c", "/etc/mesh-controller/config.yaml"]
