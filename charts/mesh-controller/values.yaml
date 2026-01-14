@@ -147,4 +147,4 @@ configuration:
     method: heaptrack
     volume:
       storage: 3Gi 
-      storage-class: local
+      storageclass: local

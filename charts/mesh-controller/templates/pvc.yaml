@@ -9,5 +9,5 @@ spec:
   accessModes:
     - ReadWriteOnce
   persistentVolumeReclaimPolicy: Retain
-  storageClassName: {{ .Values.instrument.storage-class }}
+  storageClassName: {{ .Values.instrument.storageclass }}
 {{- end }}
