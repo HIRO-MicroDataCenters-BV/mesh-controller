@@ -34,12 +34,12 @@ spec:
             {{- toYaml .Values.securityContext | nindent 12 }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          {{- if eq .Values.instrument.method "bytehound" }}
+          {{- if eq .Values.instrument.method "heaptrack" }}
+          command: ["heaptrack"]
           args:
-            - heaptrack
             - --raw
             - -o
-            - /instrument/trace.raw 
+            - /instrument/trace 
             - /usr/local/bin/mesh-controller
             - -c
             - /etc/mesh-controller/config.yaml

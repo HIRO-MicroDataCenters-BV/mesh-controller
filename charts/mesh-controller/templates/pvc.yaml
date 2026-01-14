@@ -1,13 +1,15 @@
 {{- if not (eq .Values.instrument.method "none") }}
+{{- if .Values.instrument.volume.create }}
 apiVersion: v1
-kind: PersistentVolume
+kind: PersistentVolumeClaim
 metadata:
   name: {{ include "app.fullname" . }}-instrument-pvc
 spec:
-  capacity:
-    storage: {{ .Values.instrument.storage }}
   accessModes:
     - ReadWriteOnce
-  persistentVolumeReclaimPolicy: Retain
-  storageClassName: {{ .Values.instrument.storageclass }}
+  resources:
+    requests:
+      storage: {{ .Values.instrument.volume.storage }}
+  storageClassName: {{ .Values.instrument.volume.storageclass }}
+{{- end }}
 {{- end }}

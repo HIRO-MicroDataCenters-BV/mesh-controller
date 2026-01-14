@@ -76,9 +76,10 @@ readinessProbe:
   timeoutSeconds: 5
 
 instrument:
-  method: heaptrack
+  method: none
   volume:
-    storage: 3Gi 
+    create: true
+    storage: 5Gi 
     storageclass: local
 
 configuration:
