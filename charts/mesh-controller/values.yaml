@@ -75,6 +75,13 @@ readinessProbe:
   periodSeconds: 10
   timeoutSeconds: 5
 
+instrument:
+  method: none
+  volume:
+    create: true
+    storage: 5Gi 
+    storageclass: local
+
 configuration:
   # NETWORK
   # Port for node-node communication and data replication. Defaults to 9102.
@@ -140,3 +147,6 @@ configuration:
   # log_level: mesh=DEBUG,tokio=trace,runtime=trace
   # console:
   #   enable: true
+
+  # Instrument image
+  # heaptrack | bytehound | none

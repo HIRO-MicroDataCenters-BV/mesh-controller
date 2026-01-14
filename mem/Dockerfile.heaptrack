@@ -1,0 +1,39 @@
+FROM ubuntu:22.04 AS builder
+
+RUN apt-get update && \
+    apt upgrade -y && \
+    apt-get \
+        install git curl pkg-config libssl-dev yarn nodejs build-essential \
+        cmake libunwind-dev libboost-all-dev elfutils extra-cmake-modules libdw-dev libzstd-dev qt6-base-dev \
+        -y
+RUN curl https://sh.rustup.rs -sSf | sh -s -- -y --no-modify-path
+RUN echo '. "/root/.cargo/env"' >> ~/.bashrc         
+ENV PATH="/root/.cargo/bin:$PATH"
+
+WORKDIR /usr/src/
+RUN git clone https://github.com/KDE/heaptrack.git
+WORKDIR /usr/src/heaptrack
+RUN mkdir build
+WORKDIR /usr/src/heaptrack/build
+RUN cmake -DCMAKE_BUILD_TYPE=Release ..
+RUN make -j$(nproc)
+RUN make install
+
+WORKDIR /usr/src/mesh-controller
+COPY . .
+RUN cargo install --path ./mesh
+
+
+FROM ubuntu:22.04
+RUN apt-get update && \
+    apt upgrade -y && \
+    apt-get install libssl-dev libunwind-dev libboost-all-dev libdw-dev libzstd-dev -y
+
+COPY --from=builder /usr/src/mesh-controller/target/release/mesh-controller /usr/local/bin/mesh-controller
+
+COPY --from=builder /usr/local/bin/heaptrack /usr/local/bin/heaptrack
+COPY --from=builder /usr/local/bin/heaptrack_print /usr/local/bin/heaptrack_print
+COPY --from=builder /usr/local/lib/heaptrack/ /usr/local/lib/heaptrack/
+COPY --from=builder /usr/local/include/heaptrack_api.h /usr/local/include/heaptrack_api.h
+
+CMD ["heaptrack", "/usr/local/bin/mesh-controller", "-c", "/etc/mesh-controller/config.yaml"]
