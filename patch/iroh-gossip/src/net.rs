@@ -599,6 +599,7 @@ impl Actor {
             }
             Some(_relay_url) = home_relay_stream.next() => {
                 trace!(?i, "tick: new_home_relay");
+                inc!(Metrics, actor_tick_relay);
                 self.handle_addr_update(current_addresses).await?;
             }
             (peer_id, res) = self.dialer.next_conn() => {

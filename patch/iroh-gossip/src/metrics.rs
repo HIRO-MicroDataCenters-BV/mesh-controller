@@ -22,6 +22,7 @@ pub struct Metrics {
     pub actor_tick_main: Counter,
     pub actor_tick_rx: Counter,
     pub actor_tick_endpoint: Counter,
+    pub actor_tick_relay: Counter,
     pub actor_tick_dialer: Counter,
     pub actor_tick_dialer_success: Counter,
     pub actor_tick_dialer_failure: Counter,
@@ -47,6 +48,7 @@ impl Default for Metrics {
             actor_tick_endpoint: Counter::new(
                 "Number of times the actor ticked for an endpoint event",
             ),
+            actor_tick_relay: Counter::new("Number of times the actor ticked for a relay event"),
             actor_tick_dialer: Counter::new("Number of times the actor ticked for a dialer event"),
             actor_tick_dialer_success: Counter::new(
                 "Number of times the actor ticked for a successful dialer event",
