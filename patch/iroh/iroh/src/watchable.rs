@@ -326,11 +326,18 @@ impl<T: Clone> Shared<T> {
                 return Poll::Ready((epoch, state.value.clone()));
             }
         }
+        let waker = cx.waker().to_owned();
 
-        self.watchers
-            .lock()
-            .expect("poisoned")
-            .push_back(cx.waker().to_owned());
+        let mut watchers = self.watchers.lock().expect("poisoned");
+        let in_queue = watchers
+            .iter()
+            .any(|existing| existing.data() == waker.data());
+        // println!("waker {:?}, in_queue {}, len {}", waker, in_queue, watchers.len());
+        if !in_queue {
+            watchers.push_back(waker);
+        }
+
+        drop(watchers);
 
         #[cfg(iroh_loom)]
         loom::thread::yield_now();
