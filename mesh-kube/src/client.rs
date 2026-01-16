@@ -255,14 +255,18 @@ impl KubeClient {
 
     pub async fn get_latest_version(&self) -> Result<Version> {
         use k8s_openapi::api::core::v1::Pod;
+        let pods: Api<Pod> = Api::all(self.client.clone());
 
         let lp = ListParams {
             resource_version: Some("0".to_string()),
+            // 0 - value is interpreted as "set server default".
+            // To effectively limit we have to set value to 1.
+            limit: Some(1),
             ..Default::default()
         };
-        let pods: Api<Pod> = Api::all(self.client.clone());
 
-        let pod_list = pods.list(&lp).await?;
+        let pod_list = pods.list_metadata(&lp).await?;
+
         let latest_version_str = pod_list.metadata.resource_version.unwrap_or("0".into());
         let latest = latest_version_str.parse::<Version>().unwrap_or_default();
         Ok(latest)
