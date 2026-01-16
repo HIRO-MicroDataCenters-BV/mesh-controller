@@ -39,6 +39,7 @@ iroh-base.workspace = true
 iroh-metrics.workspace = true
 iroh.workspace = true
 iroh-quinn.workspace = true
+iroh-gossip.workspace = true
 rand.workspace = true
 serde.workspace = true
 serde_json.workspace = true
