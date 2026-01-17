@@ -8,10 +8,22 @@ use std::{collections::HashMap, fmt::Debug};
 
 pub type LogSeq = u64;
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Deserialize, Serialize)]
+#[derive(Clone, PartialEq, Eq, Hash, Deserialize, Serialize)]
 pub struct MeshTopic {
     name: String,
     id: [u8; 32],
+}
+
+impl ::std::fmt::Display for MeshTopic {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
+        write!(f, "{}", ::hex::encode(&self.id))
+    }
+}
+
+impl ::std::fmt::Debug for MeshTopic {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
+        write!(f, "{}({})", self.name, ::hex::encode(&self.id))
+    }
 }
 
 impl MeshTopic {
