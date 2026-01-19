@@ -74,7 +74,7 @@ impl Metric for Metrics {
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
 pub struct Labels {
     /// The peer ID associated with these metrics.
-    pub peer_id: String
+    pub peer_id: String,
 }
 
 #[allow(missing_docs)]
@@ -86,9 +86,10 @@ pub struct PeerMetrics {
 impl Default for PeerMetrics {
     fn default() -> Self {
         PeerMetrics {
-            queue_size: Family::<Labels, prometheus_client::metrics::gauge::Gauge>::new_with_constructor(|| {
-                prometheus_client::metrics::gauge::Gauge::default()
-            }),
+            queue_size:
+                Family::<Labels, prometheus_client::metrics::gauge::Gauge>::new_with_constructor(
+                    || prometheus_client::metrics::gauge::Gauge::default(),
+                ),
         }
     }
 }
@@ -102,7 +103,9 @@ impl Metric for PeerMetrics {
             if let Some(counter) = counter.downcast_ref::<Counter>() {
                 sub_registry.register(metric, counter.description, counter.counter.clone());
             }
-            if let Some(family) = counter.downcast_ref::<Family<Labels, prometheus_client::metrics::gauge::Gauge>>() {
+            if let Some(family) =
+                counter.downcast_ref::<Family<Labels, prometheus_client::metrics::gauge::Gauge>>()
+            {
                 sub_registry.register(metric, "", family.clone());
             }
         }

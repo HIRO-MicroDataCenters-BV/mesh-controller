@@ -8,6 +8,7 @@ use std::{
     task::{Context, Poll},
 };
 
+use crate::metrics::Labels;
 use anyhow::Context as _;
 use bytes::BytesMut;
 use futures_concurrency::stream::{stream_group, StreamGroup};
@@ -18,7 +19,6 @@ use iroh::{
     Endpoint, NodeAddr, NodeId, PublicKey, RelayUrl,
 };
 use iroh_metrics::{core::Metric, inc};
-use crate::metrics::Labels;
 use n0_future::{
     boxed::BoxFuture,
     task::{self, AbortOnDropHandle, JoinSet},
@@ -861,12 +861,13 @@ impl Actor {
                                 self.dialer.queue_dial(peer_id, GOSSIP_ALPN);
                             }
                             queue.push_back(message);
-                            PeerMetrics::with_metric(|m|{
+                            PeerMetrics::with_metric(|m| {
                                 m.queue_size
-                                    .get_or_create(&Labels { peer_id: peer_id.fmt_short() })
+                                    .get_or_create(&Labels {
+                                        peer_id: peer_id.fmt_short(),
+                                    })
                                     .set(queue.len() as i64)
                             });
-                            
                         }
                     }
                 }
@@ -999,7 +1000,9 @@ impl PeerState {
 
 impl Default for PeerState {
     fn default() -> Self {
-        PeerState::Pending { queue: VecDeque::new() }
+        PeerState::Pending {
+            queue: VecDeque::new(),
+        }
     }
 }
 
@@ -1058,14 +1061,12 @@ async fn connection_loop(
 
     let send_loop = async {
         let peer_id_short = from.fmt_short();
-        let labels = Labels { peer_id: peer_id_short.clone() };
+        let labels = Labels {
+            peer_id: peer_id_short.clone(),
+        };
         for msg in queue {
             write_message(&mut send, &mut send_buf, &msg, max_message_size).await?;
-            PeerMetrics::with_metric(|m|{
-                m.queue_size
-                    .get_or_create(&labels)
-                    .dec()
-            });
+            PeerMetrics::with_metric(|m| m.queue_size.get_or_create(&labels).dec());
         }
         while let Some(msg) = send_rx.recv().await {
             write_message(&mut send, &mut send_buf, &msg, max_message_size).await?;
