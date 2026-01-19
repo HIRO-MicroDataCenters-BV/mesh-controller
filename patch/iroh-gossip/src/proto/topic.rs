@@ -20,6 +20,9 @@ use super::{
 /// This is a sane but arbitrary default and can be changed in the [`Config`].
 pub const DEFAULT_MAX_MESSAGE_SIZE: usize = 4096;
 
+/// The default maximum outgoing queue of pending gossip messages for a peer
+pub const DEFAULT_MAX_PEER_PENDING_QUEUE_SIZE: usize = 500;
+
 /// Input event to the topic state handler.
 #[derive(Clone, Debug)]
 pub enum InEvent<PI> {
@@ -188,6 +191,9 @@ pub struct Config {
     ///
     /// The default is [`DEFAULT_MAX_MESSAGE_SIZE`].
     pub max_message_size: usize,
+
+    /// Max outgoing queue size for peers
+    pub max_peer_pending_queue_size: usize,
 }
 
 impl Default for Config {
@@ -196,6 +202,7 @@ impl Default for Config {
             membership: Default::default(),
             broadcast: Default::default(),
             max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
+            max_peer_pending_queue_size: DEFAULT_MAX_PEER_PENDING_QUEUE_SIZE,
         }
     }
 }

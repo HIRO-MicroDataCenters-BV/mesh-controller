@@ -179,6 +179,13 @@ impl Builder {
         self
     }
 
+    /// Sets the maximum pending message queue size for a peer.
+    /// By default this is `500` messages.
+    pub fn max_max_peer_pending_queue_size(mut self, size: usize) -> Self {
+        self.config.max_peer_pending_queue_size = size;
+        self
+    }
+
     /// Set the membership configuration.
     pub fn membership_config(mut self, config: HyparviewConfig) -> Self {
         self.config.membership = config;
@@ -479,6 +486,8 @@ struct Actor {
     quit_queue: VecDeque<TopicId>,
     /// Tasks for the connection loops, to keep track of panics.
     connection_tasks: JoinSet<(NodeId, Connection, anyhow::Result<()>)>,
+    /// Max outgoing queue size for a peer
+    max_peer_pending_queue_size: usize,
 }
 
 impl Actor {
@@ -487,6 +496,7 @@ impl Actor {
         config: proto::Config,
         my_addr: &AddrInfo,
     ) -> (Self, mpsc::Sender<ToActor>) {
+        let max_outgoing_queue_size = config.max_peer_pending_queue_size;
         let peer_id = endpoint.node_id();
         let dialer = Dialer::new(endpoint.clone());
         let state = proto::State::new(
@@ -511,6 +521,7 @@ impl Actor {
             topics: Default::default(),
             quit_queue: Default::default(),
             connection_tasks: Default::default(),
+            max_peer_pending_queue_size: max_outgoing_queue_size,
         };
 
         (actor, to_actor_tx)
@@ -861,6 +872,9 @@ impl Actor {
                                 self.dialer.queue_dial(peer_id, GOSSIP_ALPN);
                             }
                             queue.push_back(message);
+                            while queue.len() > self.max_peer_pending_queue_size {
+                                queue.pop_front();
+                            }
                             PeerMetrics::with_metric(|m| {
                                 m.queue_size
                                     .get_or_create(&Labels {
