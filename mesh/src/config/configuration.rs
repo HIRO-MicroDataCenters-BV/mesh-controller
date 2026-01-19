@@ -199,6 +199,21 @@ impl Default for TombstoneConfig {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Hash)]
+pub struct GossipOptions {
+    pub max_message_size: usize,
+    pub message_id_retention_seconds: Option<u64>,
+}
+
+impl Default for GossipOptions {
+    fn default() -> Self {
+        Self {
+            max_message_size: 16384,
+            message_id_retention_seconds: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Hash)]
 pub struct NodeConfig {
     pub bind_port: u16,
     pub http_bind_port: u16,
@@ -208,6 +223,7 @@ pub struct NodeConfig {
     pub network_id: String,
     pub protocol: Option<ProtocolConfig>,
     pub discovery: Option<DiscoveryOptions>,
+    pub gossip: Option<GossipOptions>,
 }
 
 impl Default for NodeConfig {
@@ -220,6 +236,7 @@ impl Default for NodeConfig {
             network_id: DEFAULT_NETWORK_ID.to_string(),
             protocol: None,
             discovery: None,
+            gossip: None,
         }
     }
 }
@@ -275,9 +292,9 @@ mod tests {
     use meshkube::config::KubeConfigurationExternal;
 
     use crate::config::configuration::{
-        Config, ConsoleConfig, DiscoveryOptions, KnownNode, KubeConfiguration, MergeStrategyType,
-        MeshConfig, NodeConfig, PeerTimeoutConfig, PeriodicSnapshotConfig, ProtocolConfig,
-        ResourceConfig, TombstoneConfig,
+        Config, ConsoleConfig, DiscoveryOptions, GossipOptions, KnownNode, KubeConfiguration,
+        MergeStrategyType, MeshConfig, NodeConfig, PeerTimeoutConfig, PeriodicSnapshotConfig,
+        ProtocolConfig, ResourceConfig, TombstoneConfig,
     };
 
     #[test]
@@ -318,7 +335,8 @@ mod tests {
                         private_key_path: PathBuf::from("/etc/dcp/mesh/private.key"),
                         network_id: "default".into(),
                         protocol: None,
-                        discovery: None
+                        discovery: None,
+                        gossip: None,
                     },
                     mesh: MeshConfig {
                         zone: "test".into(),
@@ -359,6 +377,9 @@ protocol:
     resync_interval_seconds: 60
 discovery:
     query_interval_seconds: 5
+gossip:
+    max_message_size: 16384
+    message_id_retention_seconds: 600
 
 nodes:
     - public_key: "6ee91c497d577b5c21ab53212c194b56779addd8088d8b850ece447c8844fe8a"
@@ -419,6 +440,10 @@ console:
                         network_id: "default".into(),
                         protocol: Some(ProtocolConfig::default()),
                         discovery: Some(DiscoveryOptions::default()),
+                        gossip: Some(GossipOptions {
+                            max_message_size: 16384,
+                            message_id_retention_seconds: Some(600)
+                        }),
                     },
                     kubernetes: KubeConfiguration::External(KubeConfigurationExternal {
                         kube_context: Some("default".into()),

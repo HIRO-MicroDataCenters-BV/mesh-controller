@@ -150,7 +150,8 @@ impl ContextBuilder {
             })
             .collect();
 
-        let (node_config, p2p_network_config) = MeshNode::configure_p2p_network(&config).await?;
+        let (node_config, p2p_network_config, gossip_config) =
+            MeshNode::configure_p2p_network(&config).await?;
 
         let resync_config = ContextBuilder::to_resync_config(&config);
         let instance_id = InstanceId::new(config.mesh.zone.to_owned());
@@ -167,6 +168,7 @@ impl ContextBuilder {
         let sync_config = SyncConfiguration::new(sync_protocol).resync(resync_config);
 
         let mut builder = NetworkBuilder::from_config(p2p_network_config)
+            .gossip(gossip_config)
             .private_key(private_key.clone())
             .sync(sync_config)
             .discovery(StaticLookup::new(

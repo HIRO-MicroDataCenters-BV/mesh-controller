@@ -127,6 +127,7 @@ use futures_util::future::{MapErr, Shared};
 use futures_util::{FutureExt, TryFutureExt};
 use iroh::{Endpoint, RelayMap, RelayNode};
 use iroh_gossip::net::{GOSSIP_ALPN, Gossip};
+use iroh_gossip::proto::PlumtreeConfig;
 use iroh_quinn::TransportConfig;
 use p2panda_core::{PrivateKey, PublicKey};
 use p2panda_discovery::{Discovery, DiscoveryMap};
@@ -422,9 +423,16 @@ where
         };
 
         let node_addr = endpoint.node_addr().await?;
+        let gossip_config = self.gossip_config.unwrap_or_default();
+
+        let mut broadcast_config = PlumtreeConfig::default();
+        if let Some(message_id_retention) = gossip_config.message_id_retention {
+            broadcast_config.message_id_retention = message_id_retention;
+        }
 
         let gossip = Gossip::builder()
-            .max_message_size(self.gossip_config.unwrap_or_default().max_message_size)
+            .max_message_size(gossip_config.max_message_size)
+            .broadcast_config(broadcast_config)
             .spawn(endpoint.clone())
             .await?;
 

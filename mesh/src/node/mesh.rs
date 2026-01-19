@@ -15,6 +15,8 @@ use meshkube::kube::event::KubeEvent;
 use p2panda_core::{Hash, Operation, PrivateKey, PublicKey};
 use p2panda_net::Config as NetworkConfig;
 use p2panda_net::NodeAddress;
+use p2panda_net::config::GossipConfig;
+use std::time::Duration;
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::task::JoinError;
 use tokio_util::task::AbortOnDropHandle;
@@ -73,7 +75,7 @@ impl MeshNode {
 
     pub async fn configure_p2p_network(
         config: &Config,
-    ) -> Result<(NodeConfig, NetworkConfig), anyhow::Error> {
+    ) -> Result<(NodeConfig, NetworkConfig, GossipConfig), anyhow::Error> {
         let topic: String = match &config.kubernetes {
             KubeConfiguration::InCluster => String::from("unknown"),
             KubeConfiguration::External(kube_configuration_external) => kube_configuration_external
@@ -89,6 +91,13 @@ impl MeshNode {
             bind_port_v4: config.node.bind_port,
             network_id: *network_id,
             ..Default::default()
+        };
+        let gossip_options = config.node.gossip.clone().unwrap_or_default();
+        let gossip_config = GossipConfig {
+            max_message_size: gossip_options.max_message_size,
+            message_id_retention: gossip_options
+                .message_id_retention_seconds
+                .map(|seconds| Duration::from_secs(seconds)),
         };
         for node in &config.node.known_nodes {
             // Resolve FQDN strings into IP addresses.
@@ -115,7 +124,7 @@ impl MeshNode {
             };
             network_config.direct_node_addresses.push(node_address);
         }
-        Ok((node_config, network_config))
+        Ok((node_config, network_config, gossip_config))
     }
 
     /// Graceful shutdown of the rhio node.

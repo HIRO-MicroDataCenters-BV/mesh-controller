@@ -7,10 +7,10 @@
 //!
 //! `GossipConfig` allows configuration of swarm membership, gossip broadcast and maximum message
 //! size. It is passed into `Network::gossip`.
+use serde::{Deserialize, Serialize};
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::path::PathBuf;
-
-use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 use crate::{NetworkId, NodeAddress, RelayUrl};
 
@@ -74,12 +74,16 @@ impl Default for Config {
 pub struct GossipConfig {
     /// Maximum gossip message size in bytes.
     pub max_message_size: usize,
+
+    /// Duration for which to keep the [`MessageId`]s for received messages.
+    pub message_id_retention: Option<Duration>,
 }
 
 impl Default for GossipConfig {
     fn default() -> Self {
         Self {
             max_message_size: 4096,
+            message_id_retention: None,
         }
     }
 }
