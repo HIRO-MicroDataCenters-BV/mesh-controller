@@ -66,6 +66,8 @@ quic-rpc-derive = { version = "0.19", optional = true }
 strum = { version = "0.26", optional = true }
 clap = { version = "4", features = ["derive"], optional = true }
 
+prometheus-client = { version = "0.22" }
+
 [dev-dependencies]
 tokio = { version = "1", features = ["io-util", "sync", "rt", "macros", "net", "fs"] }
 clap = { version = "4", features = ["derive"] }

@@ -1,9 +1,9 @@
 //! Metrics for iroh-gossip
-
 use iroh_metrics::{
     core::{Counter, Metric},
     struct_iterable::Iterable,
 };
+use prometheus_client::{encoding::EncodeLabelSet, metrics::family::Family};
 
 /// Enum of metrics for the module
 #[allow(missing_docs)]
@@ -67,5 +67,49 @@ impl Default for Metrics {
 impl Metric for Metrics {
     fn name() -> &'static str {
         "gossip"
+    }
+}
+
+/// Labels for peer metrics.
+#[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
+pub struct Labels {
+    /// The peer ID associated with these metrics.
+    pub peer_id: String
+}
+
+#[allow(missing_docs)]
+#[derive(Debug, Clone, Iterable)]
+pub struct PeerMetrics {
+    pub queue_size: Family<Labels, prometheus_client::metrics::gauge::Gauge>,
+}
+
+impl Default for PeerMetrics {
+    fn default() -> Self {
+        PeerMetrics {
+            queue_size: Family::<Labels, prometheus_client::metrics::gauge::Gauge>::new_with_constructor(|| {
+                prometheus_client::metrics::gauge::Gauge::default()
+            }),
+        }
+    }
+}
+
+impl Metric for PeerMetrics {
+    fn new(registry: &mut prometheus_client::registry::Registry) -> Self {
+        let sub_registry = registry.sub_registry_with_prefix(Self::name());
+
+        let this = Self::default();
+        for (metric, counter) in this.iter() {
+            if let Some(counter) = counter.downcast_ref::<Counter>() {
+                sub_registry.register(metric, counter.description, counter.counter.clone());
+            }
+            if let Some(family) = counter.downcast_ref::<Family<Labels, prometheus_client::metrics::gauge::Gauge>>() {
+                sub_registry.register(metric, "", family.clone());
+            }
+        }
+        this
+    }
+
+    fn name() -> &'static str {
+        "gossip_peer"
     }
 }

@@ -2717,6 +2717,7 @@ dependencies = [
  "n0-future",
  "nested_enum_utils",
  "postcard",
+ "prometheus-client",
  "quic-rpc",
  "quic-rpc-derive",
  "rand 0.8.5",

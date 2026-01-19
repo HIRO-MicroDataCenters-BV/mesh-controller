@@ -17,6 +17,7 @@ fn main() -> Result<()> {
         metrics.insert(iroh_quinn::metrics::RuntimeMetrics::new(reg));
         metrics.insert(iroh_quinn::metrics::ConnectionSetMetrics::new(reg));
         metrics.insert(iroh_gossip::metrics::Metrics::new(reg));
+        metrics.insert(iroh_gossip::metrics::PeerMetrics::new(reg));
     });
 
     let context_builder = ContextBuilder::from_cli()?;
