@@ -191,6 +191,9 @@ pub trait Metric:
             if let Some(counter) = counter.downcast_ref::<Counter>() {
                 sub_registry.register(metric, counter.description, counter.counter.clone());
             }
+            if let Some(gauge) = counter.downcast_ref::<Gauge>() {
+                sub_registry.register(metric, gauge.description, gauge.gauge.clone());
+            }
         }
         this
     }

@@ -15,8 +15,8 @@ use rustc_hash::FxHashMap;
 use thiserror::Error;
 use tokio::sync::{futures::Notified, mpsc, oneshot, watch, Notify};
 use tracing::{debug_span, Instrument, Span};
-use iroh_metrics::inc;
-use crate::{metrics::{ConnectionDriverMetrics, QuinnConnectionMetrics}, runtime::TaskHandle};
+use iroh_metrics::{inc, dec};
+use crate::metrics::{ConnectionDriverMetrics, ConnectionRefMetrics, QuinnConnectionMetrics};
 
 use crate::{
     mutex::Mutex,
@@ -897,6 +897,7 @@ impl ConnectionRef {
         socket: Arc<dyn AsyncUdpSocket>,
         runtime: Arc<dyn Runtime>,
     ) -> Self {
+        inc!(ConnectionRefMetrics, active);
         Self(Arc::new(ConnectionInner {
             state: Mutex::new(State {
                 inner: conn,
@@ -942,7 +943,7 @@ impl Drop for ConnectionRef {
         let conn = &mut *self.state.lock("drop");
         if let Some(x) = conn.ref_count.checked_sub(1) {
             conn.ref_count = x;
-            if x == 0 && !conn.inner.is_closed() {
+            if x == 0 && !conn.inner.is_closed() {                
                 // If the driver is alive, it's just it and us, so we'd better shut it down. If it's
                 // not, we can't do any harm. If there were any streams being opened, then either
                 // the connection will be closed for an unrelated reason or a fresh reference will
@@ -965,6 +966,13 @@ pub(crate) struct ConnectionInner {
     pub(crate) state: Mutex<State>,
     pub(crate) shared: Shared,
 }
+
+impl Drop for ConnectionInner {
+    fn drop(&mut self) {
+        dec!(ConnectionRefMetrics, active);
+    }
+}
+
 
 /// A handle to some connection internals, use with care.
 ///

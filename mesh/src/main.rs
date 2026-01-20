@@ -12,6 +12,7 @@ fn main() -> Result<()> {
         metrics.insert(iroh::metrics::ConnectionMetrics::new(reg));
         metrics.insert(iroh::metrics::MagicsockMetrics::new(reg));
         metrics.insert(iroh::metrics::NetReportMetrics::new(reg));
+        metrics.insert(iroh_quinn::metrics::ConnectionRefMetrics::new(reg));
         metrics.insert(iroh_quinn::metrics::ConnectionDriverMetrics::new(reg));
         metrics.insert(iroh_quinn::metrics::QuinnConnectionMetrics::new(reg));
         metrics.insert(iroh_quinn::metrics::RuntimeMetrics::new(reg));

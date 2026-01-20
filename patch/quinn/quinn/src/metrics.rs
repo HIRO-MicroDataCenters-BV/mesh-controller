@@ -1,5 +1,5 @@
 use iroh_metrics::{
-    core::{Counter, Metric},
+    core::{Counter, Gauge, Metric},
     struct_iterable::Iterable,
 };
 
@@ -90,5 +90,26 @@ impl Default for ConnectionSetMetrics {
 impl Metric for ConnectionSetMetrics {
     fn name() -> &'static str {
         "connectionset"
+    }
+}
+
+#[allow(missing_docs)]
+#[derive(Debug, Clone, Iterable)]
+#[non_exhaustive]
+pub struct ConnectionRefMetrics {
+    pub active: Gauge,
+}
+
+impl Default for ConnectionRefMetrics {
+    fn default() -> Self {
+        Self {
+            active: Gauge::new("active"),
+        }
+    }
+}
+
+impl Metric for ConnectionRefMetrics {
+    fn name() -> &'static str {
+        "connectionref"
     }
 }
