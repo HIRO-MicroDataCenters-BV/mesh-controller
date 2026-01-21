@@ -2129,8 +2129,7 @@ dependencies = [
 [[package]]
 name = "iroh"
 version = "0.34.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "37432887a6836e7a832fccb121b5f0ee6cd953c506f99b0278bdbedf8dee0e88"
+source = "git+https://github.com/ktatarnikovhiro/iroh.git?branch=v0.34.1-patch#b43e0130c7e708467e5b8d3441b6aa92d8044ab5"
 dependencies = [
  "aead",
  "anyhow",
@@ -2188,8 +2187,7 @@ dependencies = [
 [[package]]
 name = "iroh-base"
 version = "0.34.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3cd952d9e25e521d6aeb5b79f2fe32a0245da36aae3569e50f6010b38a5f0923"
+source = "git+https://github.com/ktatarnikovhiro/iroh.git?branch=v0.34.1-patch#b43e0130c7e708467e5b8d3441b6aa92d8044ab5"
 dependencies = [
  "curve25519-dalek",
  "data-encoding",
@@ -2218,8 +2216,7 @@ dependencies = [
 [[package]]
 name = "iroh-gossip"
 version = "0.34.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "71a9d638618fb6a4dac68d59cb694774478ea039bc9afca4709e242726591be1"
+source = "git+https://github.com/ktatarnikovhiro/iroh-gossip.git?branch=v0.34.1-patch#8e68fe0716fff25e962c5475a9840e14532aed7a"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -2318,8 +2315,7 @@ dependencies = [
 [[package]]
 name = "iroh-relay"
 version = "0.34.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "40d2d7b50d999922791c6c14c25e13f55711e182618cb387bafa0896ffe0b930"
+source = "git+https://github.com/ktatarnikovhiro/iroh.git?branch=v0.34.1-patch#b43e0130c7e708467e5b8d3441b6aa92d8044ab5"
 dependencies = [
  "anyhow",
  "bytes",
