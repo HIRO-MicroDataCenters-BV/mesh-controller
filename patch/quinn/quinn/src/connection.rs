@@ -883,7 +883,8 @@ impl Future for SendDatagram<'_> {
 }
 
 #[derive(Debug)]
-pub(crate) struct ConnectionRef(Arc<ConnectionInner>);
+#[allow(clippy::redundant_allocation)]
+pub(crate) struct ConnectionRef(Arc<Arc<ConnectionInner>>);
 
 impl ConnectionRef {
     #[allow(clippy::too_many_arguments)]
@@ -898,7 +899,7 @@ impl ConnectionRef {
         runtime: Arc<dyn Runtime>,
     ) -> Self {
         inc!(ConnectionRefMetrics, active);
-        Self(Arc::new(ConnectionInner {
+        Self(Arc::new(Arc::new(ConnectionInner {
             state: Mutex::new(State {
                 inner: conn,
                 driver: None,
@@ -923,7 +924,7 @@ impl ConnectionRef {
                 observed_external_addr: watch::Sender::new(None),
             }),
             shared: Shared::default(),
-        }))
+        })))
     }
 
     fn stable_id(&self) -> usize {
@@ -979,7 +980,7 @@ impl Drop for ConnectionInner {
 /// This contains a weak reference to the connection so will not itself keep the connection
 /// alive.
 #[derive(Debug)]
-pub struct WeakConnectionHandle(Weak<ConnectionInner>);
+pub struct WeakConnectionHandle(Weak<Arc<ConnectionInner>>);
 
 impl WeakConnectionHandle {
     /// Returns `true` if the [`Connection`] associated with this handle is still alive.

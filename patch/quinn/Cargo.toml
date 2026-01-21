@@ -59,7 +59,7 @@ cfg_aliases = "0.2"
 async-global-executor = "2.4.1"
 async-fs = "2.1"
 async-executor = "1.13.0"
-tokio-util = { version = "0.7.18" }
+tokio-util = { version = "0.7.18", features = ["rt"] }
 futures-util = { version = "0.3.31" }
 futures = { version = "0.3.31", default-features = false }
 
