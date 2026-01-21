@@ -13,6 +13,11 @@ debug = true
 
 [workspace.lints.rust]
 
+[patch.crates-io]
+iroh = { git = "https://github.com/ktatarnikovhiro/iroh.git", branch = "v0.34.1-patch", default-features = false }
+iroh-gossip = { git = "https://github.com/ktatarnikovhiro/iroh-gossip.git", branch = "v0.34.1-patch" }
+iroh-base = { git = "https://github.com/ktatarnikovhiro/iroh.git", branch = "v0.34.1-patch" }
+
 [workspace.dependencies]
 async-trait = "0.1.89"
 anyhow = "1.0.100"
