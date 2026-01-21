@@ -142,6 +142,20 @@ entries:
     - https://HIRO-MicroDataCenters-BV.github.io/mesh-controller/dev/mesh-controller-0.2.8-dev.16.EDGE-352-mesh-co.aed817e6.tgz
     version: 0.2.8-dev.16.EDGE-352-mesh-co.aed817e6
   - apiVersion: v2
+    appVersion: 0.2.8-dev.3.EDGE-352-memory.5bf44a02
+    created: "2026-01-21T09:59:00.748467835Z"
+    description: Mesh Controller for Decentralized Control Plane
+    digest: 23728d478a178839b0fa4556445b0e61952174cbfef8fabef3fac31dec31148e
+    home: https://github.com/HIRO-MicroDataCenters-BV/mesh-controller
+    maintainers:
+    - name: HIRO-Microdatacenters
+      url: https://hiro-microdatacenters.nl
+    name: mesh-controller
+    type: application
+    urls:
+    - https://HIRO-MicroDataCenters-BV.github.io/mesh-controller/dev/mesh-controller-0.2.8-dev.3.EDGE-352-memory.5bf44a02.tgz
+    version: 0.2.8-dev.3.EDGE-352-memory.5bf44a02
+  - apiVersion: v2
     appVersion: 0.2.8-dev.1.EDGE-352-limit-l.e329f9b7
     created: "2026-01-16T09:44:42.659555438Z"
     description: Mesh Controller for Decentralized Control Plane
@@ -2199,4 +2213,4 @@ entries:
     urls:
     - https://HIRO-MicroDataCenters-BV.github.io/mesh-controller/dev/mesh-controller-0.0.1-dev.1.upgrade-libs.b3cd8265.tgz
     version: 0.0.1-dev.1.upgrade-libs.b3cd8265
-generated: "2026-01-20T12:49:55.256862052Z"
+generated: "2026-01-21T09:59:00.747691792Z"
