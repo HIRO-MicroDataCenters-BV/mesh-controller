@@ -18,6 +18,11 @@ iroh = { git = "https://github.com/ktatarnikovhiro/iroh.git", branch = "v0.34.1-
 iroh-gossip = { git = "https://github.com/ktatarnikovhiro/iroh-gossip.git", branch = "v0.34.1-patch" }
 iroh-base = { git = "https://github.com/ktatarnikovhiro/iroh.git", branch = "v0.34.1-patch" }
 
+# backporting memory leak fix https://github.com/n0-computer/quinn/pull/277/files
+quinn = { package = "iroh-quinn", git = "https://github.com/ktatarnikovhiro/quinn.git", branch = "iroh-quinn-v0.13.0-patch" }
+quinn-proto = { package = "iroh-quinn-proto", git = "https://github.com/ktatarnikovhiro/quinn.git", branch = "iroh-quinn-v0.13.0-patch" }
+quinn-udp = { package = "iroh-quinn-udp", git = "https://github.com/ktatarnikovhiro/quinn.git", branch = "iroh-quinn-v0.13.0-patch" }
+
 [workspace.dependencies]
 async-trait = "0.1.89"
 anyhow = "1.0.100"
