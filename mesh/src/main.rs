@@ -8,18 +8,18 @@ fn main() -> Result<()> {
         .install_default()
         .expect("Failed to setup rustls default crypto provider [aws_lc_rs]");
 
-    Core::init(|reg, metrics| {
-        metrics.insert(iroh::metrics::ConnectionMetrics::new(reg));
-        metrics.insert(iroh::metrics::MagicsockMetrics::new(reg));
-        metrics.insert(iroh::metrics::NetReportMetrics::new(reg));
-        metrics.insert(iroh_quinn::metrics::ConnectionRefMetrics::new(reg));
-        metrics.insert(iroh_quinn::metrics::ConnectionDriverMetrics::new(reg));
-        metrics.insert(iroh_quinn::metrics::QuinnConnectionMetrics::new(reg));
-        metrics.insert(iroh_quinn::metrics::RuntimeMetrics::new(reg));
-        metrics.insert(iroh_quinn::metrics::ConnectionSetMetrics::new(reg));
-        metrics.insert(iroh_gossip::metrics::Metrics::new(reg));
-        metrics.insert(iroh_gossip::metrics::PeerMetrics::new(reg));
-    });
+    // Core::init(|reg, metrics| {
+    //     metrics.insert(iroh::metrics::ConnectionMetrics::new(reg));
+    //     metrics.insert(iroh::metrics::MagicsockMetrics::new(reg));
+    //     metrics.insert(iroh::metrics::NetReportMetrics::new(reg));
+    //     metrics.insert(iroh_quinn::metrics::ConnectionRefMetrics::new(reg));
+    //     metrics.insert(iroh_quinn::metrics::ConnectionDriverMetrics::new(reg));
+    //     metrics.insert(iroh_quinn::metrics::QuinnConnectionMetrics::new(reg));
+    //     metrics.insert(iroh_quinn::metrics::RuntimeMetrics::new(reg));
+    //     metrics.insert(iroh_quinn::metrics::ConnectionSetMetrics::new(reg));
+    //     metrics.insert(iroh_gossip::metrics::Metrics::new(reg));
+    //     metrics.insert(iroh_gossip::metrics::PeerMetrics::new(reg));
+    // });
 
     let context_builder = ContextBuilder::from_cli()?;
     let context = context_builder.try_build_and_start()?;

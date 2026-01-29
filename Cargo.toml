@@ -15,18 +15,22 @@ debug = true
 [workspace.lints.rust]
 
 [patch.crates-io]
-iroh-base = { path = "patch/iroh/iroh-base" }
-iroh = { path = "patch/iroh/iroh" }
-iroh-gossip = { path = "patch/iroh-gossip" }
-iroh-quinn = { path = "patch/quinn/quinn" }
-iroh-quinn-proto = { path = "patch/quinn/quinn-proto" }
-iroh-quinn-udp = { path = "patch/quinn/quinn-udp" }
+# iroh-base = { path = "patch/iroh/iroh-base" }
+# iroh = { path = "patch/iroh/iroh" }
+# iroh-gossip = { path = "patch/iroh-gossip" }
+# iroh-quinn = { path = "patch/quinn/quinn" }
+# iroh-quinn-proto = { path = "patch/quinn/quinn-proto" }
+# iroh-quinn-udp = { path = "patch/quinn/quinn-udp" }
 iroh-metrics = { path = "patch/iroh-metrics" }
 
+iroh-base = { git = "https://github.com/ktatarnikovhiro/iroh.git", branch = "v0.34.1-patch" }
+iroh = { git = "https://github.com/ktatarnikovhiro/iroh.git", branch = "v0.34.1-patch" }
+iroh-gossip = { git = "https://github.com/ktatarnikovhiro/iroh-gossip.git", branch = "v0.34.1-patch" }
+
 # backporting memory leak fix https://github.com/n0-computer/quinn/pull/277/files
-quinn = { package = "iroh-quinn", git = "https://github.com/ktatarnikovhiro/quinn.git", branch = "iroh-quinn-v0.13.0-patch" }
-quinn-proto = { package = "iroh-quinn-proto", git = "https://github.com/ktatarnikovhiro/quinn.git", branch = "iroh-quinn-v0.13.0-patch" }
-quinn-udp = { package = "iroh-quinn-udp", git = "https://github.com/ktatarnikovhiro/quinn.git", branch = "iroh-quinn-v0.13.0-patch" }
+iroh-quinn = { package = "iroh-quinn", git = "https://github.com/ktatarnikovhiro/quinn.git", branch = "iroh-quinn-v0.13.0-patch" }
+iroh-quinn-proto = { package = "iroh-quinn-proto", git = "https://github.com/ktatarnikovhiro/quinn.git", branch = "iroh-quinn-v0.13.0-patch" }
+iroh-quinn-udp = { package = "iroh-quinn-udp", git = "https://github.com/ktatarnikovhiro/quinn.git", branch = "iroh-quinn-v0.13.0-patch" }
 
 [workspace.dependencies]
 async-trait = "0.1.89"
@@ -51,11 +55,16 @@ p2panda-stream = { path = "patch/p2panda/p2panda-stream" }
 # p2panda-store = { git = "https://github.com/p2panda/p2panda.git", features=["memory"], tag="v0.4.0" }
 # p2panda-stream = { git = "https://github.com/p2panda/p2panda.git", tag="v0.4.0" }
 
-iroh-base = { path = "patch/iroh/iroh-base" } # "0.34.1"
+# iroh-base = { path = "patch/iroh/iroh-base" } # "0.34.1"
+iroh-base = { git = "https://github.com/ktatarnikovhiro/iroh.git", branch = "v0.34.1-patch" }
 iroh-metrics = { path = "patch/iroh-metrics" } # 0.32
-iroh = { path = "patch/iroh/iroh" } # 0.34.1
-iroh-quinn = { path = "patch/quinn/quinn" }
-iroh-gossip = { path = "patch/iroh-gossip" }
+# iroh = { path = "patch/iroh/iroh" } # 0.34.1
+iroh = { git = "https://github.com/ktatarnikovhiro/iroh.git", branch = "v0.34.1-patch" }
+# iroh-quinn = { path = "patch/quinn/quinn" }
+iroh-quinn = { package = "iroh-quinn", git = "https://github.com/ktatarnikovhiro/quinn.git", branch = "iroh-quinn-v0.13.0-patch" }
+# iroh-gossip = { path = "patch/iroh-gossip" }
+iroh-gossip = { git = "https://github.com/ktatarnikovhiro/iroh-gossip.git", branch = "v0.34.1-patch" }
+
 mesh = { path = "mesh" }
 mesh-kube-fake-api = { path = "mesh-kube-fake-api" }
 mesh-kube = { path = "mesh-kube" }
