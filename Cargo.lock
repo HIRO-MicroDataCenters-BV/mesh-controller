@@ -2259,8 +2259,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn"
 version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "76c6245c9ed906506ab9185e8d7f64857129aee4f935e899f398a3bd3b70338d"
+source = "git+https://github.com/ktatarnikovhiro/quinn.git?branch=iroh-quinn-v0.13.0-patch#fc1e7c52bdf02d27c48a63c482dd6e5aa9b50ca2"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -2280,8 +2279,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-proto"
 version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "929d5d8fa77d5c304d3ee7cae9aede31f13908bd049f9de8c7c0094ad6f7c535"
+source = "git+https://github.com/ktatarnikovhiro/quinn.git?branch=iroh-quinn-v0.13.0-patch#fc1e7c52bdf02d27c48a63c482dd6e5aa9b50ca2"
 dependencies = [
  "bytes",
  "getrandom 0.2.16",
@@ -2301,15 +2299,14 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-udp"
 version = "0.5.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c53afaa1049f7c83ea1331f5ebb9e6ebc5fdd69c468b7a22dd598b02c9bcc973"
+source = "git+https://github.com/ktatarnikovhiro/quinn.git?branch=iroh-quinn-v0.13.0-patch#fc1e7c52bdf02d27c48a63c482dd6e5aa9b50ca2"
 dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
  "socket2 0.5.10",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
