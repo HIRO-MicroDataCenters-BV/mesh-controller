@@ -1,7 +1,7 @@
-use chrono::{TimeZone, Utc};
 use k8s_openapi::api::core::v1::Event;
 use k8s_openapi::api::core::v1::ObjectReference;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::MicroTime;
+use k8s_openapi::jiff;
 
 #[allow(clippy::too_many_arguments)]
 pub fn create_event(
@@ -56,6 +56,6 @@ pub trait IntoMicroTimeExt {
 
 impl IntoMicroTimeExt for u64 {
     fn to_time(self) -> MicroTime {
-        MicroTime(Utc.timestamp_millis_opt(self as i64).unwrap())
+        MicroTime(jiff::Timestamp::from_millisecond(self as i64).unwrap())
     }
 }

@@ -131,7 +131,7 @@ impl AnyApplicationExt for AnyApplication {
         self.metadata
             .creation_timestamp
             .as_ref()
-            .map(|t| t.0.timestamp_millis())
+            .map(|t| t.0.as_millisecond())
             .unwrap_or(0)
     }
 }
