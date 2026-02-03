@@ -347,8 +347,6 @@ impl DefaultMerge {
 
 #[cfg(test)]
 pub mod tests {
-    use std::time::SystemTime;
-
     use k8s_openapi::apimachinery::pkg::apis::meta::v1::Time;
     use kube::api::DynamicObject;
     use tracing::{Level, span};
@@ -697,7 +695,7 @@ pub mod tests {
         let mut incoming = make_object("test", 2, "value2");
         let existing = make_object("test", 1, "value1");
 
-        incoming.metadata.deletion_timestamp = Some(Time(SystemTime::now().into()));
+        incoming.metadata.deletion_timestamp = Some(Time(jiff::Timestamp::now()));
 
         assert_eq!(
             UpdateResult::Skip,

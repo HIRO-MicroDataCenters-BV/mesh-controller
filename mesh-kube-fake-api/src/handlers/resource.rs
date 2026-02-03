@@ -3,8 +3,7 @@ use anyhow::anyhow;
 use bytes::Bytes;
 use http::StatusCode;
 use kube::api::{ApiResource, DynamicObject, ListMeta, ObjectList, TypeMeta};
-use kube::client::Status;
-use kube::core::ErrorResponse;
+use kube::core::Status;
 use kube::core::response::StatusDetails;
 use kube::core::response::StatusSummary;
 use std::collections::HashMap;
@@ -250,12 +249,13 @@ fn to_object_list(ar: &ApiResource, objects: Vec<DynamicObject>) -> ObjectList<D
     }
 }
 
-fn to_not_found(group: &str, version: &str, kind: &str) -> ErrorResponse {
-    ErrorResponse {
-        status: "Failure".into(),
+fn to_not_found(group: &str, version: &str, kind: &str) -> Status {
+    Status {
+        status: Some(StatusSummary::Failure),
         message: format!("{group} {version} {kind} not found"),
         reason: "NotFound".into(),
         code: 404,
+        ..Default::default()
     }
 }
 

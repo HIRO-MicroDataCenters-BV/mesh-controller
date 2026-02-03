@@ -1,6 +1,4 @@
 use anyhow::{Context, Result};
-use chrono::TimeZone;
-use chrono::Utc;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::Time;
 pub use kube::CustomResource;
 use kube::api::DynamicObject;
@@ -141,7 +139,7 @@ pub trait IntoTimeExt {
 
 impl IntoTimeExt for u64 {
     fn to_time(self) -> k8s_openapi::apimachinery::pkg::apis::meta::v1::Time {
-        Time(Utc.timestamp_millis_opt(self as i64).unwrap())
+        Time(jiff::Timestamp::from_millisecond(self as i64).unwrap())
     }
 }
 

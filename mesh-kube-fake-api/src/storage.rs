@@ -8,7 +8,8 @@ use dashmap::DashMap;
 use futures::StreamExt;
 use futures::{Stream, future};
 use kube::api::{ApiResource, DynamicObject, GroupVersionKind, WatchEvent};
-use kube::error::ErrorResponse;
+use kube::core::Status;
+use kube::core::response::StatusSummary;
 use tokio::sync::RwLock;
 use tokio::sync::broadcast::{Receiver, Sender};
 use tokio_stream::wrappers::BroadcastStream;
@@ -375,12 +376,13 @@ impl Storage {
 }
 
 fn watch_event_error<K, E: std::error::Error>(error: E) -> WatchEvent<K> {
-    WatchEvent::Error(ErrorResponse {
-        status: "FAILED".into(),
+    WatchEvent::Error(Box::new(Status {
+        status: Some(StatusSummary::Failure),
         message: format!("receiver error {:?}", error),
         reason: "Error in stream".into(),
         code: 0,
-    })
+        ..Default::default()
+    }))
 }
 
 fn match_gvk(event: &WatchEvent<DynamicObject>, gvk: &GroupVersionKind) -> bool {

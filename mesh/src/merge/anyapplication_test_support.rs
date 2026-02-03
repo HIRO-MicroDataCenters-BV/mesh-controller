@@ -12,10 +12,7 @@ pub mod tests {
         },
         anyapplication_ext::{Epoch, OWNER_VERSION},
     };
-    use k8s_openapi::{
-        apimachinery::pkg::apis::meta::v1::Time,
-        chrono::{DateTime, Utc},
-    };
+    use k8s_openapi::{apimachinery::pkg::apis::meta::v1::Time, jiff};
     use kube::api::{DynamicObject, ObjectMeta};
 
     use meshkube::kube::subscriptions::Version;
@@ -30,7 +27,7 @@ pub mod tests {
                     owner_version.to_string(),
                 )])),
                 creation_timestamp: Some(Time(
-                    DateTime::<Utc>::from_timestamp(1000, 0).expect("creation timestamp"),
+                    jiff::Timestamp::from_millisecond(1000).expect("creation timestamp"),
                 )),
                 ..Default::default()
             },
