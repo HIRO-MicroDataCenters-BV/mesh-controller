@@ -64,6 +64,7 @@ mesh-kube.workspace = true
 mesh-resource.workspace = true
 console-subscriber.workspace = true
 rustls.workspace = true
+jiff.workspace = true
 
 [dev-dependencies]
 figment = { workspace = true, features = ["test"] }

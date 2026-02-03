@@ -21,12 +21,12 @@ impl From<&MeshPeer> for PeerState {
         PeerState {
             peer_id: mesh_peer.spec.identity.public_key.to_owned(),
             state: status.status,
-            state_since: status.update_time.0.timestamp_millis() as u64,
+            state_since: status.update_time.0.as_millisecond() as u64,
             instance: status.instance.as_ref().map(|i| InstanceId {
                 zone: i.zone.to_owned(),
                 zone_start_time: i.start_timestamp,
             }),
-            update_timestamp: status.update_time.0.timestamp_millis() as u64,
+            update_timestamp: status.update_time.0.as_millisecond() as u64,
         }
     }
 }
