@@ -13,3 +13,11 @@ reason = "Low risk"
 [[IgnoredVulns]]
 id = "RUSTSEC-2026-0002"
 reason = "Low risk"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0370"
+reason = "Low risk (proc-macro-error is unmaintained)"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0134"
+reason = "Low risk (rustls-pemfile is unmaintained)"
