@@ -117,7 +117,7 @@ The mesh controller exposes metrics and health endpoints:
 
 ### Prerequisites
 
-* Rust 1.86.0+
+* Rust 1.95.0+
 
 ### Installation and running
 

@@ -1,23 +1,27 @@
 [[IgnoredVulns]]
 id = "RUSTSEC-2024-0384"
-reason = "Low risk"
+reason = "Low risk - unmaintained crate, transient dependency of iroh"
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2024-0436"
-reason = "Low risk"
+reason = "Low risk - unmaintained crate, transient dependency"
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2026-0002"
-reason = "Low risk"
+reason = "Low risk - unsoundness in Iterator Mut, transient dependency via pkarr/iroh-relay"
 
 [[IgnoredVulns]]
-id = "RUSTSEC-2026-0002"
-reason = "Low risk"
+id = "RUSTSEC-2026-0049"
+reason = "Low risk - CRL Distribution Point matching issue, not applicable as CRLs not used in iroh's certificate validation"
 
 [[IgnoredVulns]]
-id = "RUSTSEC-2024-0370"
-reason = "Low risk (proc-macro-error is unmaintained)"
+id = "RUSTSEC-2026-0098"
+reason = "Low risk - URI name constraints issue, not applicable as iroh does not use URI SAN certificates"
 
 [[IgnoredVulns]]
-id = "RUSTSEC-2025-0134"
-reason = "Low risk (rustls-pemfile is unmaintained)"
+id = "RUSTSEC-2026-0099"
+reason = "Low risk - wildcard name constraints issue, not applicable as iroh uses direct IP/hostname validation without wildcards"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0097"
+reason = "Low risk - unsoundness with custom logger and ThreadRng, not applicable as iroh does not use custom loggers with rand::rng() access"
