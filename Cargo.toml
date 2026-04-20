@@ -75,14 +75,14 @@ hyper-util = { version = "0.1.20", features = [
 ] }
 schemars = { version = "1.2.1" }
 built = { version = "0.7", features = ["chrono", "git2"] }
-strum = { version = "0.27.2", features = ["derive"] }
+strum = { version = "0.28.0", features = ["derive"] }
 reqwest = { version = "0.13.1", features = ["json"] }
 pin-project-lite = { version = "0.2.16" }
 # pinned version of rusttls due to iroh-net
 rustls = { version = "0.23.35" }
 chrono = { version = "0.4.43" }
 k8s-openapi = { version = "0.27", default-features = false, features = ["schemars", "v1_33"] }
-kube = { version = "3.0.1", default-features = false, features = ["client", "jsonpatch", "runtime", "derive", "rustls-tls", "runtime", "derive" ] }
+kube = { version = "3.1.0", default-features = false, features = ["client", "jsonpatch", "runtime", "derive", "rustls-tls", "runtime", "derive" ] }
 jiff = { version = "0.2" }
 either = { version = "1.1.0" }
 tower-test = { version = "0.4.0" }
@@ -91,7 +91,7 @@ http-body = { version = "1.0.1" }
 http-body-util = { version = "0.1.3" }
 tower-service = { version = "0.3.3" }
 regex = { version = "1.12.2" }
-strum_macros = { version = "0.27.2" }
+strum_macros = { version = "0.28.0" }
 maplit = { version = "1.0.2" }
 # pinned version due to vulnerability
 openssl = "=0.10.75"
