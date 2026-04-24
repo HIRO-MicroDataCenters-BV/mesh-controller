@@ -25,3 +25,7 @@ reason = "Low risk - wildcard name constraints issue, not applicable as iroh use
 [[IgnoredVulns]]
 id = "RUSTSEC-2026-0097"
 reason = "Low risk - unsoundness with custom logger and ThreadRng, not applicable as iroh does not use custom loggers with rand::rng() access"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0104"
+reason = "Low risk - CRL parsing panic, not applicable as iroh does not use CRL validation"
