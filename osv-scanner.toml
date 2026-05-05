@@ -23,6 +23,14 @@ id = "RUSTSEC-2026-0099"
 reason = "Low risk - wildcard name constraints issue, not applicable as iroh uses direct IP/hostname validation without wildcards"
 
 [[IgnoredVulns]]
+id = "RUSTSEC-2026-0119"
+reason = "Low risk - CPU exhaustion during message encoding due to O(n²) name compression"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0118"
+reason = "Low risk - NSEC3 closest-encloser proof validation enters unbounded loop on cross-zone responses"
+
+[[IgnoredVulns]]
 id = "RUSTSEC-2026-0097"
 reason = "Low risk - unsoundness with custom logger and ThreadRng, not applicable as iroh does not use custom loggers with rand::rng() access"
 
