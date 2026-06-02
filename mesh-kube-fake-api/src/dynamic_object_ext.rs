@@ -1,7 +1,7 @@
 use anyhow::{Result, anyhow};
 use kube::ResourceExt;
 use kube::api::{DynamicObject, GroupVersionKind};
-use rand::Rng;
+use rand::RngExt;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default, PartialOrd, Ord, Serialize, Deserialize)]
