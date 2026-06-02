@@ -423,6 +423,7 @@ pub mod tests {
                 ownership: AnyApplicationStatusOwnership {
                     epoch: 1,
                     owner: "owner".into(),
+                    owner_version: 1,
                     placements: None,
                     state: "New".into(),
                 },

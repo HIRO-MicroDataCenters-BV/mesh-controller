@@ -1,8 +1,6 @@
 #[cfg(test)]
 pub mod tests {
 
-    use std::collections::BTreeMap;
-
     use anyapplication::{
         anyapplication::{
             AnyApplication, AnyApplicationSource, AnyApplicationSourceHelm, AnyApplicationSpec,
@@ -10,7 +8,7 @@ pub mod tests {
             AnyApplicationStatusOwnershipPlacements, AnyApplicationStatusZones,
             AnyApplicationStatusZonesConditions,
         },
-        anyapplication_ext::{Epoch, OWNER_VERSION},
+        anyapplication_ext::Epoch,
     };
     use k8s_openapi::{apimachinery::pkg::apis::meta::v1::Time, jiff};
     use kube::api::{DynamicObject, ObjectMeta};
@@ -22,10 +20,6 @@ pub mod tests {
             metadata: ObjectMeta {
                 name: Some("nginx-app".into()),
                 namespace: Some("default".into()),
-                labels: Some(BTreeMap::from([(
-                    OWNER_VERSION.into(),
-                    owner_version.to_string(),
-                )])),
                 creation_timestamp: Some(Time(
                     jiff::Timestamp::from_millisecond(1000).expect("creation timestamp"),
                 )),
@@ -53,6 +47,7 @@ pub mod tests {
                 zones: None,
                 ownership: AnyApplicationStatusOwnership {
                     epoch: 1,
+                    owner_version: owner_version as i64,
                     owner: owner_zone.into(),
                     placements: Some(vec![
                         AnyApplicationStatusOwnershipPlacements {
@@ -94,10 +89,6 @@ pub mod tests {
             metadata: ObjectMeta {
                 name: Some("nginx-app".into()),
                 namespace: Some("default".into()),
-                labels: Some(BTreeMap::from([(
-                    OWNER_VERSION.into(),
-                    owner_version.to_string(),
-                )])),
                 ..Default::default()
             },
             spec: AnyApplicationSpec {
@@ -123,6 +114,7 @@ pub mod tests {
                 ownership: AnyApplicationStatusOwnership {
                     epoch: owner_epoch,
                     owner: owner_zone.into(),
+                    owner_version: owner_version as i64,
                     placements: Some(placements_vec),
                     state: "New".into(),
                 },
@@ -200,10 +192,21 @@ pub mod tests {
         placements: Vec<AnyApplicationStatusOwnershipPlacements>,
         zones: Option<Vec<AnyApplicationStatusZones>>,
     ) -> AnyApplicationStatus {
+        let owner_version =
+            if let Some(zones) = zones.as_ref() {
+                zones
+                    .iter()
+                    .find(|z|z.zone_id == owner_zone)
+                    .map(|z|z.version)
+                    .unwrap_or(1)
+            } else {
+                1
+            };
         AnyApplicationStatus {
             zones,
             ownership: AnyApplicationStatusOwnership {
                 epoch: 1,
+                owner_version,
                 owner: owner_zone.into(),
                 placements: Some(placements),
                 state: "New".into(),

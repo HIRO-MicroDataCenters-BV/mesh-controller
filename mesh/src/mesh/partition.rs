@@ -1446,6 +1446,7 @@ pub mod tests {
                         ownership: AnyApplicationStatusOwnership {
                             epoch: 1,
                             owner: owner.into(),
+                            owner_version: 1,
                             state: state.into(),
                             placements: None,
                         },
@@ -1464,6 +1465,7 @@ pub mod tests {
                     self.object.status = Some(AnyApplicationStatus {
                         ownership: AnyApplicationStatusOwnership {
                             epoch: 1,
+                            owner_version: 1,
                             owner: "".into(),
                             state: "".into(),
                             placements: Some(placements),
@@ -1484,6 +1486,7 @@ pub mod tests {
                 ownership: AnyApplicationStatusOwnership {
                     epoch: 1,
                     owner: "".into(),
+                    owner_version: 1,
                     state: "".into(),
                     placements: None,
                 },
@@ -1516,6 +1519,7 @@ pub mod tests {
             let status = self.object.status.get_or_insert(AnyApplicationStatus {
                 ownership: AnyApplicationStatusOwnership {
                     epoch: 1,
+                    owner_version: 1,
                     owner: "".into(),
                     state: "".into(),
                     placements: None,
@@ -1550,6 +1554,7 @@ pub mod tests {
             let status = self.object.status.get_or_insert(AnyApplicationStatus {
                 ownership: AnyApplicationStatusOwnership {
                     epoch: 1,
+                    owner_version: 1,
                     owner: "".into(),
                     state: "".into(),
                     placements: None,
@@ -1588,6 +1593,7 @@ pub mod tests {
             let status = self.object.status.get_or_insert(AnyApplicationStatus {
                 ownership: AnyApplicationStatusOwnership {
                     epoch: 1,
+                    owner_version: 1,
                     owner: "".into(),
                     state: "".into(),
                     placements: None,
