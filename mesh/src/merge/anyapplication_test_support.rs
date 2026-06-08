@@ -189,19 +189,10 @@ pub mod tests {
 
     pub fn anystatus(
         owner_zone: &str,
+        owner_version: Version,
         placements: Vec<AnyApplicationStatusOwnershipPlacements>,
         zones: Option<Vec<AnyApplicationStatusZones>>,
     ) -> AnyApplicationStatus {
-        let owner_version =
-            if let Some(zones) = zones.as_ref() {
-                zones
-                    .iter()
-                    .find(|z|z.zone_id == owner_zone)
-                    .map(|z|z.version)
-                    .unwrap_or(1)
-            } else {
-                1
-            };
         AnyApplicationStatus {
             zones,
             ownership: AnyApplicationStatusOwnership {

@@ -13,7 +13,7 @@ use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::AbortOnDropHandle;
 
-pub type Version = u64;
+pub type Version = i64;
 pub type SubscriberId = u64;
 
 #[derive(Debug, Clone)]

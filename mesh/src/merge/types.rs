@@ -85,8 +85,7 @@ pub trait MergeStrategy: Send + Sync {
         span: &Span,
         current: VersionedObject,
         incoming: DynamicObject,
-        incoming_resource_version: Version,
-        node_zone: &str,
+        current_zone: &str,
         now_millis: u64,
     ) -> Result<UpdateResult>;
 
@@ -95,8 +94,7 @@ pub trait MergeStrategy: Send + Sync {
         span: &Span,
         current: VersionedObject,
         incoming: DynamicObject,
-        incoming_resource_version: Version,
-        node_zone: &str,
+        current_zone: &str,
         now_millis: u64,
     ) -> Result<UpdateResult>;
 
@@ -124,7 +122,8 @@ pub trait MergeStrategy: Send + Sync {
         span: &Span,
         current: VersionedObject,
         membership: &Membership,
-        node_zone: &str,
+        current_zone: &str,
+        current_zone_version: Version,
     ) -> Result<Vec<MergeResult>>;
 
     fn tombstone(&self, current: VersionedObject, now_millis: u64) -> Result<Option<Tombstone>>;
@@ -132,6 +131,8 @@ pub trait MergeStrategy: Send + Sync {
     fn is_owner_zone(&self, current: &VersionedObject, zone: &str) -> bool;
 
     fn is_owner_zone_object(&self, current: &DynamicObject, zone: &str) -> bool;
+
+    fn get_owner_version(&self, object: &DynamicObject) -> Option<i64>;
 
     fn construct_remote_versions(
         &self,

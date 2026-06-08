@@ -20,7 +20,6 @@ pub trait DynamicObjectExt {
     fn get_gvk(&self) -> Result<GroupVersionKind>;
     fn get_namespaced_name(&self) -> NamespacedName;
     fn get_first_item_or_fail(&self) -> Result<Option<DynamicObject>>;
-    fn get_owner_version_or_fail(&self) -> Result<Version>;
     fn get_owner_version(&self) -> Option<Version>;
     fn set_owner_version(&mut self, version: Version);
     fn get_owner_zone(&self) -> Result<String>;
@@ -95,19 +94,6 @@ impl DynamicObjectExt for DynamicObject {
         } else {
             Ok(Some(self.clone()))
         }
-    }
-
-    fn get_owner_version_or_fail(&self) -> Result<Version> {
-        self.metadata
-            .labels
-            .as_ref()
-            .ok_or(anyhow!("{} label not set", OWNER_VERSION))?
-            .get(OWNER_VERSION)
-            .map(|v| {
-                v.parse::<Version>()
-                    .map_err(|e| anyhow!("unable to parse version from label. {e}"))
-            })
-            .unwrap_or(Err(anyhow!("{} label not set", OWNER_VERSION)))
     }
 
     fn set_owner_version(&mut self, version: Version) {
@@ -220,11 +206,12 @@ impl DynamicObjectExt for DynamicObject {
 
 pub fn dump_ownership(context: &str, ownership: &AnyApplicationStatusOwnership) {
     let mut out = format!("- ownership update - ({})\n", context);
-    out += format!(" epoch: {}\n", ownership.epoch).as_str();
-    out += format!(" owner: {}\n", ownership.owner).as_str();
-    out += format!(" state: {}\n", ownership.state).as_str();
+    out += format!(" owner ver: {}\n", ownership.owner_version).as_str();
+    out += format!(" epoch    : {}\n", ownership.epoch).as_str();
+    out += format!(" owner    : {}\n", ownership.owner).as_str();
+    out += format!(" state    : {}\n", ownership.state).as_str();
     out += format!(
-        " place: {}\n",
+        " place    : {}\n",
         render_placements(ownership.placements.as_ref().unwrap_or(&vec![]))
     )
     .as_str();

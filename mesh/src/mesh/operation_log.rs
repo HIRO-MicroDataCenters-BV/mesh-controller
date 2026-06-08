@@ -836,11 +836,6 @@ pub mod tests {
         let own_instance_id = InstanceId::new("1".to_string());
         let own_linked_operations = LinkedOperations::new(own_key.clone(), own_instance_id.clone());
         let own_mesh_log_id = MeshLogId(own_instance_id);
-        // let own_topic_map = Nodes::new(
-        //     own_key.public_key(),
-        //     own_mesh_log_id.clone(),
-        //     Duration::from_secs(120),
-        // );
         let active_logs = hashmap! {};
         let log = OperationLog::new(
             own_mesh_log_id.clone(),

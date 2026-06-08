@@ -607,10 +607,7 @@ impl MeshActor {
             Err(err) => Err(err),
         };
 
-        if let (Ok(PersistenceResult::Persisted(version)), Some(mut event)) =
-            (&final_ok_or_result, event)
-        {
-            event.set_zone_version(*version);
+        if let (Ok(PersistenceResult::Persisted(_)), Some(event)) = (&final_ok_or_result, event) {
             let operation = self.operations.next(event, self.clock.now_millis());
             debug!(parent: span, "inserting new event from persisted operation");
             // this insert into own log therefore no need to check for new logs and update membership
