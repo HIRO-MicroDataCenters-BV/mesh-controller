@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::anyapplication::{
-    AnyApplicationStatusOwnership, AnyApplicationStatusOwnershipPlacements,
+    AnyApplicationStatus, AnyApplicationStatusOwnership, AnyApplicationStatusOwnershipPlacements,
     AnyApplicationStatusZones, AnyApplicationStatusZonesConditions,
 };
 
@@ -13,12 +13,13 @@ use serde::Serialize;
 
 pub const OWNER_VERSION: &str = "dcp.hiro.io/owner-version";
 
-pub type Version = u64;
+pub type Version = i64;
 pub type Epoch = i64;
 
 pub trait AnyApplicationExt {
     fn get_owner_version(&self) -> Result<Version>;
-    fn set_owner_version(&mut self, version: Version);
+    fn get_zone_version(&self, zone: &str) -> Result<Version>;
+    fn update_ownership_version(&mut self);
     fn get_owner_zone(&self) -> String;
     fn get_owner_epoch(&self) -> Epoch;
     fn to_object(self) -> Result<DynamicObject>
@@ -46,21 +47,32 @@ pub trait AnyApplicationExt {
 
 impl AnyApplicationExt for AnyApplication {
     fn get_owner_version(&self) -> Result<Version> {
-        self.metadata
-            .labels
+        self.status
             .as_ref()
-            .ok_or(anyhow!("{} label not set", OWNER_VERSION))?
-            .get(OWNER_VERSION)
-            .map(|v| {
-                v.parse::<Version>()
-                    .map_err(|e| anyhow!("unable to parse version from label. {e}"))
-            })
-            .unwrap_or(Err(anyhow!("{} label not set", OWNER_VERSION)))
+            .map(|s| Ok(s.ownership.owner_version))
+            .unwrap_or(Err(anyhow!("OwnerVersion is not set")))
     }
 
-    fn set_owner_version(&mut self, version: Version) {
-        let labels = self.metadata.labels.get_or_insert_default();
-        labels.insert(OWNER_VERSION.into(), version.to_string());
+    fn get_zone_version(&self, zone: &str) -> Result<Version> {
+        let Some(status) = self.status.as_ref() else {
+            return Err(anyhow!("No ZoneVersion. Status is not set"));
+        };
+        if status.ownership.owner == zone {
+            return Ok(status.ownership.owner_version);
+        }
+        let Some(zones) = status.zones.as_ref() else {
+            return Err(anyhow!("No ZoneVersion. Zones are not set"));
+        };
+        let Some(zone) = zones.iter().find(|z| z.zone_id == zone) else {
+            return Err(anyhow!("ZoneVersion is not set"));
+        };
+        Ok(zone.version)
+    }
+
+    fn update_ownership_version(&mut self) {
+        if let Some(status) = self.status.as_mut() {
+            status.update_ownership_version();
+        }
     }
 
     fn get_owner_zone(&self) -> String {
@@ -165,6 +177,23 @@ impl AnyApplicationStatusZonesConditionsExt for AnyApplicationStatusZonesConditi
     }
 }
 
+pub trait AnyApplicationStatusExt {
+    fn update_ownership_version(&mut self);
+}
+
+impl AnyApplicationStatusExt for AnyApplicationStatus {
+    fn update_ownership_version(&mut self) {
+        let owner_zone = &self.ownership.owner;
+        let Some(zones) = self.zones.as_ref() else {
+            return;
+        };
+        let Some(owner_status) = zones.iter().find(|z| z.zone_id.eq(owner_zone)) else {
+            return;
+        };
+        self.ownership.owner_version = owner_status.version;
+    }
+}
+
 pub trait AnyApplicationStatusZonesExt {
     fn is_equal(&self, other: &AnyApplicationStatusZones) -> bool;
 }
@@ -211,6 +240,7 @@ impl AnyApplicationStatusOwnershipExt for AnyApplicationStatusOwnership {
         self.epoch == other.epoch
             && self.owner == other.owner
             && self.state == other.state
+            && self.owner_version == other.owner_version
             && placements_opt_equal(&self.placements, &other.placements)
     }
 }

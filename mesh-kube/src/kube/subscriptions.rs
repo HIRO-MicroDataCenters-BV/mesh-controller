@@ -13,7 +13,7 @@ use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::AbortOnDropHandle;
 
-pub type Version = u64;
+pub type Version = i64;
 pub type SubscriberId = u64;
 
 #[derive(Debug, Clone)]
@@ -423,6 +423,7 @@ pub mod tests {
                 ownership: AnyApplicationStatusOwnership {
                     epoch: 1,
                     owner: "owner".into(),
+                    owner_version: 1,
                     placements: None,
                     state: "New".into(),
                 },

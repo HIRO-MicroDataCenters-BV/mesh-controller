@@ -168,6 +168,7 @@ fn anyapplication(name: &str, owner_zone: &str) -> DynamicObject {
             ownership: AnyApplicationStatusOwnership {
                 epoch: 1,
                 owner: owner_zone.into(),
+                owner_version: 1,
                 placements: Some(vec![
                     AnyApplicationStatusOwnershipPlacements {
                         node_affinity: None,

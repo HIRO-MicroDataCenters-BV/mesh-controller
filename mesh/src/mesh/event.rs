@@ -30,15 +30,6 @@ impl MeshEvent {
         ciborium::into_writer(&self, &mut bytes).expect("encoding network message");
         bytes
     }
-
-    pub fn set_zone_version(&mut self, new_version: Version) {
-        let version = match self {
-            MeshEvent::Update { version, .. } => version,
-            MeshEvent::Delete { version, .. } => version,
-            MeshEvent::Snapshot { version, .. } => version,
-        };
-        *version = new_version;
-    }
 }
 
 impl TryFrom<Vec<u8>> for MeshEvent {
@@ -52,14 +43,18 @@ impl TryFrom<Vec<u8>> for MeshEvent {
 impl Display for MeshEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            MeshEvent::Update { object, .. } => {
-                write!(f, "Update({:?})", object.get_namespaced_name())
+            MeshEvent::Update {
+                version, object, ..
+            } => {
+                write!(f, "Update({}, {:?})", version, object.get_namespaced_name())
             }
-            MeshEvent::Delete { object, .. } => {
-                write!(f, "Delete({:?})", object.get_namespaced_name())
+            MeshEvent::Delete {
+                version, object, ..
+            } => {
+                write!(f, "Delete({}, {:?})", version, object.get_namespaced_name())
             }
             MeshEvent::Snapshot { snapshot, version } => {
-                write!(f, "Snapshot({} items, version{})", snapshot.len(), version)
+                write!(f, "Snapshot({}, {} items)", snapshot.len(), version)
             }
         }
     }

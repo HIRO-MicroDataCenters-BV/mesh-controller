@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashSet},
     sync::Arc,
 };
 
@@ -98,7 +98,6 @@ impl Partition {
                 if self.skip_update_if_old(span, incoming_zone, version, "delete") {
                     return Ok(vec![]);
                 }
-
                 let name = incoming.get_namespaced_name();
                 let current = self
                     .resources
@@ -177,7 +176,7 @@ impl Partition {
         event_type: &str,
     ) -> bool {
         let max_known_zone_version = self.remote_zone_versions.get(incoming_zone).unwrap_or(&0);
-        if max_known_zone_version >= &incoming_version {
+        if max_known_zone_version > &incoming_version {
             debug!(
                 parent: span,
                 zone = ?incoming_zone,
@@ -206,17 +205,17 @@ impl Partition {
         current_zone: &str,
         membership: &Membership,
     ) -> Result<Vec<MergeResult>> {
-        let in_partition: HashSet<NamespacedName> = self
+        let in_partition: BTreeSet<NamespacedName> = self
             .resources
             .iter()
             .filter(|(_, v)| self.merge_strategy.is_owner_zone(v, incoming_zone))
             .map(|(k, _)| k.to_owned())
             .collect();
 
-        let incoming: HashSet<NamespacedName> = snapshot.keys().map(|k| k.to_owned()).collect();
+        let incoming: BTreeSet<NamespacedName> = snapshot.keys().map(|k| k.to_owned()).collect();
 
         let to_update = incoming.clone();
-        let to_delete_non_existing: HashSet<&NamespacedName> =
+        let to_delete_non_existing: BTreeSet<&NamespacedName> =
             in_partition.difference(&incoming).collect();
 
         debug!(
@@ -303,6 +302,7 @@ impl Partition {
                 current.to_owned(),
                 membership,
                 node_zone,
+                self.zone_version,
             )?;
             out.append(&mut merge_results);
         }
@@ -332,7 +332,6 @@ impl Partition {
                     span,
                     current,
                     object,
-                    version,
                     current_zone,
                     self.clock.now_millis(),
                 )?;
@@ -354,7 +353,6 @@ impl Partition {
                     span,
                     current,
                     object,
-                    version,
                     current_zone,
                     self.clock.now_millis(),
                 )?;
@@ -470,7 +468,6 @@ impl Partition {
                 span,
                 VersionedObject::NonExisting,
                 object,
-                snapshot_version,
                 current_zone,
                 self.clock.now_millis(),
             )?;
@@ -522,7 +519,9 @@ impl Partition {
                 {
                     VersionedObject::Object(object) => {
                         let resource_version = object.get_resource_version();
-                        let owner_version = object.get_owner_version().unwrap_or(resource_version);
+                        // if owner version is not set we failover to 0
+                        let owner_version =
+                            self.merge_strategy.get_owner_version(object).unwrap_or(0);
                         let tombstone = Tombstone {
                             gvk: object.get_gvk()?,
                             name: name.to_owned(),
@@ -541,6 +540,7 @@ impl Partition {
         Ok(snapshot_result)
     }
 
+    // we keep resource version for subsequent consistent kubernetes updates
     pub fn update_resource_version(&mut self, name: &NamespacedName, version: Version) {
         if let Some(object) = self.resources.get_mut(name) {
             match object {
@@ -635,7 +635,7 @@ pub mod tests {
             &name_a1,
             1,
             anyspec(1),
-            Some(anystatus("A", anyplacements("A", None), None)),
+            Some(anystatus("A", 1, anyplacements("A", None), None)),
         );
         app_a1.set_resource_version(1);
 
@@ -644,7 +644,7 @@ pub mod tests {
             &name_a2,
             1,
             anyspec(1),
-            Some(anystatus("A", anyplacements("A", None), None)),
+            Some(anystatus("A", 1, anyplacements("A", None), None)),
         );
         app_a2.set_resource_version(1);
 
@@ -728,7 +728,7 @@ pub mod tests {
             vec![MergeResult::Update {
                 object: app_a1_expected,
                 event: Box::new(Some(MeshEvent::Update {
-                    version: 0,
+                    version: 1,
                     object: event
                 }))
             }]
@@ -744,45 +744,37 @@ pub mod tests {
             &name_a1,
             1,
             anyspec(1),
-            Some(anystatus("A", anyplacements("A", None), None)),
+            Some(anystatus("A", 1, anyplacements("A", None), None)),
         );
-        app_a1.set_resource_version(1);
         let name_a2 = NamespacedName::new("default".into(), "nginx-app-a2".into());
-        let mut app_a2 = anyapp(
+        let app_a2 = anyapp(
             &name_a2,
             1,
             anyspec(1),
-            Some(anystatus("A", anyplacements("A", None), None)),
+            Some(anystatus("A", 1, anyplacements("A", None), None)),
         );
-        app_a2.set_resource_version(1);
 
         let name_b1 = NamespacedName::new("default".into(), "nginx-app-b1".into());
         let mut app_b1 = anyapp(
             &name_b1,
             1,
             anyspec(1),
-            Some(anystatus("B", anyplacements("B", None), None)),
+            Some(anystatus("B", 1, anyplacements("B", None), None)),
         );
-        app_b1.set_resource_version(1);
-        app_b1.set_owner_zone("B".into());
         let name_b2 = NamespacedName::new("default".into(), "nginx-app-b2".into());
-        let mut app_b2 = anyapp(
+        let app_b2 = anyapp(
             &name_b2,
             1,
             anyspec(1),
-            Some(anystatus("B", anyplacements("B", None), None)),
+            Some(anystatus("B", 1, anyplacements("B", None), None)),
         );
-        app_b2.set_resource_version(1);
-        app_b2.set_owner_zone("B".into());
         let name_b3 = NamespacedName::new("default".into(), "nginx-app-b3".into());
         let mut app_b3 = anyapp(
             &name_b3,
             1,
             anyspec(1),
-            Some(anystatus("B", anyplacements("B", None), None)),
+            Some(anystatus("B", 1, anyplacements("B", None), None)),
         );
-        app_b3.set_resource_version(1);
-        app_b3.set_owner_zone("B".into());
 
         let mut partition = Partition::new(AnyApplicationMerge::new(), Arc::new(FakeClock::new()));
 
@@ -807,7 +799,13 @@ pub mod tests {
         assert_eq!(partition.get(&name_b1).unwrap(), app_b1);
 
         // 2. Outgoing incremental snapshot
-        app_a1.set_resource_version(2);
+        app_a1 = anyapp(
+            &name_a1,
+            2,
+            anyspec(1),
+            Some(anystatus("A", 2, anyplacements("A", None), None)),
+        );
+
         let snapshot = btreemap! {
             name_a1.clone() => app_a1.to_owned(),
             name_b1.clone() => app_b1.to_owned(),
@@ -817,7 +815,6 @@ pub mod tests {
         let actual_snapshot = kube_apply_snapshot(&span, &mut partition, snapshot, 2);
 
         // app_a1 should be in the snapshot with updated version
-        app_a1.set_owner_version(2);
         assert_eq!(actual_snapshot.get(&name_a1).unwrap(), &app_a1);
 
         // app_a2 should not be in the snapshot, but partition will get tombstone for a2
@@ -833,15 +830,22 @@ pub mod tests {
         assert_eq!(partition.get(&name_b2).unwrap(), app_b2);
 
         // 3. Incoming snapshot
-
-        app_b1.set_owner_version(2);
+        app_b1 = anyapp(
+            &name_b1,
+            2,
+            anyspec(1),
+            Some(anystatus("B", 2, anyplacements("B", None), None)),
+        );
         app_b1.unset_resource_version();
         app_b3.unset_resource_version();
         let snapshot = btreemap! {
             name_b1.clone() => app_b1.to_owned(),
             name_b3.clone() => app_b3.to_owned(),
         };
-
+        // Snapshot should:
+        // - Update: b1
+        // - Delete: b2
+        // - Create: b3
         let mut actual_merge_result = partition
             .mesh_apply_snapshot(&span, snapshot, "B", "A", &membership)
             .expect("Incoming snapshot should be applied");
@@ -900,7 +904,7 @@ pub mod tests {
             &name_a1,
             1,
             anyspec(1),
-            Some(anystatus("A", anyplacements("A", None), None)),
+            Some(anystatus("A", 1, anyplacements("A", None), None)),
         );
         app_a1.set_resource_version(1);
 
@@ -960,16 +964,17 @@ pub mod tests {
         );
 
         // 1.2 persistence step and update of partition
-        anyapp_a.inc_version();
+        anyapp_a.inc_resource_version();
         runner.post_merge_update_version_a(&mut anyapp_a);
 
         // initializing partition_a
         runner.init_partition_a(anyapp_a.kube_upd());
 
         // 2.1 Replicate object update with status set
-        anyapp_a.inc_version();
+        anyapp_a.inc_resource_version();
         anyapp_a.with_initial_state("A", "New");
-        let mut anyapp_a_with_version = anyapp_a.with_updated_owner_version();
+
+        let mut anyapp_a_with_version = anyapp_a.clone();
 
         runner.kube_partition_a(
             &anyapp_a.kube_upd(),
@@ -983,9 +988,11 @@ pub mod tests {
         runner.post_merge_update_version_b(&mut anyapp_a_with_version);
 
         // 3.1 Replicate object update with placements
-        anyapp_a.inc_version();
+        anyapp_a.inc_resource_version();
+        anyapp_a.update_owner_version();
         anyapp_a.set_placements(anyplacements("A", None));
-        let mut anyapp_a_with_version = anyapp_a.with_updated_owner_version();
+
+        let mut anyapp_a_with_version = anyapp_a.clone();
         let mut anyapp_b = anyapp_a_with_version.with_resource_version(3);
 
         runner.kube_partition_a(
@@ -1001,10 +1008,11 @@ pub mod tests {
         runner.post_merge_update_version_b(&mut anyapp_b);
 
         // 3.1 Replicate object update with placements and new condition
-        anyapp_a.inc_version();
-        anyapp_a.set_conditions(1, "A", vec![anycond("A", "type")]);
+        anyapp_a.inc_resource_version();
+        anyapp_a.set_conditions(0, "A", vec![anycond("A", "type")]);
+        anyapp_a.update_owner_version();
 
-        let mut anyapp_a_updated = anyapp_a.with_updated_owner_version();
+        let mut anyapp_a_updated = anyapp_a.clone();
         let mut anyapp_b = anyapp_a_updated.with_resource_version(anyapp_b.resource_version);
 
         runner.kube_partition_a(
@@ -1020,10 +1028,11 @@ pub mod tests {
         runner.post_merge_update_version_b(&mut anyapp_b);
 
         // 4.1 Replicate object - condition update
-        anyapp_a.inc_version();
-        anyapp_a.set_conditions(2, "A", vec![anycond("A", "type2")]);
+        anyapp_a.inc_resource_version();
+        anyapp_a.set_conditions(0, "A", vec![anycond("A", "type2")]);
+        anyapp_a.update_owner_version();
 
-        let mut anyapp_a_updated = anyapp_a.with_updated_owner_version();
+        let mut anyapp_a_updated = anyapp_a.clone();
         let mut anyapp_b = anyapp_a_updated.with_resource_version(anyapp_b.resource_version);
 
         runner.kube_partition_a(
@@ -1039,10 +1048,11 @@ pub mod tests {
         runner.post_merge_update_version_b(&mut anyapp_b);
 
         // 4.1 Replicate object - condition delete
-        anyapp_a.inc_version();
-        anyapp_a.set_conditions(3, "A", vec![]);
+        anyapp_a.inc_resource_version();
+        anyapp_a.set_conditions(0, "A", vec![]);
+        anyapp_a.update_owner_version();
 
-        let mut anyapp_a_updated = anyapp_a.with_updated_owner_version();
+        let mut anyapp_a_updated = anyapp_a.clone();
         let mut anyapp_b = anyapp_a_updated.with_resource_version(anyapp_b.resource_version);
 
         runner.kube_partition_a(
@@ -1058,7 +1068,10 @@ pub mod tests {
         runner.post_merge_update_version_b(&mut anyapp_b);
 
         // 5 Replicate object delete
-        let anyapp_a_updated = anyapp_a.with_updated_owner_version();
+        anyapp_a.inc_resource_version();
+        anyapp_a.update_owner_version();
+
+        let anyapp_a_updated = anyapp_a.clone();
         let anyapp_b = anyapp_a_updated.with_resource_version(anyapp_b.resource_version);
 
         runner.kube_partition_a(
@@ -1081,14 +1094,14 @@ pub mod tests {
         );
 
         // 1.2 persistence step and update of partition
-        anyapp_a.inc_version();
+        anyapp_a.inc_resource_version();
         runner.post_merge_update_version_a(&mut anyapp_a);
 
         // Initialize partition_a
         runner.init_partition_a(anyapp_a.kube_upd());
 
         // 2.1 Replicate object update with status set
-        anyapp_a.inc_version();
+        anyapp_a.inc_resource_version();
         anyapp_a.with_initial_state("A", "New");
         let mut anyapp_a_with_version = anyapp_a.with_updated_owner_version();
 
@@ -1104,9 +1117,11 @@ pub mod tests {
         runner.post_merge_update_version_b(&mut anyapp_a_with_version);
 
         // 3.1 Replicate object to zone B update with placements
-        anyapp_a.inc_version();
+        anyapp_a.inc_resource_version();
         anyapp_a.set_placements(anyplacements("A", Some("B")));
-        let mut anyapp_a_with_version = anyapp_a.with_updated_owner_version();
+        anyapp_a.update_owner_version();
+
+        let mut anyapp_a_with_version = anyapp_a.clone();
         let mut anyapp_b = anyapp_a_with_version.with_resource_version(3);
 
         runner.kube_partition_a(
@@ -1122,10 +1137,11 @@ pub mod tests {
         runner.post_merge_update_version_b(&mut anyapp_b);
 
         // 4.1 conditions of A replicate to B
-        anyapp_a.inc_version();
-        anyapp_a.add_condition(1, anycond("A", "type"));
+        anyapp_a.inc_resource_version();
+        anyapp_a.add_condition(0, anycond("A", "type"));
+        anyapp_a.update_owner_version();
 
-        let mut anyapp_a_updated = anyapp_a.with_updated_owner_version();
+        let mut anyapp_a_updated = anyapp_a.clone();
         let mut anyapp_b = anyapp_a_updated.with_resource_version(anyapp_b.resource_version);
 
         runner.kube_partition_a(
@@ -1135,18 +1151,17 @@ pub mod tests {
         );
 
         // 4.2 persistence step and update of partition
-        anyapp_b = anyapp_a_updated.as_zone("B", 1);
+        anyapp_b = anyapp_a_updated.as_zone("B", anyapp_b.resource_version);
         runner.post_merge_update_version_b(&mut anyapp_b);
+        runner.post_merge_update_version_a(&mut anyapp_a_updated);
 
         // 5.1 conditions of B replicate to A
-        anyapp_b.add_condition(1, anycond("B", "type"));
-        anyapp_b.inc_version();
-        anyapp_b = anyapp_b.with_update_resource_version();
+        anyapp_b.inc_resource_version();
+        anyapp_b.add_condition(0, anycond("B", "type"));
+        anyapp_b.update_owner_version();
 
         let mut anyapp_b_updated = anyapp_b.clone();
-        anyapp_a_updated = anyapp_b_updated
-            .as_zone("A", anyapp_a_updated.resource_version)
-            .with_update_resource_version();
+        anyapp_a_updated = anyapp_b_updated.as_zone("A", anyapp_a.resource_version);
 
         runner.kube_partition_b(
             &anyapp_b.kube_upd(),
@@ -1160,15 +1175,13 @@ pub mod tests {
         anyapp_a = anyapp_a_updated;
 
         // 6.1 update of condition of A replicate to B
-        anyapp_a.update_condition(2, "type", "A", anycond("A", "type2"));
-        anyapp_a.inc_version();
-        anyapp_a = anyapp_a.with_update_resource_version();
+        anyapp_a.inc_resource_version();
+        anyapp_a.update_condition(0, "type", "A", anycond("A", "type2"));
+        anyapp_a.update_owner_version();
 
-        anyapp_a_updated = anyapp_a.with_updated_owner_version();
+        anyapp_a_updated = anyapp_a.clone();
 
-        anyapp_b_updated = anyapp_a_updated
-            .as_zone("B", anyapp_b_updated.resource_version)
-            .with_update_resource_version();
+        anyapp_b_updated = anyapp_a_updated.as_zone("B", anyapp_b_updated.resource_version);
 
         runner.kube_partition_a(
             &anyapp_a.kube_upd(),
@@ -1182,16 +1195,13 @@ pub mod tests {
         anyapp_b = anyapp_b_updated.clone();
 
         // 7.1 update of condition of B replicate to A
+        anyapp_b.inc_resource_version();
         anyapp_b.update_condition(3, "type", "B", anycond("B", "type3"));
-        anyapp_b.inc_version();
-        anyapp_b = anyapp_b.with_update_resource_version();
+        anyapp_b.update_owner_version();
 
         anyapp_b_updated = anyapp_b.clone();
 
-        anyapp_a_updated = anyapp_b_updated
-            .as_zone("A", anyapp_a_updated.resource_version)
-            .with_update_resource_version()
-            .with_updated_owner_version();
+        anyapp_a_updated = anyapp_b_updated.as_zone("A", anyapp_a_updated.resource_version);
 
         runner.kube_partition_b(
             &anyapp_b.kube_upd(),
@@ -1205,15 +1215,13 @@ pub mod tests {
         anyapp_a = anyapp_a_updated;
 
         // 8.1 delete of condition of A replicate to B
-        anyapp_a.inc_version();
+        anyapp_a.inc_resource_version();
         anyapp_a.delete_condition(4, "type2", "A");
-        anyapp_a = anyapp_a.with_update_resource_version();
+        anyapp_a.update_owner_version();
 
-        anyapp_a_updated = anyapp_a.with_updated_owner_version();
+        anyapp_a_updated = anyapp_a.clone();
 
-        anyapp_b_updated = anyapp_a_updated
-            .as_zone("B", anyapp_b_updated.resource_version)
-            .with_update_resource_version();
+        anyapp_b_updated = anyapp_a_updated.as_zone("B", anyapp_b_updated.resource_version);
 
         runner.kube_partition_a(
             &anyapp_a.kube_upd(),
@@ -1228,15 +1236,12 @@ pub mod tests {
 
         // delete of condition of B replicate to A
         anyapp_b.delete_condition(5, "type3", "B");
-        anyapp_b.inc_version();
-        anyapp_b = anyapp_b.with_update_resource_version();
+        anyapp_b.inc_resource_version();
+        anyapp_b.update_owner_version();
 
         anyapp_b_updated = anyapp_b.clone();
 
-        anyapp_a_updated = anyapp_b_updated
-            .as_zone("A", anyapp_a_updated.resource_version)
-            .with_update_resource_version()
-            .with_updated_owner_version();
+        anyapp_a_updated = anyapp_b_updated.as_zone("A", anyapp_a_updated.resource_version);
 
         runner.kube_partition_b(
             &anyapp_b.kube_upd(),
@@ -1264,10 +1269,7 @@ pub mod tests {
             metadata: ObjectMeta {
                 name: Some(name.name.to_owned()),
                 namespace: Some(name.namespace.to_owned()),
-                labels: Some(BTreeMap::from([(
-                    OWNER_VERSION.into(),
-                    owner_version.to_string(),
-                )])),
+                resource_version: Some(owner_version.to_string()),
                 ..Default::default()
             },
             spec,
@@ -1440,12 +1442,14 @@ pub mod tests {
                 Some(status) => {
                     status.ownership.owner = owner.into();
                     status.ownership.state = state.into();
+                    status.ownership.owner_version = self.resource_version;
                 }
                 None => {
                     self.object.status = Some(AnyApplicationStatus {
                         ownership: AnyApplicationStatusOwnership {
                             epoch: 1,
                             owner: owner.into(),
+                            owner_version: self.resource_version,
                             state: state.into(),
                             placements: None,
                         },
@@ -1464,7 +1468,8 @@ pub mod tests {
                     self.object.status = Some(AnyApplicationStatus {
                         ownership: AnyApplicationStatusOwnership {
                             epoch: 1,
-                            owner: "".into(),
+                            owner_version: self.resource_version,
+                            owner: self.zone.clone(),
                             state: "".into(),
                             placements: Some(placements),
                         },
@@ -1484,6 +1489,7 @@ pub mod tests {
                 ownership: AnyApplicationStatusOwnership {
                     epoch: 1,
                     owner: "".into(),
+                    owner_version: 1,
                     state: "".into(),
                     placements: None,
                 },
@@ -1516,6 +1522,7 @@ pub mod tests {
             let status = self.object.status.get_or_insert(AnyApplicationStatus {
                 ownership: AnyApplicationStatusOwnership {
                     epoch: 1,
+                    owner_version: 1,
                     owner: "".into(),
                     state: "".into(),
                     placements: None,
@@ -1550,6 +1557,7 @@ pub mod tests {
             let status = self.object.status.get_or_insert(AnyApplicationStatus {
                 ownership: AnyApplicationStatusOwnership {
                     epoch: 1,
+                    owner_version: 1,
                     owner: "".into(),
                     state: "".into(),
                     placements: None,
@@ -1588,6 +1596,7 @@ pub mod tests {
             let status = self.object.status.get_or_insert(AnyApplicationStatus {
                 ownership: AnyApplicationStatusOwnership {
                     epoch: 1,
+                    owner_version: 1,
                     owner: "".into(),
                     state: "".into(),
                     placements: None,
@@ -1611,16 +1620,15 @@ pub mod tests {
             panic!("condition '{cond_type}' is not removed");
         }
 
-        pub fn object(&self) -> DynamicObject {
-            let resource_str =
-                serde_json::to_value(&self.object).expect("Resource is not serializable");
+        pub fn to_object(&self, app: &AnyApplication) -> DynamicObject {
+            let resource_str = serde_json::to_value(&app).expect("Resource is not serializable");
             let object: DynamicObject =
                 serde_json::from_value(resource_str).expect("Cannot parse dynamic object");
             object
         }
 
         pub fn kube_snap(&self) -> KubeEvent {
-            let mut object = self.object();
+            let mut object = self.to_object(&self.object);
             object.set_resource_version(self.resource_version);
             let mut snapshot = BTreeMap::new();
             let name = object.get_namespaced_name();
@@ -1632,7 +1640,8 @@ pub mod tests {
         }
 
         fn kube_upd(&self) -> KubeEvent {
-            let mut object = self.object();
+            let app = self.object.clone();
+            let mut object = self.to_object(&app);
             object.set_resource_version(self.resource_version);
             KubeEvent::Update {
                 version: self.resource_version,
@@ -1641,7 +1650,7 @@ pub mod tests {
         }
 
         fn kube_del(&self) -> KubeEvent {
-            let mut object = self.object();
+            let mut object = self.to_object(&self.object);
             object.set_resource_version(self.resource_version);
             KubeEvent::Delete {
                 version: self.resource_version,
@@ -1650,31 +1659,33 @@ pub mod tests {
         }
 
         fn mesh_upd(&self) -> MeshEvent {
-            let mut object = self.object();
+            let event_version_from_zone = self.object.get_zone_version(&self.zone).unwrap();
+            let mut object = self.to_object(&self.object);
             object.unset_resource_version();
             MeshEvent::Update {
                 object,
-                version: self.resource_version,
+                version: event_version_from_zone,
             }
         }
 
         fn mesh_del(&self) -> MeshEvent {
-            let mut object = self.object();
+            let event_version_from_zone = self.object.get_zone_version(&self.zone).unwrap();
+            let mut object = self.to_object(&self.object);
             object.unset_resource_version();
             MeshEvent::Delete {
                 object,
-                version: self.resource_version,
+                version: event_version_from_zone,
             }
         }
 
         fn merge_cre(&self) -> MergeResult {
-            let mut object = self.object();
+            let mut object = self.to_object(&self.object);
             object.set_resource_version(0);
             MergeResult::Create { object }
         }
 
         fn merge_upd(&self) -> MergeResult {
-            let mut object = self.object();
+            let mut object = self.to_object(&self.object);
             object.set_resource_version(self.resource_version);
             MergeResult::Update {
                 object: object.to_owned(),
@@ -1687,7 +1698,7 @@ pub mod tests {
                 .object
                 .get_owner_version()
                 .expect("owner version is expected");
-            let object = self.object();
+            let object = self.to_object(&self.object);
             MergeResult::Delete(Tombstone {
                 gvk: object.get_gvk().unwrap(),
                 name: object.get_namespaced_name(),
@@ -1698,40 +1709,57 @@ pub mod tests {
             })
         }
 
-        fn inc_version(&mut self) -> Version {
+        fn inc_resource_version(&mut self) -> Version {
             self.resource_version += 1;
             self.resource_version
+        }
+
+        fn update_owner_version(&mut self) {
+            Self::set_owner_version(&mut self.object, self.resource_version, &self.zone);
         }
 
         pub fn as_zone(&self, zone: &str, version: Version) -> Self {
             let mut copy = self.clone();
             copy.zone = zone.into();
             copy.resource_version = version;
+            copy.object.set_resource_version(version);
             copy
         }
 
         fn with_updated_owner_version(&mut self) -> Self {
             let mut copy = self.clone();
-            copy.object.set_owner_version(self.resource_version);
+            Self::set_owner_version(&mut copy.object, self.resource_version, &self.zone);
+            copy.object.update_ownership_version();
             copy
         }
 
         fn with_incremented_version(&mut self) -> Self {
             let mut copy = self.clone();
-            copy.inc_version();
-            copy
-        }
-
-        fn with_update_resource_version(&mut self) -> Self {
-            let mut copy = self.clone();
-            copy.object.set_resource_version(self.resource_version);
+            copy.inc_resource_version();
             copy
         }
 
         fn with_resource_version(&self, version: Version) -> Self {
             let mut copy = self.clone();
             copy.resource_version = version;
+            copy.object.set_resource_version(self.resource_version);
             copy
+        }
+
+        fn set_owner_version(app: &mut AnyApplication, version: Version, zone: &str) {
+            let Some(status) = app.status.as_mut() else {
+                panic!("no status set");
+            };
+            if status.ownership.owner == zone {
+                status.ownership.owner_version = version;
+            }
+            let Some(zones) = &mut status.zones else {
+                return;
+            };
+            let Some(zone) = zones.iter_mut().find(|z| z.zone_id == zone) else {
+                return;
+            };
+            zone.version = version;
         }
     }
 
