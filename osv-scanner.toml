@@ -37,3 +37,15 @@ reason = "Low risk - unsoundness with custom logger and ThreadRng, not applicabl
 [[IgnoredVulns]]
 id = "RUSTSEC-2026-0104"
 reason = "Low risk - CRL parsing panic, not applicable as iroh does not use CRL validation"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0185"
+reason = "quinn-proto 0.11.14 - transitive dependency of iroh-relay 0.34.1, upgrading requires major iroh migration"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0183"
+reason = "git2 Potential undefined behavior when calling Remote::list()"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0184"
+reason = "git2 Potential undefined behavior with Signature from a buffer-created BlameHunk"
