@@ -49,3 +49,8 @@ reason = "git2 Potential undefined behavior when calling Remote::list()"
 [[IgnoredVulns]]
 id = "RUSTSEC-2026-0184"
 reason = "git2 Potential undefined behavior with Signature from a buffer-created BlameHunk"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0173"
+reason = "proc-macro-error2 unmaintained"
+
