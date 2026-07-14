@@ -54,3 +54,7 @@ reason = "git2 Potential undefined behavior with Signature from a buffer-created
 id = "RUSTSEC-2026-0173"
 reason = "proc-macro-error2 unmaintained"
 
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0204"
+reason = "crossbeam-epoch Invalid pointer dereference in `fmt::Pointer` impl for `Atomic` and `Shared` when the underlying pointer is invalid"
+
