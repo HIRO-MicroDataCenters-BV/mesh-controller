@@ -58,3 +58,11 @@ reason = "proc-macro-error2 unmaintained"
 id = "RUSTSEC-2026-0204"
 reason = "crossbeam-epoch Invalid pointer dereference in `fmt::Pointer` impl for `Atomic` and `Shared` when the underlying pointer is invalid"
 
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0221"
+reason = "low severity: Unsoundness in event-listener"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0253"
+reason = "low severity: Potential use-after-free due to lack of panic safety in LruCache::pop()"
+

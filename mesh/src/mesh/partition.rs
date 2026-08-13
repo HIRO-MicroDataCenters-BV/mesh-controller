@@ -296,7 +296,7 @@ impl Partition {
         node_zone: &str,
     ) -> Result<Vec<MergeResult>> {
         let mut out = vec![];
-        for (_, current) in self.resources.iter() {
+        for current in self.resources.values() {
             let mut merge_results = self.merge_strategy.mesh_membership_change(
                 span,
                 current.to_owned(),
