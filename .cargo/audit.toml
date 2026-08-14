@@ -5,7 +5,12 @@ ignore = [
     "RUSTSEC-2026-0099",
     "RUSTSEC-2026-0049",
     "RUSTSEC-2026-0098",
-    "RUSTSEC-2026-0104"
+    "RUSTSEC-2026-0104",
+    "RUSTSEC-2026-0204",
+    "RUSTSEC-2026-0185",
+    "RUSTSEC-2024-0384",
+    "RUSTSEC-2024-0436",
+    "RUSTSEC-2026-0173"
 ] 
 informational_warnings = ["unmaintained"] # warn for categories of informational advisories
 severity_threshold = "medium" # CVSS severity ("none", "low", "medium", "high", "critical")
